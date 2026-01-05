@@ -127,7 +127,10 @@ contract OTCBoardStatelessInvariantTest is Test {
     }
 
     /// @notice Property: After createOrder, maker loses exactly amountA
-    function testFuzz_createOrder_makerBalanceDecrease(uint256 amountA, uint256 amountB) public {
+    function testFuzz_createOrder_makerBalanceDecrease(
+        uint256 amountA,
+        uint256 amountB
+    ) public {
         amountA = bound(amountA, 1, 1e30);
         amountB = bound(amountB, 1, 1e30);
 
@@ -158,7 +161,10 @@ contract OTCBoardStatelessInvariantTest is Test {
     }
 
     /// @notice Property: After fillOrder, taker gains exactly amountA
-    function testFuzz_fillOrder_takerGainsTokenA(uint256 amountA, uint256 amountB) public {
+    function testFuzz_fillOrder_takerGainsTokenA(
+        uint256 amountA,
+        uint256 amountB
+    ) public {
         amountA = bound(amountA, 1, 1e30);
         amountB = bound(amountB, 1, 1e30);
 
@@ -177,7 +183,10 @@ contract OTCBoardStatelessInvariantTest is Test {
     }
 
     /// @notice Property: After fillOrder, maker gains exactly amountB
-    function testFuzz_fillOrder_makerGainsTokenB(uint256 amountA, uint256 amountB) public {
+    function testFuzz_fillOrder_makerGainsTokenB(
+        uint256 amountA,
+        uint256 amountB
+    ) public {
         amountA = bound(amountA, 1, 1e30);
         amountB = bound(amountB, 1, 1e30);
 
@@ -196,7 +205,10 @@ contract OTCBoardStatelessInvariantTest is Test {
     }
 
     /// @notice Property: After cancelOrder, maker regains exactly amountA
-    function testFuzz_cancelOrder_makerRegainsTokenA(uint256 amountA, uint256 amountB) public {
+    function testFuzz_cancelOrder_makerRegainsTokenA(
+        uint256 amountA,
+        uint256 amountB
+    ) public {
         amountA = bound(amountA, 1, 1e30);
         amountB = bound(amountB, 1, 1e30);
 
@@ -213,7 +225,10 @@ contract OTCBoardStatelessInvariantTest is Test {
     }
 
     /// @notice Property: Order state transitions are final
-    function testFuzz_orderStateFinal_afterFill(uint256 amountA, uint256 amountB) public {
+    function testFuzz_orderStateFinal_afterFill(
+        uint256 amountA,
+        uint256 amountB
+    ) public {
         amountA = bound(amountA, 1, 1e30);
         amountB = bound(amountB, 1, 1e30);
 

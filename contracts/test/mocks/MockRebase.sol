@@ -38,20 +38,29 @@ contract MockRebase {
         emit Rebase(newMultiplier);
     }
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         uint256 shares = (amount * 100) / _rebaseMultiplier;
         _totalShares += shares;
         _shares[to] += shares;
         emit Transfer(address(0), to, amount);
     }
 
-    function approve(address spender, uint256 amount) external returns (bool) {
+    function approve(
+        address spender,
+        uint256 amount
+    ) external returns (bool) {
         allowance[msg.sender][spender] = amount;
         emit Approval(msg.sender, spender, amount);
         return true;
     }
 
-    function transfer(address to, uint256 amount) external returns (bool) {
+    function transfer(
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         uint256 sharesToTransfer = (amount * 100) / _rebaseMultiplier;
         _shares[msg.sender] -= sharesToTransfer;
         _shares[to] += sharesToTransfer;
@@ -59,7 +68,11 @@ contract MockRebase {
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         uint256 allowed = allowance[from][msg.sender];
         if (allowed != type(uint256).max) {
             allowance[from][msg.sender] = allowed - amount;

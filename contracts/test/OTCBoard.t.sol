@@ -326,7 +326,10 @@ contract OTCBoardTest is Test {
         vm.stopPrank();
     }
 
-    function testFuzz_createOrder(uint256 amountA, uint256 amountB) public {
+    function testFuzz_createOrder(
+        uint256 amountA,
+        uint256 amountB
+    ) public {
         amountA = bound(amountA, 1, type(uint128).max);
         amountB = bound(amountB, 1, type(uint128).max);
 
@@ -342,7 +345,10 @@ contract OTCBoardTest is Test {
         assertEq(order.amountB, amountB);
     }
 
-    function testFuzz_fillOrder(uint256 amountA, uint256 amountB) public {
+    function testFuzz_fillOrder(
+        uint256 amountA,
+        uint256 amountB
+    ) public {
         amountA = bound(amountA, 1, type(uint128).max);
         amountB = bound(amountB, 1, type(uint128).max);
 

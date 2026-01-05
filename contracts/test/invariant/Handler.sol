@@ -44,7 +44,11 @@ contract OTCBoardHandler is Test {
         vm.stopPrank();
     }
 
-    constructor(OTCBoard _board, MockERC20 _tokenA, MockERC20 _tokenB) {
+    constructor(
+        OTCBoard _board,
+        MockERC20 _tokenA,
+        MockERC20 _tokenB
+    ) {
         board = _board;
         tokenA = _tokenA;
         tokenB = _tokenB;
@@ -93,7 +97,10 @@ contract OTCBoardHandler is Test {
     }
 
     /// @notice Fills an existing order
-    function fillOrder(uint256 actorSeed, uint256 orderIdSeed) external useActor(actorSeed) {
+    function fillOrder(
+        uint256 actorSeed,
+        uint256 orderIdSeed
+    ) external useActor(actorSeed) {
         uint256 nextId = board.nextOrderId();
         if (nextId == 0) {
             return; // No orders exist
