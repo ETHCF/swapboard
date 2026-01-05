@@ -33,10 +33,6 @@ jobs:
         working-directory: contracts
         run: forge test -vvv
 
-      - name: Run coverage
-        working-directory: contracts
-        run: forge coverage --report summary
-
   subgraph:
     name: Subgraph Tests
     runs-on: ubuntu-latest
