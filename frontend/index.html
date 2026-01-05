@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SWAPBOARD</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1><span class="header-box">Welcome to SWAPBOARD</span></h1>
+  <a href="#" id="connect-btn">[Connect Wallet]</a>
+</header>
+
+<p class="tagline">
+  Swapboard is a no frills, 0% fee, peer-to-peer OTC bulletin board for trading any ERC20 token on Ethereum.<br>
+  The <a href="#">contract</a> is audited and immutable, with no admin rights. This is just a front end.
+</p>
+
+<p class="api-note">Note to market makers: <a href="API.md">API docs</a> available for Arbitrage / trading bots</p>
+
+<div class="stats-row">
+  Total Trades: <strong id="stat-total">--</strong>
+  &nbsp;&nbsp;&nbsp;
+  Open: <strong id="stat-active">--</strong>
+  &nbsp;&nbsp;&nbsp;
+  Filled: <strong id="stat-filled">--</strong>
+  &nbsp;&nbsp;&nbsp;
+  Cancelled: <strong id="stat-cancelled">--</strong>
+</div>
+
+<div class="zero-stats">
+  Fees: 0<br>
+  Employees: 0<br>
+  Revenue: 0<br>
+  VC Fundraising: 0<br>
+  Token ICO: 0
+</div>
+
+<div class="ticker">The ticker is $ETH, motherfucker</div>
+
+<div id="popular-pairs">
+  Popular Pairs: <span id="pairs-list">ETH/BTC ETH/USDT ETH/USDC ETH/DAI stETH/USDT stETH/USDC WBTC/USDT WBTC/USDC BNB/USDT BNB/USDC PEPE/ETH SHIB/ETH</span>
+</div>
+
+<div id="filters">
+  <span class="filter-left">
+    Filters: Selling token:
+    <select id="filter-selling">
+      <option value="">All</option>
+    </select>
+    &nbsp;&nbsp;
+    Wanted Token:
+    <select id="filter-wanting">
+      <option value="">ALL</option>
+    </select>
+  </span>
+  <span class="filter-right">
+    All Trades: <input type="radio" name="status" value="all">
+    &nbsp;&nbsp;
+    Open Trades: <input type="radio" name="status" value="open" checked>
+    &nbsp;&nbsp;
+    Filled Trades: <input type="radio" name="status" value="filled">
+    &nbsp;&nbsp;
+    Cancelled Trades: <input type="radio" name="status" value="cancelled">
+  </span>
+</div>
+
+<section id="orders">
+  <table>
+    <thead>
+      <tr>
+        <th>Trade ID</th>
+        <th>Account</th>
+        <th>Selling Token</th>
+        <th>Sell Size <span class="sort-arrows">&#8593;&#8595;</span></th>
+        <th>Wanted Token</th>
+        <th>Wanted Size <span class="sort-arrows">&#8593;&#8595;</span></th>
+        <th>USD Val <span class="sort-arrows">&#8593;&#8595;</span></th>
+        <th>Price <span class="sort-arrows">&#8593;&#8595;</span></th>
+      </tr>
+    </thead>
+    <tbody id="order-table">
+      <tr><td colspan="8">Loading orders...</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="pagination">
+  <button id="prev-page" disabled>&lt; Prev</button>
+  <span id="page-info">Page 1</span>
+  <button id="next-page">Next &gt;</button>
+</section>
+
+<section id="create-order">
+  <h2>Create Order</h2>
+  <p class="warning">Verify token addresses carefully. Fake tokens can steal your funds. Only use trusted tokens.</p>
+  <div class="form-row">
+    <label>
+      Selling:
+      <input type="text" id="create-tokenA" placeholder="Paste token address">
+      <span id="tokenA-info"></span>
+    </label>
+    <label>
+      Amount:
+      <input type="text" id="create-amountA" placeholder="0.0">
+    </label>
+  </div>
+  <div class="form-row">
+    <label>
+      Wanting:
+      <input type="text" id="create-tokenB" placeholder="Paste token address">
+      <span id="tokenB-info"></span>
+    </label>
+    <label>
+      Amount:
+      <input type="text" id="create-amountB" placeholder="0.0">
+    </label>
+  </div>
+  <button id="create-btn" disabled>Connect Wallet to Create Order</button>
+</section>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-content">
+    <h3 id="modal-title">Confirm Action</h3>
+    <p id="modal-body"></p>
+    <div class="modal-actions">
+      <button id="modal-confirm">Confirm</button>
+      <button id="modal-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+<!-- DEV ONLY: Uncomment to use mock data for local testing
+<script src="mock.js"></script>
+-->
+</body>
+</html>

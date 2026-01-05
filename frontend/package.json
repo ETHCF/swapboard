@@ -1,0 +1,18 @@
+{
+  "name": "swapboard-frontend",
+  "version": "1.0.0",
+  "description": "Swapboard frontend - static HTML/CSS/JS",
+  "private": true,
+  "scripts": {
+    "serve": "npx serve . -p 3000",
+    "test": "node test.js http://localhost:3000",
+    "test:local": "npx serve . -p 3456 & sleep 2 && node test.js http://localhost:3456; kill %1 2>/dev/null || true"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.0.0",
+    "serve": "^14.2.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

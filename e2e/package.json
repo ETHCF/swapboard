@@ -1,0 +1,19 @@
+{
+  "name": "otcboard-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "End-to-end tests for OTCBoard contract",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "viem": "2.21.0",
+    "vitest": "2.1.0"
+  }
+}

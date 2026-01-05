@@ -1,0 +1,102 @@
+# OTCBoard Subgraph Schema
+# Indexes orders, tokens, and global statistics for the OTC bulletin board
+
+"""
+Represents a single OTC order on the board.
+Orders transition from active to inactive when filled or cancelled.
+"""
+type Order @entity {
+  "Unique identifier (orderId from contract)"
+  id: ID!
+  "Numeric order ID from the contract"
+  orderId: BigInt!
+  "Address that created the order"
+  maker: Bytes! @index
+  "Token being sold (held in escrow)"
+  tokenA: Token! @index
+  "Amount of tokenA deposited"
+  amountA: BigInt!
+  "Token wanted in exchange"
+  tokenB: Token! @index
+  "Amount of tokenB required to fill"
+  amountB: BigInt!
+  "Whether the order can still be filled"
+  active: Boolean! @index
+  "Address that filled the order (null if not filled)"
+  taker: Bytes
+  "Block timestamp when order was created"
+  createdAt: BigInt! @index
+  "Transaction hash of order creation"
+  createdTx: Bytes!
+  "Block timestamp when order was filled"
+  filledAt: BigInt
+  "Transaction hash of order fill"
+  filledTx: Bytes
+  "Block timestamp when order was cancelled"
+  cancelledAt: BigInt
+  "Transaction hash of order cancellation"
+  cancelledTx: Bytes
+}
+
+"""
+Represents an ERC20 token that has been used in at least one order.
+Tracks aggregate volume and order counts.
+"""
+type Token @entity {
+  "Token contract address (lowercase)"
+  id: ID!
+  "Token contract address"
+  address: Bytes!
+  "Token symbol from contract"
+  symbol: String!
+  "Token name from contract"
+  name: String!
+  "Token decimals"
+  decimals: Int!
+  "Total volume sold (as tokenA in filled orders)"
+  volumeSold: BigInt!
+  "Total volume bought (as tokenB in filled orders)"
+  volumeBought: BigInt!
+  "Count of orders where this token is being sold"
+  ordersSelling: BigInt!
+  "Count of orders where this token is wanted"
+  ordersBuying: BigInt!
+  "Orders where this token is tokenA"
+  sellOrders: [Order!]! @derivedFrom(field: "tokenA")
+  "Orders where this token is tokenB"
+  buyOrders: [Order!]! @derivedFrom(field: "tokenB")
+}
+
+"""
+Global statistics for the entire OTCBoard.
+Single entity with id "global".
+"""
+type GlobalStats @entity {
+  "Always 'global'"
+  id: ID!
+  "Total orders ever created"
+  totalOrders: BigInt!
+  "Orders that have been filled"
+  filledOrders: BigInt!
+  "Orders that have been cancelled"
+  cancelledOrders: BigInt!
+  "Orders currently active (can be filled)"
+  activeOrders: BigInt!
+}
+
+"""
+Statistics for a specific token pair (tokenA -> tokenB).
+Tracks trade count for popular pairs display.
+"""
+type PairStats @entity {
+  "Composite ID: tokenA-tokenB (lowercase addresses)"
+  id: ID!
+  "Token being sold"
+  tokenA: Token!
+  "Token wanted in exchange"
+  tokenB: Token!
+  "Number of orders created for this pair"
+  orderCount: BigInt!
+  "Number of orders filled for this pair"
+  tradeCount: BigInt!
+}

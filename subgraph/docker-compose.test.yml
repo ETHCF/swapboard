@@ -1,0 +1,9 @@
+version: "3.8"
+
+services:
+  graph-test:
+    image: ghcr.io/limechain/matchstick:0.6.0
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: graph test

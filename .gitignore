@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+contracts/out/
+contracts/cache/
+subgraph/build/
+subgraph/generated/
+
+# Coverage
+contracts/coverage/
+contracts/lcov.info
+coverage/
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.production
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Foundry
+contracts/broadcast/
+contracts/cache_forge/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test artifacts
+e2e/.anvil/
+frontend/package-lock.json
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Mockup files (development only)
+mypage*.html
+image.png
+
+# Claude settings
+.claude/
