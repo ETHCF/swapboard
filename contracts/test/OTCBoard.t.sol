@@ -114,7 +114,9 @@ contract OTCBoardTest is Test {
         vm.startPrank(maker);
         fot.approve(address(board), 100 ether);
 
-        vm.expectRevert(abi.encodeWithSelector(IOTCBoard.BalanceMismatch.selector, 100 ether, 95 ether));
+        vm.expectRevert(
+            abi.encodeWithSelector(IOTCBoard.BalanceMismatch.selector, 100 ether, 95 ether)
+        );
         board.createOrder(address(fot), 100 ether, address(tokenB), AMOUNT_B);
         vm.stopPrank();
     }

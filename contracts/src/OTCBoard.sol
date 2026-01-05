@@ -69,7 +69,9 @@ contract OTCBoard is IOTCBoard, ReentrancyGuard {
 
     /// @inheritdoc IOTCBoard
     /// @dev Fee-on-transfer tokenB: maker receives less than amountB. This is maker's risk.
-    function fillOrder(uint256 orderId) external nonReentrant {
+    function fillOrder(
+        uint256 orderId
+    ) external nonReentrant {
         Order storage order = orders[orderId];
 
         if (order.maker == address(0)) revert OrderNotFound(orderId);
@@ -88,7 +90,9 @@ contract OTCBoard is IOTCBoard, ReentrancyGuard {
     }
 
     /// @inheritdoc IOTCBoard
-    function cancelOrder(uint256 orderId) external nonReentrant {
+    function cancelOrder(
+        uint256 orderId
+    ) external nonReentrant {
         Order storage order = orders[orderId];
 
         if (order.maker == address(0)) revert OrderNotFound(orderId);
@@ -103,16 +107,20 @@ contract OTCBoard is IOTCBoard, ReentrancyGuard {
     }
 
     /// @inheritdoc IOTCBoard
-    function getOrder(uint256 orderId) external view returns (Order memory) {
+    function getOrder(
+        uint256 orderId
+    ) external view returns (Order memory) {
         return orders[orderId];
     }
 
     /// @inheritdoc IOTCBoard
     /// @dev Gas scales linearly with array length. Callers should limit to ~100 IDs per call.
-    function getOrders(uint256[] calldata orderIds) external view returns (Order[] memory result) {
+    function getOrders(
+        uint256[] calldata orderIds
+    ) external view returns (Order[] memory result) {
         uint256 length = orderIds.length;
         result = new Order[](length);
-        for (uint256 i; i < length; ) {
+        for (uint256 i; i < length;) {
             result[i] = orders[orderIds[i]];
             unchecked {
                 ++i;
@@ -121,7 +129,9 @@ contract OTCBoard is IOTCBoard, ReentrancyGuard {
     }
 
     /// @inheritdoc IOTCBoard
-    function canFill(uint256 orderId) external view returns (bool) {
+    function canFill(
+        uint256 orderId
+    ) external view returns (bool) {
         return orders[orderId].active;
     }
 }

@@ -50,7 +50,11 @@ async function runTests() {
   console.log("Testing:", url);
   console.log("");
 
-  const browser = await puppeteer.launch({ headless: "new" });
+  const isCI = process.env.CI === "true";
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: isCI ? ["--no-sandbox", "--disable-setuid-sandbox"] : []
+  });
   const page = await browser.newPage();
 
   const errors = [];

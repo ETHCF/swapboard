@@ -16,16 +16,22 @@ contract MockBlacklist {
     event Transfer(address indexed from, address indexed to, uint256 amount);
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
-    modifier notBlacklisted(address account) {
+    modifier notBlacklisted(
+        address account
+    ) {
         require(!isBlacklisted[account], "Blacklisted");
         _;
     }
 
-    function blacklist(address account) external {
+    function blacklist(
+        address account
+    ) external {
         isBlacklisted[account] = true;
     }
 
-    function unblacklist(address account) external {
+    function unblacklist(
+        address account
+    ) external {
         isBlacklisted[account] = false;
     }
 
@@ -41,7 +47,10 @@ contract MockBlacklist {
         return true;
     }
 
-    function transfer(address to, uint256 amount) external notBlacklisted(msg.sender) notBlacklisted(to) returns (bool) {
+    function transfer(
+        address to,
+        uint256 amount
+    ) external notBlacklisted(msg.sender) notBlacklisted(to) returns (bool) {
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         emit Transfer(msg.sender, to, amount);

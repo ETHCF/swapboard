@@ -28,11 +28,15 @@ contract ReentrantAttacker {
         attackType = _attackType;
     }
 
-    function setOrderId(uint256 _orderId) external {
+    function setOrderId(
+        uint256 _orderId
+    ) external {
         orderId = _orderId;
     }
 
-    function setAttacker(address _attacker) external {
+    function setAttacker(
+        address _attacker
+    ) external {
         attacker = _attacker;
     }
 

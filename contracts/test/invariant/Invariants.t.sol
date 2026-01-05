@@ -35,7 +35,8 @@ contract OTCBoardInvariantTest is Test {
     /// @dev This is the core solvency invariant
     function invariant_solvency() public view {
         uint256 actualBalance = tokenA.balanceOf(address(board));
-        uint256 expectedBalance = handler.ghost_totalTokenADeposited() - handler.ghost_totalTokenAWithdrawn();
+        uint256 expectedBalance =
+            handler.ghost_totalTokenADeposited() - handler.ghost_totalTokenAWithdrawn();
 
         assertEq(actualBalance, expectedBalance, "Solvency violated: balance mismatch");
     }
@@ -140,7 +141,10 @@ contract OTCBoardStatelessInvariantTest is Test {
     }
 
     /// @notice Property: After createOrder, contract gains exactly amountA
-    function testFuzz_createOrder_contractBalanceIncrease(uint256 amountA, uint256 amountB) public {
+    function testFuzz_createOrder_contractBalanceIncrease(
+        uint256 amountA,
+        uint256 amountB
+    ) public {
         amountA = bound(amountA, 1, 1e30);
         amountB = bound(amountB, 1, 1e30);
 
@@ -167,7 +171,9 @@ contract OTCBoardStatelessInvariantTest is Test {
         board.fillOrder(orderId);
 
         uint256 takerBalanceAfter = tokenA.balanceOf(taker);
-        assertEq(takerBalanceAfter - takerBalanceBefore, amountA, "Taker did not receive correct amountA");
+        assertEq(
+            takerBalanceAfter - takerBalanceBefore, amountA, "Taker did not receive correct amountA"
+        );
     }
 
     /// @notice Property: After fillOrder, maker gains exactly amountB
@@ -184,7 +190,9 @@ contract OTCBoardStatelessInvariantTest is Test {
         board.fillOrder(orderId);
 
         uint256 makerBalanceAfter = tokenB.balanceOf(maker);
-        assertEq(makerBalanceAfter - makerBalanceBefore, amountB, "Maker did not receive correct amountB");
+        assertEq(
+            makerBalanceAfter - makerBalanceBefore, amountB, "Maker did not receive correct amountB"
+        );
     }
 
     /// @notice Property: After cancelOrder, maker regains exactly amountA
@@ -224,7 +232,9 @@ contract OTCBoardStatelessInvariantTest is Test {
     }
 
     /// @notice Property: nextOrderId monotonically increases
-    function testFuzz_nextOrderId_monotonic(uint256 n) public {
+    function testFuzz_nextOrderId_monotonic(
+        uint256 n
+    ) public {
         n = bound(n, 1, 50);
 
         uint256 prevId = board.nextOrderId();

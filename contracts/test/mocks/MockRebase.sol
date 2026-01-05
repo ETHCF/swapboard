@@ -23,13 +23,17 @@ contract MockRebase {
         return (_totalShares * _rebaseMultiplier) / 100;
     }
 
-    function balanceOf(address account) external view returns (uint256) {
+    function balanceOf(
+        address account
+    ) external view returns (uint256) {
         return (_shares[account] * _rebaseMultiplier) / 100;
     }
 
     /// @notice Rebase all balances
     /// @param newMultiplier Percentage multiplier (100 = 1x, 110 = 1.1x, 90 = 0.9x)
-    function rebase(uint256 newMultiplier) external {
+    function rebase(
+        uint256 newMultiplier
+    ) external {
         _rebaseMultiplier = newMultiplier;
         emit Rebase(newMultiplier);
     }

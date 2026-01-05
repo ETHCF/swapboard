@@ -96,27 +96,37 @@ interface IOTCBoard {
     /// @notice Fills an existing order by transferring tokenB to maker
     /// @dev Transfers tokenB from caller to maker, transfers tokenA from contract to caller
     /// @param orderId The unique identifier of the order to fill
-    function fillOrder(uint256 orderId) external;
+    function fillOrder(
+        uint256 orderId
+    ) external;
 
     /// @notice Cancels an existing order and returns tokenA to maker
     /// @dev Only callable by the order's maker
     /// @param orderId The unique identifier of the order to cancel
-    function cancelOrder(uint256 orderId) external;
+    function cancelOrder(
+        uint256 orderId
+    ) external;
 
     /// @notice Retrieves the details of a single order
     /// @param orderId The unique identifier of the order
     /// @return order The Order struct containing all order details
-    function getOrder(uint256 orderId) external view returns (Order memory order);
+    function getOrder(
+        uint256 orderId
+    ) external view returns (Order memory order);
 
     /// @notice Retrieves the details of multiple orders in a single call
     /// @dev Returns default Order struct for non-existent orderIds
     /// @param orderIds Array of order identifiers to retrieve
     /// @return result Array of Order structs in the same order as input
-    function getOrders(uint256[] calldata orderIds) external view returns (Order[] memory result);
+    function getOrders(
+        uint256[] calldata orderIds
+    ) external view returns (Order[] memory result);
 
     /// @notice Checks whether an order can be filled
     /// @dev Returns false for non-existent orders (they have active=false by default)
     /// @param orderId The unique identifier of the order to check
     /// @return Whether the order exists and is active
-    function canFill(uint256 orderId) external view returns (bool);
+    function canFill(
+        uint256 orderId
+    ) external view returns (bool);
 }

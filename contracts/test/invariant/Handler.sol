@@ -35,7 +35,9 @@ contract OTCBoardHandler is Test {
     uint256 public calls_fillOrder;
     uint256 public calls_cancelOrder;
 
-    modifier useActor(uint256 actorIndexSeed) {
+    modifier useActor(
+        uint256 actorIndexSeed
+    ) {
         currentActor = actors[bound(actorIndexSeed, 0, actors.length - 1)];
         vm.startPrank(currentActor);
         _;
@@ -66,7 +68,11 @@ contract OTCBoardHandler is Test {
     }
 
     /// @notice Creates a new order with bounded amounts
-    function createOrder(uint256 actorSeed, uint256 amountA, uint256 amountB) external useActor(actorSeed) {
+    function createOrder(
+        uint256 actorSeed,
+        uint256 amountA,
+        uint256 amountB
+    ) external useActor(actorSeed) {
         amountA = bound(amountA, 1, 1000 ether);
         amountB = bound(amountB, 1, 1000 ether);
 
@@ -116,7 +122,9 @@ contract OTCBoardHandler is Test {
     }
 
     /// @notice Cancels an order (only by maker)
-    function cancelOrder(uint256 orderIdSeed) external {
+    function cancelOrder(
+        uint256 orderIdSeed
+    ) external {
         uint256 nextId = board.nextOrderId();
         if (nextId == 0) {
             return;
