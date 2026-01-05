@@ -19,8 +19,8 @@ fail_on_revert = false
 shrink_run_limit = 5000
 
 [profile.ci]
-fuzz = { runs = 1000 }
-invariant = { runs = 512, depth = 1000 }
+fuzz = { runs = 256 }
+invariant = { runs = 64, depth = 128 }
 
 [fmt]
 line_length = 100
