@@ -650,8 +650,8 @@
   function init() {
     if (typeof ethers === "undefined") {
       const script = document.createElement("script");
-      script.src = "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.9.0/ethers.umd.min.js";
-      script.integrity = "sha384-ro/pNP1sfmhdbpq60NKzKAYve9JahlgCklXcKvudVEd/osRAYz2RlPG5TvB7Q04t";
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js";
+      script.integrity = "sha512-UXYETj+vXKSURF1UlgVRLzWRS9ZiQTv3lcL4rbeLyqTXCPNZC6PTLF/Ik3uxm2Zo+E109cUpJPZfLxJsCgKSng==";
       script.crossOrigin = "anonymous";
       script.onload = initApp;
       script.onerror = () => showToast("Failed to load ethers.js - integrity check may have failed", "error");

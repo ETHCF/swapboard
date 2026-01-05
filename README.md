@@ -1,5 +1,7 @@
 # Swapboard
 
+[![CI](https://github.com/ETHCF/swapboard/actions/workflows/ci.yml/badge.svg)](https://github.com/ETHCF/swapboard/actions/workflows/ci.yml)
+
 Trustless OTC bulletin board for ERC20 token swaps on Ethereum.
 
 No admin. No fees. No upgrades. No keys. No backend.
@@ -10,7 +12,7 @@ No admin. No fees. No upgrades. No keys. No backend.
 contracts/     Solidity smart contract (Foundry)
 subgraph/      The Graph indexer
 frontend/      Static HTML/CSS/JS
-e2e/           End-to-end tests
+e2e/           Full stack integration tests
 docs/          API documentation
 ```
 
@@ -19,8 +21,9 @@ docs/          API documentation
 ### Prerequisites
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
-- [Node.js](https://nodejs.org/) v18+
+- [Node.js](https://nodejs.org/) v20+
 - [pnpm](https://pnpm.io/)
+- [Docker](https://www.docker.com/) (required for subgraph and e2e tests)
 
 ### Build
 
@@ -31,58 +34,93 @@ cd contracts && forge build
 # Subgraph
 cd subgraph && pnpm install && pnpm build
 
-# E2E tests
-cd e2e && pnpm install
+# Frontend
+cd frontend && npm install puppeteer
+
+# E2E (optional)
+cd e2e && npm install
 ```
 
 ### Test
 
 ```bash
-# All tests
+# Default: contract + subgraph + frontend tests
 ./test.sh
 
-# Contract tests only
-cd contracts && forge test -vvv
+# Fast: contract tests only (no Docker)
+./test.sh --fast
 
-# E2E tests (starts Anvil automatically)
-cd e2e && pnpm test
+# Full E2E: includes Docker stack with Graph Node
+./test.sh --e2e
+
+# All tests including full E2E
+./test.sh --all
+
+# Individual test suites
+cd contracts && forge test -vvv           # 84 tests
+cd subgraph && pnpm test                  # 22 tests (Docker)
+cd frontend && node test.js               # 25 tests
+cd e2e && npm run e2e                     # Full stack (Docker)
+```
+
+### E2E Test Stack
+
+The full E2E tests spin up:
+- Anvil (local Ethereum node)
+- PostgreSQL (Graph Node storage)
+- IPFS (subgraph deployment)
+- Graph Node (indexer)
+
+Then execute real transactions, wait for indexing, and verify the frontend displays correct data from the subgraph.
+
+```bash
+# Manual control
+cd e2e
+./setup.sh    # Start stack, deploy contract + subgraph
+node e2e.test.js  # Run tests
+./teardown.sh # Stop stack
 ```
 
 ### Deploy
 
-1. Deploy contract:
+1. Configure environment:
 ```bash
 cd contracts
-PRIVATE_KEY=0x... forge script script/Deploy.s.sol \
-  --rpc-url $RPC_URL \
+cp .env.example .env
+# Edit .env with your values
+```
+
+2. Deploy contract:
+```bash
+source .env
+forge script script/Deploy.s.sol \
+  --rpc-url $MAINNET_RPC_URL \
   --broadcast \
   --verify
 ```
 
-2. Update addresses:
+3. Update addresses:
    - `frontend/app.js` - CONFIG.CONTRACT_ADDRESS
    - `subgraph/subgraph.yaml` - source.address and startBlock
 
-3. Deploy subgraph:
+4. Deploy subgraph:
 ```bash
 cd subgraph
 pnpm deploy
 ```
 
-4. Update subgraph URL:
+5. Update subgraph URL:
    - `frontend/app.js` - CONFIG.SUBGRAPH_URL
 
-5. Deploy frontend to IPFS:
+6. Deploy frontend to IPFS:
 ```bash
-# Install IPFS CLI if needed: https://docs.ipfs.tech/install/command-line/
 ipfs add -r frontend/
-# Note the CID from output, then pin it:
 ipfs pin add <CID>
 ```
 
-6. Update ENS contenthash (optional):
+7. Update ENS contenthash (optional):
 ```bash
-# Set contenthash to ipfs://<CID> via ENS manager or CLI
+# Set contenthash to ipfs://<CID> via ENS manager
 ```
 
 ## Contract

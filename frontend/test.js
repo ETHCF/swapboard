@@ -109,7 +109,7 @@ async function runTests() {
     const mockScript = fs.readFileSync(path.resolve(__dirname, "mock.js"), "utf8");
     await page.evaluateOnNewDocument(mockScript);
 
-    await page.goto(url, { waitUntil: "networkidle0", timeout: 10000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 10000 });
 
     // Wait for initial data load
     await page.waitForFunction(

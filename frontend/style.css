@@ -175,10 +175,6 @@ th {
   font-weight: bold;
 }
 
-.sort-arrows {
-  font-size: 12px;
-}
-
 tbody tr:hover {
   background: #f5f5f5;
 }

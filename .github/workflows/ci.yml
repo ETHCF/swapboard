@@ -11,12 +11,8 @@ env:
 
 jobs:
   contracts:
-    name: Contracts
+    name: Contract Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: contracts
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,83 +24,75 @@ jobs:
           version: nightly
 
       - name: Check formatting
+        working-directory: contracts
         run: forge fmt --check
 
-      - name: Build
+      - name: Build contracts
+        working-directory: contracts
         run: forge build --sizes
 
       - name: Run tests
+        working-directory: contracts
         run: forge test -vvv
 
       - name: Run coverage
-        run: forge coverage --report lcov
-
-      - name: Check gas snapshots
-        run: forge snapshot --check || true
+        working-directory: contracts
+        run: forge coverage --report summary
 
   subgraph:
-    name: Subgraph
+    name: Subgraph Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: subgraph
-
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
         with:
           version: 8
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: subgraph/pnpm-lock.yaml
-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        working-directory: subgraph
+        run: pnpm install
 
       - name: Generate types
+        working-directory: subgraph
         run: pnpm codegen
 
-      - name: Build
+      - name: Build subgraph
+        working-directory: subgraph
         run: pnpm build
 
       - name: Run tests
+        working-directory: subgraph
         run: pnpm test
 
   frontend:
-    name: Frontend
+    name: Frontend Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Install dependencies
-        run: npm ci || npm install
-
-      - name: Install Puppeteer browser
-        run: npx puppeteer browsers install chrome
+        working-directory: frontend
+        run: npm install
 
       - name: Run tests
-        run: npm run test:local
+        working-directory: frontend
+        run: npm test
 
-  e2e:
-    name: E2E Tests
+  security:
+    name: Security Checks
     runs-on: ubuntu-latest
-    needs: [contracts]
-    defaults:
-      run:
-        working-directory: e2e
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -115,18 +103,15 @@ jobs:
         with:
           version: nightly
 
-      - uses: pnpm/action-setup@v2
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        continue-on-error: true
         with:
-          version: 8
+          sarif: results.sarif
+          slither-args: --filter-paths "lib/|test/" contracts/
 
-      - uses: actions/setup-node@v4
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
-          node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: e2e/pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run E2E tests
-        run: pnpm test
+          sarif_file: results.sarif

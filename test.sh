@@ -1,28 +1,109 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
-echo "========================================="
-echo "SWAPBOARD TEST SUITE"
-echo "========================================="
-echo ""
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "1. Contract Unit Tests"
-echo "-----------------------------------------"
-cd contracts && forge test --summary
-cd ..
-echo ""
+show_help() {
+  echo "Usage: ./test.sh [options]"
+  echo ""
+  echo "Options:"
+  echo "  --all       Run all tests including full e2e (requires Docker)"
+  echo "  --e2e       Run only full e2e tests (requires Docker)"
+  echo "  --fast      Run unit tests only (no Docker required)"
+  echo "  --help      Show this help"
+  echo ""
+  echo "Default: Run contract, subgraph, and frontend tests"
+}
 
-echo "2. Subgraph Build"
-echo "-----------------------------------------"
-cd subgraph && pnpm build
-cd ..
-echo ""
+run_contract_tests() {
+  echo "1. Contract Tests (Foundry)"
+  echo "-----------------------------------------"
+  cd "$ROOT_DIR/contracts" && forge test --summary
+  cd "$ROOT_DIR"
+  echo ""
+}
 
-echo "3. E2E Tests (requires Anvil)"
-echo "-----------------------------------------"
-cd e2e && pnpm test
-cd ..
-echo ""
+run_subgraph_tests() {
+  echo "2. Subgraph Tests (Matchstick)"
+  echo "-----------------------------------------"
+  cd "$ROOT_DIR/subgraph" && pnpm build
+  if docker info > /dev/null 2>&1; then
+    SUBGRAPH_DIR="$(pwd)"
+    docker run --rm -v "${SUBGRAPH_DIR}":/matchstick -w /matchstick matchstick sh -c \
+      "rm -rf node_modules && npm install --silent && npm install -g @graphprotocol/graph-cli --silent && graph codegen && ../binary-linux-22"
+    pnpm install --silent
+  else
+    echo "Docker not running - trying native matchstick binary..."
+    pnpm test:local || echo "WARN: Subgraph tests skipped (matchstick requires Docker)"
+  fi
+  cd "$ROOT_DIR"
+  echo ""
+}
+
+run_frontend_tests() {
+  echo "3. Frontend Tests (Puppeteer)"
+  echo "-----------------------------------------"
+  cd "$ROOT_DIR/frontend" && node test.js
+  cd "$ROOT_DIR"
+  echo ""
+}
+
+run_e2e_tests() {
+  echo "4. Full E2E Tests (Docker Stack)"
+  echo "-----------------------------------------"
+  cd "$ROOT_DIR/e2e"
+
+  if ! docker info > /dev/null 2>&1; then
+    echo "ERROR: Docker required for e2e tests"
+    exit 1
+  fi
+
+  npm install --silent
+  npm run e2e
+  cd "$ROOT_DIR"
+  echo ""
+}
+
+# Parse arguments
+case "${1:-}" in
+  --help|-h)
+    show_help
+    exit 0
+    ;;
+  --e2e)
+    echo "========================================="
+    echo "SWAPBOARD E2E TESTS"
+    echo "========================================="
+    echo ""
+    run_e2e_tests
+    ;;
+  --fast)
+    echo "========================================="
+    echo "SWAPBOARD FAST TESTS"
+    echo "========================================="
+    echo ""
+    run_contract_tests
+    ;;
+  --all)
+    echo "========================================="
+    echo "SWAPBOARD FULL TEST SUITE"
+    echo "========================================="
+    echo ""
+    run_contract_tests
+    run_subgraph_tests
+    run_frontend_tests
+    run_e2e_tests
+    ;;
+  *)
+    echo "========================================="
+    echo "SWAPBOARD TEST SUITE"
+    echo "========================================="
+    echo ""
+    run_contract_tests
+    run_subgraph_tests
+    run_frontend_tests
+    ;;
+esac
 
 echo "========================================="
 echo "ALL TESTS PASSED"

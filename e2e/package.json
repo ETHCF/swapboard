@@ -1,19 +1,21 @@
 {
-  "name": "otcboard-e2e",
+  "name": "swapboard-e2e",
   "version": "1.0.0",
   "private": true,
-  "description": "End-to-end tests for OTCBoard contract",
+  "description": "End-to-end tests for Swapboard (full stack)",
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "setup": "bash setup.sh",
+    "teardown": "bash teardown.sh",
+    "test": "node e2e.test.js",
+    "e2e": "bash setup.sh && node e2e.test.js; EXIT=$?; bash teardown.sh; exit $EXIT"
   },
-  "devDependencies": {
-    "viem": "2.21.0",
-    "vitest": "2.1.0"
+  "dependencies": {
+    "puppeteer": "^24.0.0",
+    "viem": "^2.21.0"
   }
 }

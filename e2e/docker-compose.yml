@@ -1,0 +1,76 @@
+services:
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    platform: linux/amd64
+    entrypoint: ["anvil"]
+    command: ["--host", "0.0.0.0", "--block-time", "1"]
+    ports:
+      - "8545:8545"
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+      start_period: 15s
+
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: graph-node
+      POSTGRES_PASSWORD: let-me-in
+      POSTGRES_DB: graph-node
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graph-node"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  ipfs:
+    image: ipfs/kubo:v0.17.0
+    ports:
+      - "5001:5001"
+    volumes:
+      - ipfs_data:/data/ipfs
+    healthcheck:
+      test: ["CMD-SHELL", "ipfs id || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+  graph-node:
+    image: graphprotocol/graph-node:v0.35.1
+    platform: linux/amd64
+    ports:
+      - "8100:8000"
+      - "8120:8020"
+      - "8130:8030"
+    depends_on:
+      anvil:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+    environment:
+      postgres_host: postgres
+      postgres_user: graph-node
+      postgres_pass: let-me-in
+      postgres_db: graph-node
+      ipfs: "ipfs:5001"
+      ethereum: "mainnet:http://anvil:8545"
+      GRAPH_LOG: info
+      ETHEREUM_REORG_THRESHOLD: 1
+      ETHEREUM_ANCESTOR_COUNT: 1
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8030"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  postgres_data:
+  ipfs_data:

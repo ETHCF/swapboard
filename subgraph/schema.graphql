@@ -1,4 +1,4 @@
-# OTCBoard Subgraph Schema
+# Swapboard Subgraph Schema
 # Indexes orders, tokens, and global statistics for the OTC bulletin board
 
 """

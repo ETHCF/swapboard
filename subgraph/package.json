@@ -1,8 +1,8 @@
 {
-  "name": "otcboard-subgraph",
+  "name": "swapboard-subgraph",
   "version": "1.0.0",
   "private": true,
-  "description": "The Graph subgraph for OTCBoard contract indexing",
+  "description": "The Graph subgraph for Swapboard contract indexing",
   "license": "MIT",
   "engines": {
     "node": ">=20.0.0"
@@ -10,11 +10,12 @@
   "scripts": {
     "codegen": "graph codegen",
     "build": "graph build",
-    "test": "graph test",
-    "deploy": "graph deploy --studio otcboard",
-    "create-local": "graph create --node http://localhost:8020/ otcboard",
-    "remove-local": "graph remove --node http://localhost:8020/ otcboard",
-    "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 otcboard"
+    "test": "graph test -d",
+    "test:local": "graph test",
+    "deploy": "graph deploy --studio swapboard",
+    "create-local": "graph create --node http://localhost:8020/ swapboard",
+    "remove-local": "graph remove --node http://localhost:8020/ swapboard",
+    "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 swapboard"
   },
   "dependencies": {
     "@graphprotocol/graph-cli": "0.71.0",
