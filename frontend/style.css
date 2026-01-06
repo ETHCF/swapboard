@@ -90,6 +90,12 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.loading-dots {
+  display: inline-block;
+  width: 1.5em;
+  text-align: left;
+}
+
 .loading-dots::after {
   content: '';
   animation: dots 1.2s steps(4, end) infinite;
