@@ -2792,6 +2792,7 @@
   }
 
   function initApp() {
+    console.log("initApp started");
     validateConfig();
 
     // Load saved preferences
@@ -2884,6 +2885,7 @@
       }
     });
 
+    console.log("About to add hashchange listener");
     // Handle hash changes
     window.addEventListener("hashchange", () => {
       const newOrderId = getOrderIdFromHash();
@@ -2905,6 +2907,7 @@
       }
     });
 
+    console.log("About to load notification preferences");
     // Load notification preference from localStorage
     if (localStorage.getItem("swapboard_notifications") === "true" && Notification.permission === "granted") {
       notificationsEnabled = true;
