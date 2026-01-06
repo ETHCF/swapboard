@@ -109,6 +109,12 @@
   let userAddress = null;
   let contract = null;
 
+  // Create form state for validation
+  const createFormState = {
+    tokenA: { info: null, balance: null },
+    tokenB: { info: null, balance: null }
+  };
+
   const tokenCache = new Map();
   const ensCache = new Map();
   let currentPage = 1;
@@ -1112,7 +1118,12 @@
     const intPart = parts[0] || "0";
     let decPart = parts[1] || "";
     if (decPart.length > decimals) {
-      decPart = decPart.slice(0, decimals);
+      // Check if truncation would result in zero
+      const truncated = decPart.slice(0, decimals);
+      if (intPart === "0" && /^0*$/.test(truncated)) {
+        throw new Error(`Too many decimals. This token only supports ${decimals} decimal places.`);
+      }
+      decPart = truncated;
     } else {
       decPart = decPart.padEnd(decimals, "0");
     }
@@ -1164,7 +1175,7 @@
         case "ZeroAddress":
           return "Invalid token address";
         case "ZeroAmount":
-          return "Amount must be greater than zero";
+          return "Amount too small (check decimal places)";
         case "SameToken":
           return "Offered and wanted tokens must be different";
         case "NotAContract":
@@ -1207,8 +1218,11 @@
     if (msg.includes("nonce")) {
       return "Transaction conflict, try again";
     }
-    if (msg.includes("gas")) {
-      return "Gas estimation failed";
+    if (msg.includes("missing revert data")) {
+      return "Transaction failed. Order may already be filled or cancelled.";
+    }
+    if (msg.includes("gas") && msg.includes("estimation")) {
+      return "Transaction would fail. Check order status and try again.";
     }
     return e.reason || e.shortMessage || e.message || "Unknown error";
   }
@@ -2384,6 +2398,12 @@
         return;
       }
 
+      // Check balance for offered token
+      if (createFormState.tokenA.balance !== null && amountA > createFormState.tokenA.balance) {
+        showToast("Insufficient balance for offered token", "error");
+        return;
+      }
+
       showModal(
         "Create Order",
         `Sell ${amountAStr} ${tokenA.symbol} for ${amountBStr} ${tokenB.symbol}`,
@@ -2647,17 +2667,26 @@
           infoEl.appendChild(warnSpan);
         }
 
+        // Store token info in form state
+        const stateKey = inputId === "#create-tokenA" ? "tokenA" : "tokenB";
+        createFormState[stateKey].info = info;
+        createFormState[stateKey].balance = null;
+
         // Fetch balance if connected
         if (balanceId && userAddress && provider) {
           try {
             const tokenContract = new ethers.Contract(addr, ERC20_ABI, provider);
             const balance = await tokenContract.balanceOf(userAddress);
+            createFormState[stateKey].balance = balance;
             const formatted = formatAmount(balance.toString(), info.decimals);
             $(balanceId).textContent = "Balance: " + formatted;
 
+            // Validate amount if already entered
+            const amountInputId = inputId === "#create-tokenA" ? "#create-amountA" : "#create-amountB";
+            validateAmountInput(amountInputId, stateKey);
+
             // Add quick amount buttons
             if (quickAmountsId && balance > 0n) {
-              const amountInput = inputId === "#create-tokenA" ? "#create-amountA" : "#create-amountB";
               $(quickAmountsId).innerHTML = "";
               [25, 50, 75, 100].forEach(pct => {
                 const btn = document.createElement("button");
@@ -2666,7 +2695,8 @@
                 btn.classList.add("quick-amt-btn");
                 btn.addEventListener("click", () => {
                   const amt = (balance * BigInt(pct)) / 100n;
-                  $(amountInput).value = formatAmount(amt.toString(), info.decimals);
+                  $(amountInputId).value = formatAmount(amt.toString(), info.decimals);
+                  $(amountInputId).dispatchEvent(new Event("input"));
                 });
                 $(quickAmountsId).appendChild(btn);
               });
@@ -2677,6 +2707,61 @@
         }
       }, CONFIG.DEBOUNCE_DELAY);
     });
+
+    // Clear state when token address is cleared
+    input.addEventListener("input", () => {
+      if (!input.value.trim()) {
+        const stateKey = inputId === "#create-tokenA" ? "tokenA" : "tokenB";
+        createFormState[stateKey].info = null;
+        createFormState[stateKey].balance = null;
+      }
+    });
+  }
+
+  function validateAmountInput(amountInputId, stateKey) {
+    const input = $(amountInputId);
+    const state = createFormState[stateKey];
+    const errorSpanId = amountInputId + "-error";
+    let errorSpan = document.getElementById(errorSpanId.slice(1));
+
+    if (!errorSpan) {
+      errorSpan = document.createElement("span");
+      errorSpan.id = errorSpanId.slice(1);
+      errorSpan.className = "amount-error";
+      input.parentNode.appendChild(errorSpan);
+    }
+
+    const value = input.value.trim();
+    if (!value || !state.info) {
+      input.classList.remove("input-error");
+      errorSpan.textContent = "";
+      return true;
+    }
+
+    try {
+      const amount = parseAmount(value, state.info.decimals);
+
+      // Check if amount exceeds balance (only for tokenA - offered token)
+      if (stateKey === "tokenA" && state.balance !== null && amount > state.balance) {
+        input.classList.add("input-error");
+        errorSpan.textContent = "Exceeds balance";
+        return false;
+      }
+
+      if (amount === 0n && value !== "0") {
+        input.classList.add("input-error");
+        errorSpan.textContent = "Amount too small";
+        return false;
+      }
+
+      input.classList.remove("input-error");
+      errorSpan.textContent = "";
+      return true;
+    } catch (e) {
+      input.classList.add("input-error");
+      errorSpan.textContent = e.message.includes("decimals") ? `Max ${state.info.decimals} decimals` : "Invalid amount";
+      return false;
+    }
   }
 
   function init() {
@@ -2976,8 +3061,14 @@
       }
     }
 
-    $("#create-amountA").addEventListener("input", updatePriceDisplay);
-    $("#create-amountB").addEventListener("input", updatePriceDisplay);
+    $("#create-amountA").addEventListener("input", () => {
+      updatePriceDisplay();
+      validateAmountInput("#create-amountA", "tokenA");
+    });
+    $("#create-amountB").addEventListener("input", () => {
+      updatePriceDisplay();
+      validateAmountInput("#create-amountB", "tokenB");
+    });
 
     // Clear price info when tokens change
     $("#create-tokenA").addEventListener("input", () => {

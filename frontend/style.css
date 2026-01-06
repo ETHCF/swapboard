@@ -433,6 +433,18 @@ tbody tr.highlighted-order:hover {
   min-width: 46ch;
 }
 
+.sell-modal-content .form-row input.input-error {
+  border-color: #c00;
+  background-color: #fff0f0;
+}
+
+.amount-error {
+  display: block;
+  color: #c00;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
 .sell-modal-content .warning {
   margin-bottom: 20px;
 }
