@@ -38,6 +38,15 @@
     DEBOUNCE_DELAY: 500,
   };
 
+  const EXPECTED_CHAIN_ID = 11155111;
+  const EXPECTED_CHAIN = {
+    chainId: "0xaa36a7",
+    chainName: "Sepolia",
+    nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://rpc.sepolia.org"],
+    blockExplorerUrls: ["https://sepolia.etherscan.io"]
+  };
+
   // Validate configuration - fail fast on placeholder values
   // Skips validation on localhost/file:// for development/testing
   function validateConfig() {
@@ -2374,6 +2383,47 @@
     }
   }
 
+  async function switchToExpectedNetwork() {
+    try {
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: EXPECTED_CHAIN.chainId }]
+      });
+      return true;
+    } catch (switchError) {
+      if (switchError.code === 4902) {
+        try {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [EXPECTED_CHAIN]
+          });
+          return true;
+        } catch (addError) {
+          return false;
+        }
+      }
+      return false;
+    }
+  }
+
+  async function validateNetwork() {
+    const network = await provider.getNetwork();
+    const chainId = Number(network.chainId);
+
+    if (chainId !== EXPECTED_CHAIN_ID) {
+      const networkName = NETWORK_NAMES[chainId] || "Chain " + chainId;
+      showToast(`Wrong network: ${networkName}. Switching to Sepolia...`, "error", true);
+
+      const switched = await switchToExpectedNetwork();
+      if (!switched) {
+        showToast("Please switch to Sepolia network in your wallet", "error");
+        return false;
+      }
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Connects to the user's Ethereum wallet via window.ethereum (MetaMask, etc).
    * Sets up the ethers provider, signer, and contract instance.
@@ -2388,6 +2438,9 @@
       await provider.send("eth_requestAccounts", []);
       signer = await provider.getSigner();
       userAddress = await signer.getAddress();
+
+      const validNetwork = await validateNetwork();
+      if (!validNetwork) return;
 
       const network = await provider.getNetwork();
       updateNetworkIndicator(Number(network.chainId));
@@ -2852,6 +2905,10 @@
         if (accounts && accounts.length > 0) {
           signer = await provider.getSigner();
           userAddress = await signer.getAddress();
+
+          const validNetwork = await validateNetwork();
+          if (!validNetwork) return;
+
           const network = await provider.getNetwork();
           updateNetworkIndicator(Number(network.chainId));
           contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
@@ -2906,8 +2963,24 @@
         loadOrders();
       });
 
-      window.ethereum.on("chainChanged", () => {
-        window.location.reload();
+      window.ethereum.on("chainChanged", (chainIdHex) => {
+        const chainId = parseInt(chainIdHex, 16);
+        if (chainId !== EXPECTED_CHAIN_ID) {
+          showToast("Please switch to Sepolia network", "error");
+          userAddress = null;
+          signer = null;
+          contract = null;
+          $("#connect-btn").textContent = "[Connect Wallet]";
+          $("#sell-btn").classList.add("hidden");
+          $("#notify-btn").classList.add("hidden");
+          document.getElementById("network-indicator").classList.add("hidden");
+          $("#my-orders-label").classList.add("hidden");
+          $("#filter-my-orders").checked = false;
+          currentFilters.myOrders = false;
+          loadOrders();
+        } else {
+          window.location.reload();
+        }
       });
     }
 
