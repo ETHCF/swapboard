@@ -610,11 +610,14 @@
       const amountA = BigInt(order.amountA);
       const amountB = BigInt(order.amountB);
 
-      // Price: amountB/amountA (how much wanting per selling)
-      let price = "N/A";
-      if (amountA > 0n) {
+      // Price: calculate both directions for toggle
+      let priceNormal = "N/A";
+      let priceInverted = "N/A";
+      if (amountA > 0n && amountB > 0n) {
         const priceNum = Number(amountB) / Number(amountA) * Math.pow(10, tokenADecimals - tokenBDecimals);
-        price = formatRatio(priceNum) + " " + escapeHtml(order.tokenB.symbol) + "/" + escapeHtml(order.tokenA.symbol);
+        const priceNumInv = Number(amountA) / Number(amountB) * Math.pow(10, tokenBDecimals - tokenADecimals);
+        priceNormal = formatRatio(priceNum) + " " + escapeHtml(order.tokenB.symbol) + "/" + escapeHtml(order.tokenA.symbol);
+        priceInverted = formatRatio(priceNumInv) + " " + escapeHtml(order.tokenA.symbol) + "/" + escapeHtml(order.tokenB.symbol);
       }
 
       // Calculate USD value of sell side
@@ -690,9 +693,22 @@
       tdUsd.style.whiteSpace = "nowrap";
       tr.appendChild(tdUsd);
 
-      // Column 7: Price
+      // Column 7: Price (clickable to invert ratio)
       const tdPrice = document.createElement("td");
-      tdPrice.textContent = price;
+      tdPrice.textContent = priceNormal;
+      if (priceNormal !== "N/A") {
+        tdPrice.dataset.priceNormal = priceNormal;
+        tdPrice.dataset.priceInverted = priceInverted;
+        tdPrice.dataset.showingNormal = "true";
+        tdPrice.style.cursor = "pointer";
+        tdPrice.title = "Click to invert ratio";
+        tdPrice.addEventListener("click", function(e) {
+          e.stopPropagation();
+          const isNormal = this.dataset.showingNormal === "true";
+          this.textContent = isNormal ? this.dataset.priceInverted : this.dataset.priceNormal;
+          this.dataset.showingNormal = isNormal ? "false" : "true";
+        });
+      }
       tr.appendChild(tdPrice);
 
       // Click handler for filling orders
