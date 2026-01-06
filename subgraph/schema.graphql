@@ -68,7 +68,7 @@ type Token @entity {
 }
 
 """
-Global statistics for the entire OTCBoard.
+Global statistics for the entire Swapboard.
 Single entity with id "global".
 """
 type GlobalStats @entity {

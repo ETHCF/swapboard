@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {OTCBoard} from "../../src/OTCBoard.sol";
+import {Swapboard} from "../../src/Swapboard.sol";
 
 /// @title ReentrantAttacker
 /// @notice Mock ERC20 that attempts reentrancy on transfer
@@ -14,7 +14,7 @@ contract ReentrantAttacker {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    OTCBoard public immutable board;
+    Swapboard public immutable board;
     string public attackType;
     uint256 public orderId;
     address public attacker;
@@ -27,7 +27,7 @@ contract ReentrantAttacker {
         address _board,
         string memory _attackType
     ) {
-        board = OTCBoard(_board);
+        board = Swapboard(_board);
         attackType = _attackType;
     }
 

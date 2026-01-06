@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-/// @title IOTCBoard
-/// @notice Interface for the OTC Bulletin Board contract
+/// @title ISwapboard
+/// @notice Interface for the Swapboard contract
 /// @dev All external functions are defined here for composability
-interface IOTCBoard {
+interface ISwapboard {
     /// @notice Represents a single OTC order
     /// @param maker Address that created the order and deposited tokenA
     /// @param tokenA Address of the token being sold (held in escrow)

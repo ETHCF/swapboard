@@ -2,25 +2,25 @@
 pragma solidity ^0.8.33;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {OTCBoard} from "../../src/OTCBoard.sol";
-import {IOTCBoard} from "../../src/interfaces/IOTCBoard.sol";
+import {Swapboard} from "../../src/Swapboard.sol";
+import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
-import {OTCBoardHandler} from "./Handler.sol";
+import {SwapboardHandler} from "./Handler.sol";
 
-/// @title OTCBoardInvariantTest
-/// @notice Invariant tests for OTCBoard contract
+/// @title SwapboardInvariantTest
+/// @notice Invariant tests for Swapboard contract
 /// @dev Tests protocol invariants that must hold across all state transitions
-contract OTCBoardInvariantTest is Test {
-    OTCBoard public board;
+contract SwapboardInvariantTest is Test {
+    Swapboard public board;
     MockERC20 public tokenA;
     MockERC20 public tokenB;
-    OTCBoardHandler public handler;
+    SwapboardHandler public handler;
 
     function setUp() public {
-        board = new OTCBoard();
+        board = new Swapboard();
         tokenA = new MockERC20("Token A", "TKA", 18);
         tokenB = new MockERC20("Token B", "TKB", 18);
-        handler = new OTCBoardHandler(board, tokenA, tokenB);
+        handler = new SwapboardHandler(board, tokenA, tokenB);
 
         // Target only the handler for fuzzing
         targetContract(address(handler));
@@ -102,10 +102,10 @@ contract OTCBoardInvariantTest is Test {
     }
 }
 
-/// @title OTCBoardStatelessInvariantTest
+/// @title SwapboardStatelessInvariantTest
 /// @notice Stateless invariant tests using direct property assertions
-contract OTCBoardStatelessInvariantTest is Test {
-    OTCBoard public board;
+contract SwapboardStatelessInvariantTest is Test {
+    Swapboard public board;
     MockERC20 public tokenA;
     MockERC20 public tokenB;
 
@@ -113,7 +113,7 @@ contract OTCBoardStatelessInvariantTest is Test {
     address public taker = makeAddr("taker");
 
     function setUp() public {
-        board = new OTCBoard();
+        board = new Swapboard();
         tokenA = new MockERC20("Token A", "TKA", 18);
         tokenB = new MockERC20("Token B", "TKB", 18);
 
@@ -242,7 +242,7 @@ contract OTCBoardStatelessInvariantTest is Test {
 
         assertFalse(board.canFill(orderId), "Order should not be fillable after fill");
 
-        IOTCBoard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = board.getOrder(orderId);
         assertFalse(order.active, "Order should be inactive after fill");
     }
 

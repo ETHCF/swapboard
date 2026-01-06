@@ -361,7 +361,7 @@ Page numbers (not infinite scroll). Subgraph handles pagination queries.
 
 ### Contract
 
-1. Deploy OTCBoard.sol to mainnet
+1. Deploy Swapboard.sol to mainnet
 2. Verify on Etherscan
 3. Contract is permissionless immediately (no keys to burn)
 
@@ -395,11 +395,11 @@ Contract:    Etherscan direct interaction
 ```
 contracts/
 ├── src/
-│   ├── OTCBoard.sol
+│   ├── Swapboard.sol
 │   └── interfaces/
-│       └── IOTCBoard.sol
+│       └── ISwapboard.sol
 ├── test/
-│   ├── OTCBoard.t.sol
+│   ├── Swapboard.t.sol
 │   └── mocks/
 │       └── MockERC20.sol
 ├── script/

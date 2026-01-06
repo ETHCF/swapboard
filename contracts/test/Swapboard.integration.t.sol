@@ -2,12 +2,12 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {OTCBoard} from "../src/OTCBoard.sol";
-import {IOTCBoard} from "../src/interfaces/IOTCBoard.sol";
+import {Swapboard} from "../src/Swapboard.sol";
+import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 
-contract OTCBoardIntegrationTest is Test {
-    OTCBoard public board;
+contract SwapboardIntegrationTest is Test {
+    Swapboard public board;
     MockERC20 public weth;
     MockERC20 public usdc;
     MockERC20 public dai;
@@ -19,7 +19,7 @@ contract OTCBoardIntegrationTest is Test {
     address public dave = address(0xDA7E);
 
     function setUp() public {
-        board = new OTCBoard();
+        board = new Swapboard();
 
         weth = new MockERC20("Wrapped Ether", "WETH", 18);
         usdc = new MockERC20("USD Coin", "USDC", 6);
@@ -94,7 +94,7 @@ contract OTCBoardIntegrationTest is Test {
         assertEq(usdc.balanceOf(alice), aliceUsdcBefore + 150_000e6);
         assertEq(weth.balanceOf(address(board)), 0);
 
-        IOTCBoard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = board.getOrder(orderId);
         assertFalse(order.active);
     }
 
@@ -114,7 +114,7 @@ contract OTCBoardIntegrationTest is Test {
         assertEq(weth.balanceOf(alice), aliceWethBefore);
         assertEq(weth.balanceOf(address(board)), 0);
 
-        IOTCBoard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = board.getOrder(orderId);
         assertFalse(order.active);
     }
 
@@ -134,7 +134,7 @@ contract OTCBoardIntegrationTest is Test {
         board.fillOrder(orderId);
 
         vm.prank(charlie);
-        vm.expectRevert(abi.encodeWithSelector(IOTCBoard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
         board.fillOrder(orderId);
 
         assertEq(weth.balanceOf(bob), 1000 ether + 10 ether);
@@ -154,7 +154,7 @@ contract OTCBoardIntegrationTest is Test {
         board.fillOrder(orderId);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IOTCBoard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
         board.cancelOrder(orderId);
     }
 
@@ -171,7 +171,7 @@ contract OTCBoardIntegrationTest is Test {
         assertEq(board.nextOrderId(), 10);
         assertEq(weth.balanceOf(address(board)), 100 ether);
 
-        IOTCBoard.Order[] memory orders = board.getOrders(orderIds);
+        ISwapboard.Order[] memory orders = board.getOrders(orderIds);
         assertEq(orders.length, 10);
         for (uint256 i = 0; i < 10; i++) {
             assertEq(orders[i].maker, alice);
@@ -226,7 +226,7 @@ contract OTCBoardIntegrationTest is Test {
         uint256 orderId = board.createOrder(address(weth), largeAmount, address(usdc), 1e6);
         vm.stopPrank();
 
-        IOTCBoard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = board.getOrder(orderId);
         assertEq(order.amountA, largeAmount);
 
         vm.startPrank(bob);
@@ -257,7 +257,7 @@ contract OTCBoardIntegrationTest is Test {
         weth.approve(address(board), 10 ether);
 
         vm.expectEmit(true, true, false, true);
-        emit IOTCBoard.OrderCreated(0, alice, address(weth), 10 ether, address(usdc), 30_000e6);
+        emit ISwapboard.OrderCreated(0, alice, address(weth), 10 ether, address(usdc), 30_000e6);
         uint256 orderId = board.createOrder(address(weth), 10 ether, address(usdc), 30_000e6);
         vm.stopPrank();
 
@@ -265,7 +265,7 @@ contract OTCBoardIntegrationTest is Test {
         usdc.approve(address(board), 30_000e6);
 
         vm.expectEmit(true, true, false, true);
-        emit IOTCBoard.OrderFilled(orderId, bob);
+        emit ISwapboard.OrderFilled(orderId, bob);
         board.fillOrder(orderId);
         vm.stopPrank();
     }
@@ -283,7 +283,7 @@ contract OTCBoardIntegrationTest is Test {
         ids[2] = 1;
         ids[3] = 1000;
 
-        IOTCBoard.Order[] memory orders = board.getOrders(ids);
+        ISwapboard.Order[] memory orders = board.getOrders(ids);
         assertEq(orders.length, 4);
         assertEq(orders[0].maker, alice);
         assertEq(orders[1].maker, address(0));

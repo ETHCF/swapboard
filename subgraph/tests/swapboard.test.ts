@@ -9,7 +9,7 @@ import {
 } from "matchstick-as/assembly/index";
 import { Address, BigInt, Bytes, ethereum } from "@graphprotocol/graph-ts";
 import { handleOrderCreated, handleOrderFilled, handleOrderCanceled } from "../src/mapping";
-import { OrderCreated, OrderFilled, OrderCanceled } from "../generated/OTCBoard/OTCBoard";
+import { OrderCreated, OrderFilled, OrderCanceled } from "../generated/Swapboard/Swapboard";
 import { newMockEvent } from "matchstick-as";
 
 const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
@@ -93,7 +93,7 @@ function createOrderCanceledEvent(orderId: i32): OrderCanceled {
   return event;
 }
 
-describe("OTCBoard Subgraph", () => {
+describe("Swapboard Subgraph", () => {
   beforeEach(() => {
     clearStore();
     mockERC20(WETH_ADDRESS, "WETH", "Wrapped Ether", 18);

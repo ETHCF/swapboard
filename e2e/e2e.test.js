@@ -41,7 +41,7 @@ function loadConfig() {
 const CONFIG = loadConfig();
 
 // ABIs
-const OTCBOARD_ABI = [
+const SWAPBOARD_ABI = [
   {
     type: "function",
     name: "createOrder",
@@ -230,7 +230,7 @@ async function runTests() {
   // Create order
   hash = await aliceWallet.writeContract({
     address: CONFIG.CONTRACT_ADDR,
-    abi: OTCBOARD_ABI,
+    abi: SWAPBOARD_ABI,
     functionName: "createOrder",
     args: [CONFIG.TOKENA_ADDR, parseEther("100"), CONFIG.TOKENB_ADDR, parseUnits("3000", 6)],
   });
@@ -241,7 +241,7 @@ async function runTests() {
   // Create second order
   hash = await aliceWallet.writeContract({
     address: CONFIG.CONTRACT_ADDR,
-    abi: OTCBOARD_ABI,
+    abi: SWAPBOARD_ABI,
     functionName: "createOrder",
     args: [CONFIG.TOKENA_ADDR, parseEther("50"), CONFIG.TOKENB_ADDR, parseUnits("1500", 6)],
   });
@@ -251,7 +251,7 @@ async function runTests() {
   // Fill order 0
   hash = await bobWallet.writeContract({
     address: CONFIG.CONTRACT_ADDR,
-    abi: OTCBOARD_ABI,
+    abi: SWAPBOARD_ABI,
     functionName: "fillOrder",
     args: [0n],
   });
@@ -262,7 +262,7 @@ async function runTests() {
   // Cancel order 1
   hash = await aliceWallet.writeContract({
     address: CONFIG.CONTRACT_ADDR,
-    abi: OTCBOARD_ABI,
+    abi: SWAPBOARD_ABI,
     functionName: "cancelOrder",
     args: [1n],
   });

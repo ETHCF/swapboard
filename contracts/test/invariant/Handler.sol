@@ -2,15 +2,15 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {OTCBoard} from "../../src/OTCBoard.sol";
-import {IOTCBoard} from "../../src/interfaces/IOTCBoard.sol";
+import {Swapboard} from "../../src/Swapboard.sol";
+import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 
-/// @title OTCBoardHandler
-/// @notice Handler contract for invariant testing of OTCBoard
+/// @title SwapboardHandler
+/// @notice Handler contract for invariant testing of Swapboard
 /// @dev Tracks ghost variables for accounting invariants
-contract OTCBoardHandler is Test {
-    OTCBoard public board;
+contract SwapboardHandler is Test {
+    Swapboard public board;
     MockERC20 public tokenA;
     MockERC20 public tokenB;
 
@@ -45,7 +45,7 @@ contract OTCBoardHandler is Test {
     }
 
     constructor(
-        OTCBoard _board,
+        Swapboard _board,
         MockERC20 _tokenA,
         MockERC20 _tokenB
     ) {
@@ -107,7 +107,7 @@ contract OTCBoardHandler is Test {
         }
 
         uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
-        IOTCBoard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = board.getOrder(orderId);
 
         if (!order.active) {
             return; // Order not active
@@ -138,7 +138,7 @@ contract OTCBoardHandler is Test {
         }
 
         uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
-        IOTCBoard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = board.getOrder(orderId);
 
         if (!order.active) {
             return;
@@ -180,7 +180,7 @@ contract OTCBoardHandler is Test {
     function sumActiveOrderAmounts() external view returns (uint256 total) {
         uint256 nextId = board.nextOrderId();
         for (uint256 i = 0; i < nextId; i++) {
-            IOTCBoard.Order memory order = board.getOrder(i);
+            ISwapboard.Order memory order = board.getOrder(i);
             if (order.active) {
                 total += order.amountA;
             }

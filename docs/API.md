@@ -119,7 +119,7 @@ For market makers and trading bots.
 
 ## Subgraph
 
-**Endpoint:** `https://api.studio.thegraph.com/query/YOUR_ID/otcboard/version/latest`
+**Endpoint:** `https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest`
 
 ### Query: Open Orders
 
@@ -316,7 +316,7 @@ async function monitorOrders(provider) {
 ```python
 import requests
 
-SUBGRAPH_URL = "https://api.studio.thegraph.com/query/YOUR_ID/otcboard/version/latest"
+SUBGRAPH_URL = "https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest"
 
 def get_open_orders(token_a=None, token_b=None, limit=100):
     where = "active: true"
@@ -356,7 +356,7 @@ pragma solidity ^0.8.24;
 import {Script} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-interface IOTCBoard {
+interface ISwapboard {
     function createOrder(
         address tokenA,
         uint256 amountA,
@@ -377,7 +377,7 @@ contract CreateOrder is Script {
         vm.startBroadcast(pk);
 
         IERC20(tokenA).approve(board, amountA);
-        uint256 orderId = IOTCBoard(board).createOrder(tokenA, amountA, tokenB, amountB);
+        uint256 orderId = ISwapboard(board).createOrder(tokenA, amountA, tokenB, amountB);
 
         vm.stopBroadcast();
     }

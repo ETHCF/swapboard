@@ -6,7 +6,7 @@
     // Contract address on Ethereum mainnet - MUST be updated after deployment
     CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000",
     // The Graph subgraph endpoint - MUST be updated after deployment
-    SUBGRAPH_URL: "https://api.studio.thegraph.com/query/YOUR_ID/otcboard/version/latest",
+    SUBGRAPH_URL: "https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest",
     // Number of orders per page
     PAGE_SIZE: 20,
     // Request timeout in milliseconds

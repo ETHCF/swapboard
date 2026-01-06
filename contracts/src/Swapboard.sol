@@ -4,13 +4,13 @@ pragma solidity ^0.8.33;
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IOTCBoard} from "./interfaces/IOTCBoard.sol";
+import {ISwapboard} from "./interfaces/ISwapboard.sol";
 
-/// @title OTCBoard
+/// @title Swapboard
 /// @notice Trustless OTC bulletin board for ERC20 token swaps
 /// @dev No admin, no fees, no upgrades. Orders are filled atomically or not at all.
 /// @custom:security-contact security@swapboard.eth
-contract OTCBoard is IOTCBoard, ReentrancyGuard {
+contract Swapboard is ISwapboard, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     /// @notice Counter for generating unique order IDs
@@ -21,7 +21,7 @@ contract OTCBoard is IOTCBoard, ReentrancyGuard {
     /// @dev Non-existent orders return default struct with maker=address(0) and active=false
     mapping(uint256 => Order) public orders;
 
-    /// @inheritdoc IOTCBoard
+    /// @inheritdoc ISwapboard
     function createOrder(
         address tokenA,
         uint256 amountA,
@@ -67,7 +67,7 @@ contract OTCBoard is IOTCBoard, ReentrancyGuard {
         emit OrderCreated(orderId, msg.sender, tokenA, amountA, tokenB, amountB);
     }
 
-    /// @inheritdoc IOTCBoard
+    /// @inheritdoc ISwapboard
     /// @dev Fee-on-transfer tokenB: maker receives less than amountB. This is maker's risk.
     function fillOrder(
         uint256 orderId
@@ -89,7 +89,7 @@ contract OTCBoard is IOTCBoard, ReentrancyGuard {
         emit OrderFilled(orderId, msg.sender);
     }
 
-    /// @inheritdoc IOTCBoard
+    /// @inheritdoc ISwapboard
     function cancelOrder(
         uint256 orderId
     ) external nonReentrant {
@@ -106,14 +106,14 @@ contract OTCBoard is IOTCBoard, ReentrancyGuard {
         emit OrderCanceled(orderId);
     }
 
-    /// @inheritdoc IOTCBoard
+    /// @inheritdoc ISwapboard
     function getOrder(
         uint256 orderId
     ) external view returns (Order memory) {
         return orders[orderId];
     }
 
-    /// @inheritdoc IOTCBoard
+    /// @inheritdoc ISwapboard
     /// @dev Gas scales linearly with array length. Callers should limit to ~100 IDs per call.
     function getOrders(
         uint256[] calldata orderIds
@@ -128,7 +128,7 @@ contract OTCBoard is IOTCBoard, ReentrancyGuard {
         }
     }
 
-    /// @inheritdoc IOTCBoard
+    /// @inheritdoc ISwapboard
     function canFill(
         uint256 orderId
     ) external view returns (bool) {

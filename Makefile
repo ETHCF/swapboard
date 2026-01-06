@@ -54,7 +54,7 @@ snapshot:
 
 # Slither analysis (requires slither installed)
 slither:
-	cd contracts && slither src/OTCBoard.sol --config-file slither.config.json || true
+	cd contracts && slither src/Swapboard.sol --config-file slither.config.json || true
 
 # Frontend dev server
 serve:

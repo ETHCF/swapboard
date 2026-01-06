@@ -38,8 +38,8 @@ cd "$ROOT_DIR/contracts"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 DEPLOYER_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 
-# Deploy OTCBoard
-DEPLOY_OUTPUT=$(forge create src/OTCBoard.sol:OTCBoard \
+# Deploy Swapboard
+DEPLOY_OUTPUT=$(forge create src/Swapboard.sol:Swapboard \
   --rpc-url http://localhost:8545 \
   --private-key $DEPLOYER_KEY \
   --broadcast \
@@ -82,11 +82,11 @@ schema:
   file: ./schema.graphql
 dataSources:
   - kind: ethereum
-    name: OTCBoard
+    name: Swapboard
     network: mainnet
     source:
       address: "$CONTRACT_ADDR"
-      abi: OTCBoard
+      abi: Swapboard
       startBlock: $DEPLOY_BLOCK
     mapping:
       kind: ethereum/events
@@ -98,8 +98,8 @@ dataSources:
         - GlobalStats
         - PairStats
       abis:
-        - name: OTCBoard
-          file: ./abis/OTCBoard.json
+        - name: Swapboard
+          file: ./abis/Swapboard.json
         - name: ERC20
           file: ./abis/ERC20.json
       eventHandlers:

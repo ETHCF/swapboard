@@ -92,7 +92,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct IOTCBoard.Order",
+        "internalType": "struct ISwapboard.Order",
         "components": [
           {
             "name": "maker",
@@ -143,7 +143,7 @@
       {
         "name": "result",
         "type": "tuple[]",
-        "internalType": "struct IOTCBoard.Order[]",
+        "internalType": "struct ISwapboard.Order[]",
         "components": [
           {
             "name": "maker",

@@ -83,49 +83,48 @@ node e2e.test.js  # Run tests
 
 ### Deploy
 
-1. Configure environment:
+Automated deployment script handles contract, subgraph, and frontend:
+
 ```bash
-cd contracts
+# 1. Configure environment
 cp .env.example .env
-# Edit .env with your values
+# Edit .env with your private key, RPC URLs, and Graph auth token
+
+# 2. Deploy everything to Sepolia (testnet)
+./deploy.sh sepolia
+
+# Or deploy to mainnet
+./deploy.sh mainnet
 ```
 
-2. Deploy contract:
+The script will:
+1. Deploy the contract and verify on Etherscan
+2. Update subgraph config with contract address and start block
+3. Build and deploy subgraph to The Graph Studio
+4. Update frontend config with contract address and subgraph URL
+5. Upload frontend to IPFS (if ipfs CLI available)
+6. Print summary with all addresses and URLs
+
+**Partial deployments:**
+
 ```bash
-source .env
-forge script script/Deploy.s.sol \
-  --rpc-url $MAINNET_RPC_URL \
-  --broadcast \
-  --verify
+# Skip steps if already done
+SKIP_CONTRACT=true ./deploy.sh sepolia    # Reuse existing contract
+SKIP_SUBGRAPH=true ./deploy.sh sepolia    # Skip subgraph deploy
+SKIP_FRONTEND=true ./deploy.sh sepolia    # Skip IPFS upload
 ```
 
-3. Update addresses:
-   - `frontend/app.js` - CONFIG.CONTRACT_ADDRESS
-   - `subgraph/subgraph.yaml` - source.address and startBlock
+**Manual deployment:**
 
-4. Deploy subgraph:
-```bash
-cd subgraph
-pnpm deploy
-```
+See `deploy.sh` for the individual commands if you prefer manual control.
 
-5. Update subgraph URL:
-   - `frontend/app.js` - CONFIG.SUBGRAPH_URL
+**ENS contenthash (optional):**
 
-6. Deploy frontend to IPFS:
-```bash
-ipfs add -r frontend/
-ipfs pin add <CID>
-```
-
-7. Update ENS contenthash (optional):
-```bash
-# Set contenthash to ipfs://<CID> via ENS manager
-```
+After IPFS deployment, update ENS contenthash via the ENS manager UI to `ipfs://<CID>`.
 
 ## Contract
 
-The OTCBoard contract allows:
+The Swapboard contract allows:
 
 - **createOrder**: Deposit tokenA, specify tokenB amount wanted
 - **fillOrder**: Pay tokenB, receive tokenA

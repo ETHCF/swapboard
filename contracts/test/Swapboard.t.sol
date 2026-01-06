@@ -2,12 +2,12 @@
 pragma solidity ^0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {OTCBoard} from "../src/OTCBoard.sol";
-import {IOTCBoard} from "../src/interfaces/IOTCBoard.sol";
+import {Swapboard} from "../src/Swapboard.sol";
+import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20, MockFOT} from "./mocks/MockERC20.sol";
 
-contract OTCBoardTest is Test {
-    OTCBoard public board;
+contract SwapboardTest is Test {
+    Swapboard public board;
     MockERC20 public tokenA;
     MockERC20 public tokenB;
 
@@ -18,7 +18,7 @@ contract OTCBoardTest is Test {
     uint256 constant AMOUNT_B = 250_000e6;
 
     function setUp() public {
-        board = new OTCBoard();
+        board = new Swapboard();
 
         tokenA = new MockERC20("Token A", "TKA", 18);
         tokenB = new MockERC20("Token B", "TKB", 6);
@@ -41,7 +41,7 @@ contract OTCBoardTest is Test {
         assertEq(orderId, 0);
         assertEq(board.nextOrderId(), 1);
 
-        IOTCBoard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = board.getOrder(orderId);
         assertEq(order.maker, maker);
         assertEq(order.tokenA, address(tokenA));
         assertEq(order.amountA, AMOUNT_A);
@@ -55,7 +55,7 @@ contract OTCBoardTest is Test {
 
     function test_createOrder_revert_zeroAddress_tokenA() public {
         vm.startPrank(maker);
-        vm.expectRevert(IOTCBoard.ZeroAddress.selector);
+        vm.expectRevert(ISwapboard.ZeroAddress.selector);
         board.createOrder(address(0), AMOUNT_A, address(tokenB), AMOUNT_B);
         vm.stopPrank();
     }
@@ -63,7 +63,7 @@ contract OTCBoardTest is Test {
     function test_createOrder_revert_zeroAddress_tokenB() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
-        vm.expectRevert(IOTCBoard.ZeroAddress.selector);
+        vm.expectRevert(ISwapboard.ZeroAddress.selector);
         board.createOrder(address(tokenA), AMOUNT_A, address(0), AMOUNT_B);
         vm.stopPrank();
     }
@@ -71,7 +71,7 @@ contract OTCBoardTest is Test {
     function test_createOrder_revert_zeroAmount_amountA() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
-        vm.expectRevert(IOTCBoard.ZeroAmount.selector);
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
         board.createOrder(address(tokenA), 0, address(tokenB), AMOUNT_B);
         vm.stopPrank();
     }
@@ -79,7 +79,7 @@ contract OTCBoardTest is Test {
     function test_createOrder_revert_zeroAmount_amountB() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
-        vm.expectRevert(IOTCBoard.ZeroAmount.selector);
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
         board.createOrder(address(tokenA), AMOUNT_A, address(tokenB), 0);
         vm.stopPrank();
     }
@@ -87,14 +87,14 @@ contract OTCBoardTest is Test {
     function test_createOrder_revert_sameToken() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
-        vm.expectRevert(IOTCBoard.SameToken.selector);
+        vm.expectRevert(ISwapboard.SameToken.selector);
         board.createOrder(address(tokenA), AMOUNT_A, address(tokenA), AMOUNT_B);
         vm.stopPrank();
     }
 
     function test_createOrder_revert_notAContract_tokenA() public {
         vm.startPrank(maker);
-        vm.expectRevert(abi.encodeWithSelector(IOTCBoard.NotAContract.selector, address(0x999)));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotAContract.selector, address(0x999)));
         board.createOrder(address(0x999), AMOUNT_A, address(tokenB), AMOUNT_B);
         vm.stopPrank();
     }
@@ -102,7 +102,7 @@ contract OTCBoardTest is Test {
     function test_createOrder_revert_notAContract_tokenB() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
-        vm.expectRevert(abi.encodeWithSelector(IOTCBoard.NotAContract.selector, address(0x999)));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotAContract.selector, address(0x999)));
         board.createOrder(address(tokenA), AMOUNT_A, address(0x999), AMOUNT_B);
         vm.stopPrank();
     }
@@ -115,7 +115,7 @@ contract OTCBoardTest is Test {
         fot.approve(address(board), 100 ether);
 
         vm.expectRevert(
-            abi.encodeWithSelector(IOTCBoard.BalanceMismatch.selector, 100 ether, 95 ether)
+            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, 100 ether, 95 ether)
         );
         board.createOrder(address(fot), 100 ether, address(tokenB), AMOUNT_B);
         vm.stopPrank();
@@ -132,7 +132,7 @@ contract OTCBoardTest is Test {
         board.fillOrder(orderId);
         vm.stopPrank();
 
-        IOTCBoard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = board.getOrder(orderId);
         assertFalse(order.active);
 
         assertEq(tokenA.balanceOf(taker), AMOUNT_A);
@@ -142,7 +142,7 @@ contract OTCBoardTest is Test {
 
     function test_fillOrder_revert_orderNotFound() public {
         vm.startPrank(taker);
-        vm.expectRevert(abi.encodeWithSelector(IOTCBoard.OrderNotFound.selector, 999));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
         board.fillOrder(999);
         vm.stopPrank();
     }
@@ -157,7 +157,7 @@ contract OTCBoardTest is Test {
         tokenB.approve(address(board), AMOUNT_B);
         board.fillOrder(orderId);
 
-        vm.expectRevert(abi.encodeWithSelector(IOTCBoard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
         board.fillOrder(orderId);
         vm.stopPrank();
     }
@@ -171,7 +171,7 @@ contract OTCBoardTest is Test {
         board.cancelOrder(orderId);
         vm.stopPrank();
 
-        IOTCBoard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = board.getOrder(orderId);
         assertFalse(order.active);
         assertEq(tokenA.balanceOf(maker), balanceBefore + AMOUNT_A);
         assertEq(tokenA.balanceOf(address(board)), 0);
@@ -179,7 +179,7 @@ contract OTCBoardTest is Test {
 
     function test_cancelOrder_revert_orderNotFound() public {
         vm.startPrank(maker);
-        vm.expectRevert(abi.encodeWithSelector(IOTCBoard.OrderNotFound.selector, 999));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
         board.cancelOrder(999);
         vm.stopPrank();
     }
@@ -190,7 +190,7 @@ contract OTCBoardTest is Test {
         uint256 orderId = board.createOrder(address(tokenA), AMOUNT_A, address(tokenB), AMOUNT_B);
         board.cancelOrder(orderId);
 
-        vm.expectRevert(abi.encodeWithSelector(IOTCBoard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
         board.cancelOrder(orderId);
         vm.stopPrank();
     }
@@ -202,7 +202,7 @@ contract OTCBoardTest is Test {
         vm.stopPrank();
 
         vm.startPrank(taker);
-        vm.expectRevert(abi.encodeWithSelector(IOTCBoard.NotMaker.selector, orderId, taker, maker));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotMaker.selector, orderId, taker, maker));
         board.cancelOrder(orderId);
         vm.stopPrank();
     }
@@ -244,7 +244,7 @@ contract OTCBoardTest is Test {
         ids[1] = order1;
         ids[2] = order2;
 
-        IOTCBoard.Order[] memory orders = board.getOrders(ids);
+        ISwapboard.Order[] memory orders = board.getOrders(ids);
 
         assertEq(orders.length, 3);
         assertEq(orders[0].amountB, AMOUNT_B);
@@ -254,7 +254,7 @@ contract OTCBoardTest is Test {
 
     function test_getOrders_empty() public view {
         uint256[] memory ids = new uint256[](0);
-        IOTCBoard.Order[] memory orders = board.getOrders(ids);
+        ISwapboard.Order[] memory orders = board.getOrders(ids);
         assertEq(orders.length, 0);
     }
 
@@ -292,7 +292,7 @@ contract OTCBoardTest is Test {
         tokenA.approve(address(board), AMOUNT_A);
 
         vm.expectEmit(true, true, false, true);
-        emit IOTCBoard.OrderCreated(0, maker, address(tokenA), AMOUNT_A, address(tokenB), AMOUNT_B);
+        emit ISwapboard.OrderCreated(0, maker, address(tokenA), AMOUNT_A, address(tokenB), AMOUNT_B);
 
         board.createOrder(address(tokenA), AMOUNT_A, address(tokenB), AMOUNT_B);
         vm.stopPrank();
@@ -308,7 +308,7 @@ contract OTCBoardTest is Test {
         tokenB.approve(address(board), AMOUNT_B);
 
         vm.expectEmit(true, true, false, true);
-        emit IOTCBoard.OrderFilled(orderId, taker);
+        emit ISwapboard.OrderFilled(orderId, taker);
 
         board.fillOrder(orderId);
         vm.stopPrank();
@@ -320,7 +320,7 @@ contract OTCBoardTest is Test {
         uint256 orderId = board.createOrder(address(tokenA), AMOUNT_A, address(tokenB), AMOUNT_B);
 
         vm.expectEmit(true, false, false, true);
-        emit IOTCBoard.OrderCanceled(orderId);
+        emit ISwapboard.OrderCanceled(orderId);
 
         board.cancelOrder(orderId);
         vm.stopPrank();
@@ -340,7 +340,7 @@ contract OTCBoardTest is Test {
         uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
         vm.stopPrank();
 
-        IOTCBoard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = board.getOrder(orderId);
         assertEq(order.amountA, amountA);
         assertEq(order.amountB, amountB);
     }

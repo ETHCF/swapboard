@@ -3,8 +3,8 @@ import {
   OrderCreated,
   OrderFilled,
   OrderCanceled,
-} from "../generated/OTCBoard/OTCBoard";
-import { ERC20 } from "../generated/OTCBoard/ERC20";
+} from "../generated/Swapboard/Swapboard";
+import { ERC20 } from "../generated/Swapboard/ERC20";
 import { Order, Token, GlobalStats, PairStats } from "../generated/schema";
 
 const GLOBAL_STATS_ID = "global";
