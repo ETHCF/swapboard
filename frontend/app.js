@@ -2316,11 +2316,9 @@
             $("#create-tokenB").value = "";
             $("#create-amountA").value = "";
             $("#create-amountB").value = "";
-            $("#create-price").value = "";
             $("#tokenA-info").textContent = "";
             $("#tokenB-info").textContent = "";
             $("#price-info").textContent = "";
-            $("#amountB-info").textContent = "";
             $("#sell-modal").classList.add("hidden");
 
             loadOrders();
@@ -2785,41 +2783,33 @@
       createTokenSelector($("#create-tokenB"));
     });
 
-    // Price calculator - auto-calculate wanted amount from price
-    function updatePriceCalculation() {
+    // Price calculator - show price based on amounts
+    function updatePriceDisplay() {
       const amountAStr = $("#create-amountA").value.trim();
-      const priceStr = $("#create-price").value.trim();
+      const amountBStr = $("#create-amountB").value.trim();
       const tokenASymbol = $("#tokenA-info").textContent.split(" ")[0] || "Token A";
       const tokenBSymbol = $("#tokenB-info").textContent.split(" ")[0] || "Token B";
 
       const amountA = parseFloat(amountAStr);
-      const price = parseFloat(priceStr);
+      const amountB = parseFloat(amountBStr);
 
-      if (!isNaN(amountA) && !isNaN(price) && amountA > 0 && price > 0) {
-        const amountB = amountA * price;
-        $("#create-amountB").value = amountB.toFixed(6).replace(/\.?0+$/, "");
-        $("#price-info").textContent = `1 ${tokenASymbol} = ${price} ${tokenBSymbol}`;
-        $("#amountB-info").textContent = `${amountA} x ${price} = ${amountB.toFixed(6).replace(/\.?0+$/, "")}`;
-      } else if (!isNaN(price) && price > 0) {
-        $("#price-info").textContent = `1 ${tokenASymbol} = ${price} ${tokenBSymbol}`;
-        $("#amountB-info").textContent = "";
+      if (!isNaN(amountA) && !isNaN(amountB) && amountA > 0 && amountB > 0) {
+        const price = amountB / amountA;
+        $("#price-info").textContent = `1 ${tokenASymbol} = ${price.toFixed(6).replace(/\.?0+$/, "")} ${tokenBSymbol}`;
       } else {
         $("#price-info").textContent = "";
-        $("#amountB-info").textContent = "";
       }
     }
 
-    $("#create-price").addEventListener("input", updatePriceCalculation);
-    $("#create-amountA").addEventListener("input", updatePriceCalculation);
+    $("#create-amountA").addEventListener("input", updatePriceDisplay);
+    $("#create-amountB").addEventListener("input", updatePriceDisplay);
 
     // Clear price info when tokens change
     $("#create-tokenA").addEventListener("input", () => {
       $("#price-info").textContent = "";
-      $("#amountB-info").textContent = "";
     });
     $("#create-tokenB").addEventListener("input", () => {
       $("#price-info").textContent = "";
-      $("#amountB-info").textContent = "";
     });
 
     // Sortable column headers
