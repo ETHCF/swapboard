@@ -104,6 +104,7 @@
   const MAX_RECENT_TOKENS = 5;
   const FILTERS_KEY = "swapboard_filters";
   const SORT_KEY = "swapboard_sort";
+  const WATCHED_ORDERS_KEY = "swapboard_watched_orders";
   const UNISWAP_TOKEN_LIST_URL = "https://tokens.uniswap.org";
   let uniswapTokens = [];
   let autoRefreshInterval = null;
@@ -849,6 +850,102 @@
   }
 
   /**
+   * Gets watched orders from localStorage.
+   * Format: { orderId: { status: "Open"|"Filled"|"Cancelled", symbol: "WETH/USDC" } }
+   * @returns {Object}
+   */
+  function getWatchedOrders() {
+    try {
+      const stored = localStorage.getItem(WATCHED_ORDERS_KEY);
+      return stored ? JSON.parse(stored) : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  /**
+   * Adds an order to the watch list.
+   * @param {Object} order - Order object
+   */
+  function watchOrder(order) {
+    const watched = getWatchedOrders();
+    const status = order.active ? "Open" : (order.taker ? "Filled" : "Cancelled");
+    watched[order.orderId] = {
+      status: status,
+      symbol: order.tokenA.symbol + "/" + order.tokenB.symbol
+    };
+    try {
+      localStorage.setItem(WATCHED_ORDERS_KEY, JSON.stringify(watched));
+    } catch (e) {
+      console.error("Failed to save watched order:", e);
+    }
+  }
+
+  /**
+   * Removes an order from the watch list.
+   * @param {string} orderId - Order ID
+   */
+  function unwatchOrder(orderId) {
+    const watched = getWatchedOrders();
+    delete watched[orderId];
+    try {
+      localStorage.setItem(WATCHED_ORDERS_KEY, JSON.stringify(watched));
+    } catch (e) {
+      console.error("Failed to remove watched order:", e);
+    }
+  }
+
+  /**
+   * Checks if an order is being watched.
+   * @param {string} orderId - Order ID
+   * @returns {boolean}
+   */
+  function isOrderWatched(orderId) {
+    const watched = getWatchedOrders();
+    return orderId in watched;
+  }
+
+  /**
+   * Checks watched orders for status changes and sends notifications.
+   * @param {Array} orders - Current orders from API
+   */
+  function checkWatchedOrders(orders) {
+    const watched = getWatchedOrders();
+    if (Object.keys(watched).length === 0) return;
+
+    for (const order of orders) {
+      const savedInfo = watched[order.orderId];
+      if (!savedInfo) continue;
+
+      const currentStatus = order.active ? "Open" : (order.taker ? "Filled" : "Cancelled");
+      if (savedInfo.status !== currentStatus) {
+        // Status changed, send notification
+        if (currentStatus === "Filled") {
+          showNotification(
+            "Order Filled",
+            `Order #${order.orderId} (${savedInfo.symbol}) has been filled!`,
+            "order-" + order.orderId
+          );
+        } else if (currentStatus === "Cancelled") {
+          showNotification(
+            "Order Cancelled",
+            `Order #${order.orderId} (${savedInfo.symbol}) has been cancelled.`,
+            "order-" + order.orderId
+          );
+        }
+
+        // Update stored status
+        watched[order.orderId].status = currentStatus;
+        try {
+          localStorage.setItem(WATCHED_ORDERS_KEY, JSON.stringify(watched));
+        } catch (e) {
+          // Ignore
+        }
+      }
+    }
+  }
+
+  /**
    * Creates a recent tokens dropdown for a token input field.
    * @param {HTMLInputElement} input - Token input element
    * @param {string} infoId - Info element selector
@@ -1122,10 +1219,12 @@
 
       // Column 0: Action (empty)
       const tdAction = document.createElement("td");
+      tdAction.dataset.label = "";
       tr.appendChild(tdAction);
 
       // Column 1: Trade ID
       const tdId = document.createElement("td");
+      tdId.dataset.label = "Trade ID";
       const skelId = document.createElement("span");
       skelId.className = "skeleton skeleton-short";
       tdId.appendChild(skelId);
@@ -1133,6 +1232,7 @@
 
       // Column 2: Maker
       const tdMaker = document.createElement("td");
+      tdMaker.dataset.label = "Maker";
       const skelMaker = document.createElement("span");
       skelMaker.className = "skeleton skeleton-text";
       tdMaker.appendChild(skelMaker);
@@ -1140,6 +1240,7 @@
 
       // Column 3: Offered Token
       const tdTokenA = document.createElement("td");
+      tdTokenA.dataset.label = "Offered";
       const skelTokenA = document.createElement("span");
       skelTokenA.className = "skeleton skeleton-short";
       tdTokenA.appendChild(skelTokenA);
@@ -1147,6 +1248,7 @@
 
       // Column 4: Offered Size
       const tdAmtA = document.createElement("td");
+      tdAmtA.dataset.label = "Offered Size";
       const skelAmtA = document.createElement("span");
       skelAmtA.className = "skeleton skeleton-number";
       tdAmtA.appendChild(skelAmtA);
@@ -1154,6 +1256,7 @@
 
       // Column 5: Wanted Token
       const tdTokenB = document.createElement("td");
+      tdTokenB.dataset.label = "Wanted";
       const skelTokenB = document.createElement("span");
       skelTokenB.className = "skeleton skeleton-short";
       tdTokenB.appendChild(skelTokenB);
@@ -1161,6 +1264,7 @@
 
       // Column 6: Wanted Size
       const tdAmtB = document.createElement("td");
+      tdAmtB.dataset.label = "Wanted Size";
       const skelAmtB = document.createElement("span");
       skelAmtB.className = "skeleton skeleton-number";
       tdAmtB.appendChild(skelAmtB);
@@ -1168,6 +1272,7 @@
 
       // Column 7: USD Val
       const tdUsd = document.createElement("td");
+      tdUsd.dataset.label = "USD Val";
       const skelUsd = document.createElement("span");
       skelUsd.className = "skeleton skeleton-short";
       tdUsd.appendChild(skelUsd);
@@ -1175,6 +1280,7 @@
 
       // Column 8: Price
       const tdPrice = document.createElement("td");
+      tdPrice.dataset.label = "Price";
       const skelPrice = document.createElement("span");
       skelPrice.className = "skeleton skeleton-text";
       tdPrice.appendChild(skelPrice);
@@ -1409,6 +1515,29 @@
       }
     }
 
+    // Watch/Unwatch button
+    const watchBtn = document.createElement("button");
+    const isWatched = isOrderWatched(order.orderId);
+    watchBtn.textContent = isWatched ? "Unwatch" : "Watch";
+    watchBtn.title = isWatched ? "Stop watching this order" : "Get notified when this order is filled or cancelled";
+    watchBtn.style.background = isWatched ? "#666" : "#333";
+    watchBtn.addEventListener("click", () => {
+      if (isOrderWatched(order.orderId)) {
+        unwatchOrder(order.orderId);
+        watchBtn.textContent = "Watch";
+        watchBtn.style.background = "#333";
+        watchBtn.title = "Get notified when this order is filled or cancelled";
+        showToast("Stopped watching order #" + order.orderId, "success");
+      } else {
+        watchOrder(order);
+        watchBtn.textContent = "Unwatch";
+        watchBtn.style.background = "#666";
+        watchBtn.title = "Stop watching this order";
+        showToast("Watching order #" + order.orderId, "success");
+      }
+    });
+    actionsEl.appendChild(watchBtn);
+
     const closeBtn = document.createElement("button");
     closeBtn.textContent = "Close";
     closeBtn.style.background = "#fff";
@@ -1625,6 +1754,7 @@
     } else if (currentFilters.status === "cancelled") {
       conditions.push("active: false, taker: null");
     }
+    // "watched" and "all" have no status condition - handled client-side
 
     if (currentFilters.selling && isValidAddress(currentFilters.selling)) {
       conditions.push(`tokenA_: { address: "${currentFilters.selling.toLowerCase()}" }`);
@@ -1666,6 +1796,15 @@
       cachedOrders = [];
     } else {
       cachedOrders = data.orders;
+    }
+
+    // Check watched orders for status changes
+    checkWatchedOrders(cachedOrders);
+
+    // Filter to only watched orders if that filter is active
+    if (currentFilters.status === "watched") {
+      const watched = getWatchedOrders();
+      cachedOrders = cachedOrders.filter(o => o.orderId in watched);
     }
 
     // Batch fetch prices for all tokenA and tokenB addresses
@@ -1762,6 +1901,7 @@
       // Build row with links
       // Column 0: Action button (Fill for others, Cancel for own)
       const tdAction = document.createElement("td");
+      tdAction.dataset.label = "";
       if (order.active) {
         if (isMaker) {
           const cancelBtn = document.createElement("a");
@@ -1796,6 +1936,7 @@
 
       // Column 1: Trade ID (clickable to open detail modal)
       const tdId = document.createElement("td");
+      tdId.dataset.label = "Trade ID";
       const idLink = document.createElement("a");
       idLink.href = "#order-" + order.orderId;
       idLink.textContent = order.orderId;
@@ -1815,6 +1956,7 @@
 
       // Column 2: Maker (link to Etherscan + copy, show ENS if available)
       const tdSeller = document.createElement("td");
+      tdSeller.dataset.label = "Maker";
       const sellerWrap = document.createElement("span");
       sellerWrap.style.whiteSpace = "nowrap";
       const sellerLink = document.createElement("a");
@@ -1831,6 +1973,7 @@
 
       // Column 3: Offered Token (link to CoinGecko + copy)
       const tdTokenA = document.createElement("td");
+      tdTokenA.dataset.label = "Offered";
       const tokenAId = COINGECKO_ID_MAP[order.tokenA.address.toLowerCase()];
       if (tokenAId) {
         const tokenALink = document.createElement("a");
@@ -1850,11 +1993,13 @@
 
       // Column 4: Sell Size
       const tdAmountA = document.createElement("td");
+      tdAmountA.dataset.label = "Offered Size";
       tdAmountA.textContent = formatAmount(order.amountA, tokenADecimals);
       tr.appendChild(tdAmountA);
 
       // Column 5: Wanted Token (link to CoinGecko + copy)
       const tdTokenB = document.createElement("td");
+      tdTokenB.dataset.label = "Wanted";
       const tokenBId = COINGECKO_ID_MAP[order.tokenB.address.toLowerCase()];
       if (tokenBId) {
         const tokenBLink = document.createElement("a");
@@ -1874,17 +2019,20 @@
 
       // Column 6: Wanted Size
       const tdAmountB = document.createElement("td");
+      tdAmountB.dataset.label = "Wanted Size";
       tdAmountB.textContent = formatAmount(order.amountB, tokenBDecimals);
       tr.appendChild(tdAmountB);
 
       // Column 7: USD Val (nowrap to keep $ and value on same line)
       const tdUsd = document.createElement("td");
+      tdUsd.dataset.label = "USD Val";
       tdUsd.textContent = usdVal;
       tdUsd.style.whiteSpace = "nowrap";
       tr.appendChild(tdUsd);
 
       // Column 8: Price (clickable to invert ratio) + market deviation
       const tdPrice = document.createElement("td");
+      tdPrice.dataset.label = "Price";
       const priceSpan = document.createElement("span");
       priceSpan.textContent = priceNormal;
       tdPrice.appendChild(priceSpan);
@@ -2119,8 +2267,11 @@
             $("#create-tokenB").value = "";
             $("#create-amountA").value = "";
             $("#create-amountB").value = "";
+            $("#create-price").value = "";
             $("#tokenA-info").textContent = "";
             $("#tokenB-info").textContent = "";
+            $("#price-info").textContent = "";
+            $("#amountB-info").textContent = "";
             $("#sell-modal").classList.add("hidden");
 
             loadOrders();
@@ -2501,6 +2652,57 @@
       loadOrders();
     });
 
+    // CSV Export
+    $("#export-csv").addEventListener("click", () => {
+      if (!cachedOrders || cachedOrders.length === 0) {
+        showToast("No orders to export", "error");
+        return;
+      }
+
+      // Build CSV content
+      const headers = ["Trade ID", "Status", "Maker", "Offered Token", "Offered Symbol", "Offered Amount", "Wanted Token", "Wanted Symbol", "Wanted Amount", "Created At"];
+      const rows = cachedOrders.map(order => {
+        const tokenADecimals = parseInt(order.tokenA.decimals) || 18;
+        const tokenBDecimals = parseInt(order.tokenB.decimals) || 18;
+        const amountA = formatAmount(order.amountA, tokenADecimals);
+        const amountB = formatAmount(order.amountB, tokenBDecimals);
+        let status = "Open";
+        if (!order.active) {
+          status = order.taker ? "Filled" : "Cancelled";
+        }
+        const createdDate = new Date(parseInt(order.createdAt) * 1000).toISOString();
+
+        return [
+          order.orderId,
+          status,
+          order.maker,
+          order.tokenA.address,
+          order.tokenA.symbol,
+          amountA,
+          order.tokenB.address,
+          order.tokenB.symbol,
+          amountB,
+          createdDate
+        ].map(val => {
+          // Escape quotes and wrap in quotes if contains comma
+          const str = String(val);
+          if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+            return '"' + str.replace(/"/g, '""') + '"';
+          }
+          return str;
+        }).join(",");
+      });
+
+      const csvContent = [headers.join(","), ...rows].join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "swapboard-orders-" + new Date().toISOString().split("T")[0] + ".csv";
+      link.click();
+      URL.revokeObjectURL(link.href);
+      showToast("Exported " + cachedOrders.length + " orders", "success");
+    });
+
     $("#create-btn").addEventListener("click", handleCreateOrder);
 
     setupTokenInfoFetch("#create-tokenA", "#tokenA-info", "#tokenA-balance", "#quick-amounts-A");
@@ -2641,14 +2843,8 @@
       clearInterval(autoRefreshInterval);
     }
     autoRefreshInterval = setInterval(async () => {
-      const indicator = $("#refresh-indicator");
-      if (indicator) indicator.classList.add("active");
-      try {
-        await loadOrders(true);
-        await loadStats();
-      } finally {
-        if (indicator) indicator.classList.remove("active");
-      }
+      await loadOrders(true);
+      await loadStats();
     }, AUTO_REFRESH_MS);
   }
 
@@ -2656,5 +2852,19 @@
     document.addEventListener("DOMContentLoaded", init);
   } else {
     init();
+  }
+
+  // Register service worker for PWA support
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").then(
+        (registration) => {
+          console.log("ServiceWorker registered:", registration.scope);
+        },
+        (error) => {
+          console.log("ServiceWorker registration failed:", error);
+        }
+      );
+    });
   }
 })();

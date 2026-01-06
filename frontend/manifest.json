@@ -1,0 +1,25 @@
+{
+  "name": "Swapboard - Trustless OTC Trading",
+  "short_name": "Swapboard",
+  "description": "Peer-to-peer ERC20 token trading on Ethereum. No fees, no admin, no middleman.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#e03e2d",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "utilities"]
+}

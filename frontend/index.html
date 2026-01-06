@@ -17,6 +17,13 @@
   <meta name="twitter:title" content="Swapboard - Trustless OTC Trading">
   <meta name="twitter:description" content="Peer-to-peer ERC20 token trading on Ethereum. No fees, no admin, no middleman.">
 
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#e03e2d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Swapboard">
+
   <title>SWAPBOARD - Trustless OTC Trading</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -48,8 +55,6 @@
   <span class="stat-label">Cancelled:</span> <span id="stat-cancelled">--</span>
   &nbsp;&nbsp;&nbsp;
   <span class="stat-label">Volume:</span> <span id="stat-volume">--</span>
-  &nbsp;&nbsp;&nbsp;
-  <span id="refresh-indicator" class="refresh-indicator" title="Auto-refreshing"></span>
 </div>
 
 <div class="zero-stats">
@@ -77,10 +82,6 @@
     <select id="filter-wanting">
       <option value="">ALL</option>
     </select>
-    &nbsp;&nbsp;
-    <label class="my-orders-filter hidden" id="my-orders-label">
-      <input type="checkbox" id="filter-my-orders"> My Orders
-    </label>
   </span>
   <span class="filter-right">
     All Trades: <input type="radio" name="status" value="all">
@@ -90,6 +91,10 @@
     Filled Trades: <input type="radio" name="status" value="filled">
     &nbsp;&nbsp;
     Cancelled Trades: <input type="radio" name="status" value="cancelled">
+    &nbsp;&nbsp;
+    Watched: <input type="radio" name="status" value="watched">
+&nbsp;&nbsp;
+    <span class="my-orders-filter hidden" id="my-orders-label">My Orders: <input type="checkbox" id="filter-my-orders"></span>
   </span>
 </div>
 
@@ -118,6 +123,7 @@
   <button id="prev-page" disabled>&lt; Prev</button>
   <span id="page-info">Page 1</span>
   <button id="next-page">Next &gt;</button>
+  <button id="export-csv" title="Export visible orders to CSV">Export CSV</button>
 </section>
 
 <div id="sell-modal" class="modal hidden">
