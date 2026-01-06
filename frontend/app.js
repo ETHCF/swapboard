@@ -1125,6 +1125,27 @@
     }
   }
 
+  function parseContractError(e) {
+    const msg = (e.reason || e.message || "").toLowerCase();
+    if (msg.includes("user rejected") || msg.includes("user denied")) {
+      return "Transaction cancelled";
+    }
+    if (msg.includes("insufficient") || msg.includes("exceeds balance") ||
+        msg.includes("transfer amount exceeds") || msg.includes("erc20: transfer amount")) {
+      return "Insufficient token balance";
+    }
+    if (msg.includes("allowance") || msg.includes("erc20: insufficient allowance")) {
+      return "Token approval failed";
+    }
+    if (msg.includes("nonce")) {
+      return "Transaction conflict, try again";
+    }
+    if (msg.includes("gas")) {
+      return "Gas estimation failed";
+    }
+    return e.reason || e.shortMessage || e.message || "Unknown error";
+  }
+
   /**
    * Sorts orders array based on current sort state.
    * @param {Array} orders - Orders array from subgraph
@@ -2169,7 +2190,7 @@
           loadStats();
         } catch (e) {
           console.error("Fill error:", e);
-          showToast("Fill failed: " + (e.reason || e.message), "error");
+          showToast("Fill failed: " + parseContractError(e), "error");
         }
       },
       gasEstimate
@@ -2211,7 +2232,7 @@
           loadStats();
         } catch (e) {
           console.error("Cancel error:", e);
-          showToast("Cancel failed: " + (e.reason || e.message), "error");
+          showToast("Cancel failed: " + parseContractError(e), "error");
         }
       },
       gasEstimate
@@ -2306,7 +2327,7 @@
             loadStats();
           } catch (e) {
             console.error("Create error:", e);
-            showToast("Create failed: " + (e.reason || e.message), "error");
+            showToast("Create failed: " + parseContractError(e), "error");
           } finally {
             createBtn.disabled = false;
             createBtn.textContent = originalText;
