@@ -274,33 +274,34 @@ async function runTests() {
     console.log("\n--- Order Data Accuracy ---");
 
     // Verify first row has valid data structure
+    // Column order: [0] Buy btn, [1] Trade ID, [2] Seller, [3] Selling Token, [4] Sell Size, [5] Wanted Token, [6] Wanted Size, [7] USD Val, [8] Price
     const firstRow = await page.$$eval("#order-table tr:first-child td", cells =>
       cells.map(c => c.textContent.trim())
     );
 
     test(
       "First order has numeric ID",
-      /^\d+$/.test(firstRow[0]),
-      `Expected numeric ID, got "${firstRow[0]}"`
+      /^\d+$/.test(firstRow[1]),
+      `Expected numeric ID, got "${firstRow[1]}"`
     );
 
     test(
       "First order has valid selling token symbol",
-      firstRow[2] && firstRow[2].length > 0 && firstRow[2] !== "undefined",
-      `Got "${firstRow[2]}"`
+      firstRow[3] && firstRow[3].length > 0 && firstRow[3] !== "undefined",
+      `Got "${firstRow[3]}"`
     );
 
     test(
       "First order has valid wanting token symbol",
-      firstRow[4] && firstRow[4].length > 0 && firstRow[4] !== "undefined",
-      `Got "${firstRow[4]}"`
+      firstRow[5] && firstRow[5].length > 0 && firstRow[5] !== "undefined",
+      `Got "${firstRow[5]}"`
     );
 
     // Verify amount is formatted (contains numbers and possibly commas/decimals)
     test(
-      "First order sell amount is formatted number",
-      /^[\d,]+\.?\d*$/.test(firstRow[3]),
-      `Got "${firstRow[3]}"`
+      "First order offered amount is formatted number",
+      /^[\d,]+\.?\d*$/.test(firstRow[4]),
+      `Got "${firstRow[4]}"`
     );
 
     // ==================== TOKEN INPUT VALIDATION ====================
@@ -355,16 +356,15 @@ async function runTests() {
       cells => cells.length
     );
     test(
-      "Order table has 8 columns",
-      columnCount === 8,
-      `Expected 8 columns, got ${columnCount}`
+      "Order table has 9 columns",
+      columnCount === 9,
+      `Expected 9 columns, got ${columnCount}`
     );
 
     const headers = await page.$$eval("thead th", ths => ths.map(t => t.textContent.trim()));
-    const expectedHeaders = ["Trade ID", "Seller", "Selling Token", "Sell Size", "Wanted Token", "Wanted Size", "USD Val", "Price"];
     test(
       "Table headers are correct",
-      headers.length === 8 && headers[0].includes("Trade ID") && headers[1].includes("Seller") && headers[2].includes("Selling"),
+      headers.length === 9 && headers[1].includes("Trade ID") && headers[2].includes("Maker") && headers[3].includes("Offered"),
       `Got headers: ${headers.join(", ")}`
     );
 

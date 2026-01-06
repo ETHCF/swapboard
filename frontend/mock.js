@@ -592,6 +592,10 @@
               // allowance - return max uint256
               return "0x" + "f".repeat(64);
             }
+            if (params?.[0]?.data?.startsWith("0x095ea7b3")) {
+              // approve - return true
+              return "0x0000000000000000000000000000000000000000000000000000000000000001";
+            }
             if (params?.[0]?.data?.startsWith("0x95d89b41")) {
               // symbol() - encode "MOCK" as hex without Buffer (browser-compatible)
               const symbolHex = "MOCK".split("").map(c => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
@@ -601,7 +605,7 @@
               // decimals()
               return "0x12"; // 18
             }
-            return "0x";
+            return "0x0000000000000000000000000000000000000000000000000000000000000001";
 
           case "eth_estimateGas":
             return "0x30000";

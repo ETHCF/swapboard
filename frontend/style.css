@@ -194,19 +194,26 @@ th {
 
 .swap-icon {
   opacity: 0.7;
-  font-size: 16px;
+  font-size: 22px;
+  vertical-align: middle;
+  animation: pulse 1.5s ease-in-out 3;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+.price-cell {
+  cursor: pointer;
+}
+
+.price-cell:hover {
+  text-decoration: underline;
 }
 
 tbody tr:hover {
   background: #f5f5f5;
-}
-
-tbody tr.clickable {
-  cursor: pointer;
-}
-
-tbody tr.clickable:hover {
-  background: #e0e0e0;
 }
 
 tbody tr.own-order {
@@ -229,6 +236,8 @@ tbody tr.own-order:hover {
   border: 1px solid #000;
   padding: 10px;
   margin-bottom: 20px;
+  hyphens: none;
+  -webkit-hyphens: none;
 }
 
 .form-row {
@@ -253,31 +262,16 @@ tbody tr.own-order:hover {
 }
 
 /* Action buttons in table */
-.fill-btn, .cancel-btn {
+.buy-btn {
   font-family: inherit;
-  font-size: 12px;
-  padding: 4px 10px;
+  font-size: 13px;
+  color: #000;
+  text-decoration: none;
   cursor: pointer;
 }
 
-.fill-btn {
-  background: #000;
-  color: #fff;
-  border: none;
-}
-
-.fill-btn:hover {
-  background: #333;
-}
-
-.cancel-btn {
-  background: #c00;
-  color: #fff;
-  border: none;
-}
-
-.cancel-btn:hover {
-  background: #900;
+.buy-btn:hover {
+  text-decoration: underline;
 }
 
 /* Modal */

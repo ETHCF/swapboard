@@ -580,7 +580,7 @@
     if (!data || !data.orders || data.orders.length === 0) {
       const tr = document.createElement("tr");
       const td = document.createElement("td");
-      td.colSpan = 8;
+      td.colSpan = 9;
       td.textContent = "No orders found";
       tr.appendChild(td);
       tbody.appendChild(tr);
@@ -629,9 +629,39 @@
       }
 
       // Build row with links
-      // Column 0: Trade ID
+      // Column 0: Fill button
+      const tdAction = document.createElement("td");
+      if (order.active && !isMaker) {
+        const fillBtn = document.createElement("a");
+        fillBtn.href = "#";
+        fillBtn.textContent = "[Fill]";
+        fillBtn.classList.add("buy-btn");
+        fillBtn.addEventListener("click", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!userAddress) {
+            await connectWallet();
+          }
+          if (userAddress) {
+            handleFillOrder(order);
+          }
+        });
+        tdAction.appendChild(fillBtn);
+      }
+      tr.appendChild(tdAction);
+
+      // Column 1: Trade ID (link to tx on Etherscan)
       const tdId = document.createElement("td");
-      tdId.textContent = order.orderId;
+      if (order.createdTx) {
+        const idLink = document.createElement("a");
+        idLink.href = "https://etherscan.io/tx/" + order.createdTx;
+        idLink.target = "_blank";
+        idLink.rel = "noopener noreferrer";
+        idLink.textContent = order.orderId;
+        tdId.appendChild(idLink);
+      } else {
+        tdId.textContent = order.orderId;
+      }
       tr.appendChild(tdId);
 
       // Column 1: Seller (link to Etherscan)
@@ -700,7 +730,7 @@
         tdPrice.dataset.priceNormal = priceNormal;
         tdPrice.dataset.priceInverted = priceInverted;
         tdPrice.dataset.showingNormal = "true";
-        tdPrice.style.cursor = "pointer";
+        tdPrice.classList.add("price-cell");
         tdPrice.title = "Click to invert ratio";
         tdPrice.addEventListener("click", function(e) {
           e.stopPropagation();
@@ -711,28 +741,9 @@
       }
       tr.appendChild(tdPrice);
 
-      // Click handler for filling orders
-      if (order.active && !isMaker && userAddress) {
-        tr.classList.add("clickable");
-        tr.dataset.orderId = order.orderId;
-      }
-
       tbody.appendChild(tr);
     }
-
-    attachOrderActions();
     updatePagination(data.orders.length);
-  }
-
-  function attachOrderActions() {
-    // Row click for fill (non-makers only)
-    document.querySelectorAll("#order-table tr.clickable").forEach((row) => {
-      row.addEventListener("click", () => {
-        if (row.dataset.orderId) {
-          handleFillOrder(row.dataset.orderId);
-        }
-      });
-    });
   }
 
   function updatePagination(count) {
@@ -746,51 +757,46 @@
   // ============================================================================
 
   /**
-   * Handles the fill order flow: fetches order, confirms with user, approves tokens, fills.
-   * @param {string} orderId - Order ID to fill
+   * Handles the fill order flow: confirms with user, approves tokens, fills.
+   * @param {Object} order - Order object from subgraph
    */
-  async function handleFillOrder(orderId) {
+  async function handleFillOrder(order) {
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
-    try {
-      const order = await contract.getOrder(orderId);
-      const tokenB = await fetchTokenInfo(order.tokenB);
-      const amountStr = formatAmount(order.amountB.toString(), tokenB.decimals);
 
-      showModal(
-        "Fill Order #" + orderId,
-        `You will send ${amountStr} ${tokenB.symbol} and receive tokens in return.`,
-        async () => {
-          try {
-            showToast("Checking allowance...");
-            const tokenContract = new ethers.Contract(order.tokenB, ERC20_ABI, signer);
-            const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+    const amountStr = formatAmount(order.amountB, order.tokenB.decimals);
 
-            if (allowance < order.amountB) {
-              showToast("Approving tokens...");
-              const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, order.amountB);
-              await approveTx.wait();
-              showToast("Approval confirmed");
-            }
+    showModal(
+      "Fill Order #" + order.orderId,
+      `You will send ${amountStr} ${order.tokenB.symbol} and receive tokens in return.`,
+      async () => {
+        try {
+          showToast("Checking allowance...");
+          const tokenContract = new ethers.Contract(order.tokenB.address, ERC20_ABI, signer);
+          const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+          const amountB = BigInt(order.amountB);
 
-            showToast("Filling order...");
-            const tx = await contract.fillOrder(orderId);
-            await tx.wait();
-            showToast("Order filled!", "success");
-            loadOrders();
-            loadStats();
-          } catch (e) {
-            console.error("Fill error:", e);
-            showToast("Fill failed: " + (e.reason || e.message), "error");
+          if (allowance < amountB) {
+            showToast("Approving tokens...");
+            const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountB);
+            await approveTx.wait();
+            showToast("Approval confirmed");
           }
+
+          showToast("Filling order...");
+          const tx = await contract.fillOrder(order.orderId);
+          await tx.wait();
+          showToast("Order filled!", "success");
+          loadOrders();
+          loadStats();
+        } catch (e) {
+          console.error("Fill error:", e);
+          showToast("Fill failed: " + (e.reason || e.message), "error");
         }
-      );
-    } catch (e) {
-      console.error("Get order error:", e);
-      showToast("Failed to load order", "error");
-    }
+      }
+    );
   }
 
   async function handleCancelOrder(orderId) {
