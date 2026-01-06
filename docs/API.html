@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Swapboard API Documentation</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 14px;
+      line-height: 1.6;
+      background: #fff;
+      color: #000;
+      padding: 40px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 24px; margin-bottom: 10px; }
+    h2 { font-size: 18px; margin: 30px 0 15px; border-bottom: 1px solid #000; padding-bottom: 5px; }
+    h3 { font-size: 16px; margin: 20px 0 10px; }
+    p { margin-bottom: 15px; }
+    a { color: #000; }
+    code { background: #f5f5f5; padding: 2px 6px; font-size: 13px; }
+    pre {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 15px;
+      overflow-x: auto;
+      margin: 15px 0;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    pre code { background: none; padding: 0; color: inherit; }
+    table { border-collapse: collapse; width: 100%; margin: 15px 0; font-size: 13px; }
+    th, td { border: 1px solid #000; padding: 8px; text-align: left; }
+    th { background: #f5f5f5; }
+    ul, ol { margin: 15px 0 15px 25px; }
+    li { margin-bottom: 5px; }
+    .back-link { margin-bottom: 20px; }
+    .keyword { color: #569cd6; }
+    .string { color: #ce9178; }
+    .number { color: #b5cea8; }
+    .comment { color: #6a9955; }
+  </style>
+</head>
+<body>
+
+<p class="back-link"><a href="../frontend/index.html">&larr; Back to Swapboard</a></p>
+
+<h1>SWAPBOARD API Documentation</h1>
+<p>For market makers and trading bots.</p>
+
+<h2>Contract</h2>
+<p><strong>Network:</strong> Ethereum Mainnet<br>
+<strong>Address:</strong> <code>0x0000000000000000000000000000000000000000</code> (update after deployment)</p>
+
+<h3>ABI</h3>
+<pre><code>[
+  {
+    "type": "function",
+    "name": "createOrder",
+    "inputs": [
+      { "name": "tokenA", "type": "address" },
+      { "name": "amountA", "type": "uint256" },
+      { "name": "tokenB", "type": "address" },
+      { "name": "amountB", "type": "uint256" }
+    ],
+    "outputs": [{ "name": "orderId", "type": "uint256" }],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "fillOrder",
+    "inputs": [{ "name": "orderId", "type": "uint256" }],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cancelOrder",
+    "inputs": [{ "name": "orderId", "type": "uint256" }],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getOrder",
+    "inputs": [{ "name": "orderId", "type": "uint256" }],
+    "outputs": [{
+      "name": "",
+      "type": "tuple",
+      "components": [
+        { "name": "maker", "type": "address" },
+        { "name": "tokenA", "type": "address" },
+        { "name": "amountA", "type": "uint256" },
+        { "name": "tokenB", "type": "address" },
+        { "name": "amountB", "type": "uint256" },
+        { "name": "active", "type": "bool" }
+      ]
+    }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getOrders",
+    "inputs": [{ "name": "orderIds", "type": "uint256[]" }],
+    "outputs": [{ "name": "result", "type": "tuple[]", "components": [...] }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "canFill",
+    "inputs": [{ "name": "orderId", "type": "uint256" }],
+    "outputs": [{ "name": "", "type": "bool" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "nextOrderId",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "OrderCreated",
+    "inputs": [
+      { "name": "orderId", "type": "uint256", "indexed": true },
+      { "name": "maker", "type": "address", "indexed": true },
+      { "name": "tokenA", "type": "address", "indexed": false },
+      { "name": "amountA", "type": "uint256", "indexed": false },
+      { "name": "tokenB", "type": "address", "indexed": false },
+      { "name": "amountB", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "OrderFilled",
+    "inputs": [
+      { "name": "orderId", "type": "uint256", "indexed": true },
+      { "name": "taker", "type": "address", "indexed": true }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "OrderCanceled",
+    "inputs": [
+      { "name": "orderId", "type": "uint256", "indexed": true }
+    ]
+  }
+]</code></pre>
+
+<h2>Subgraph</h2>
+<p><strong>Endpoint:</strong> <code>https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest</code></p>
+
+<h3>Query: Open Orders</h3>
+<pre><code>query OpenOrders($first: Int!, $skip: Int!) {
+  orders(
+    first: $first
+    skip: $skip
+    orderBy: orderId
+    orderDirection: desc
+    where: { active: true }
+  ) {
+    orderId
+    maker
+    amountA
+    amountB
+    tokenA {
+      address
+      symbol
+      decimals
+    }
+    tokenB {
+      address
+      symbol
+      decimals
+    }
+  }
+}</code></pre>
+
+<h3>Query: Orders by Token Pair</h3>
+<pre><code>query OrdersByPair($tokenA: String!, $tokenB: String!) {
+  orders(
+    first: 100
+    orderBy: orderId
+    orderDirection: desc
+    where: {
+      active: true
+      tokenA_: { address: $tokenA }
+      tokenB_: { address: $tokenB }
+    }
+  ) {
+    orderId
+    maker
+    amountA
+    amountB
+  }
+}</code></pre>
+
+<h3>Query: Orders by Maker</h3>
+<pre><code>query OrdersByMaker($maker: Bytes!) {
+  orders(
+    first: 100
+    orderBy: orderId
+    orderDirection: desc
+    where: { maker: $maker }
+  ) {
+    orderId
+    amountA
+    amountB
+    active
+    taker
+    tokenA { symbol }
+    tokenB { symbol }
+  }
+}</code></pre>
+
+<h3>Query: Global Stats</h3>
+<pre><code>query Stats {
+  globalStats(id: "global") {
+    totalOrders
+    filledOrders
+    cancelledOrders
+    activeOrders
+  }
+}</code></pre>
+
+<h3>Query: Token Volume</h3>
+<pre><code>query TokenVolume {
+  tokens(first: 20, orderBy: volumeSold, orderDirection: desc) {
+    address
+    symbol
+    decimals
+    volumeSold
+    volumeBought
+    ordersSelling
+    ordersBuying
+  }
+}</code></pre>
+
+<h2>Examples</h2>
+
+<h3>JavaScript: Create Order</h3>
+<pre><code>const { ethers } = require("ethers");
+
+const CONTRACT_ADDRESS = "0x...";
+const CONTRACT_ABI = [...]; // See above
+
+async function createOrder(provider, signer, tokenA, amountA, tokenB, amountB) {
+  const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+  // Approve tokenA first
+  const tokenContract = new ethers.Contract(tokenA, [
+    "function approve(address spender, uint256 amount) returns (bool)"
+  ], signer);
+
+  const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, amountA);
+  await approveTx.wait();
+
+  // Create order
+  const tx = await contract.createOrder(tokenA, amountA, tokenB, amountB);
+  const receipt = await tx.wait();
+
+  // Get orderId from event
+  const event = receipt.logs.find(
+    log => log.topics[0] === ethers.id("OrderCreated(uint256,address,address,uint256,address,uint256)")
+  );
+  const orderId = BigInt(event.topics[1]);
+
+  return orderId;
+}</code></pre>
+
+<h3>JavaScript: Fill Order</h3>
+<pre><code>async function fillOrder(provider, signer, orderId) {
+  const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+  // Get order details
+  const order = await contract.getOrder(orderId);
+
+  // Approve tokenB
+  const tokenContract = new ethers.Contract(order.tokenB, [
+    "function approve(address spender, uint256 amount) returns (bool)"
+  ], signer);
+
+  const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, order.amountB);
+  await approveTx.wait();
+
+  // Fill order
+  const tx = await contract.fillOrder(orderId);
+  await tx.wait();
+}</code></pre>
+
+<h3>JavaScript: Monitor New Orders</h3>
+<pre><code>async function monitorOrders(provider) {
+  const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+
+  contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
+    console.log(`New order ${orderId}: ${amountA} ${tokenA} for ${amountB} ${tokenB}`);
+  });
+
+  contract.on("OrderFilled", (orderId, taker) => {
+    console.log(`Order ${orderId} filled by ${taker}`);
+  });
+
+  contract.on("OrderCanceled", (orderId) => {
+    console.log(`Order ${orderId} canceled`);
+  });
+}</code></pre>
+
+<h3>Python: Query Subgraph</h3>
+<pre><code>import requests
+
+SUBGRAPH_URL = "https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest"
+
+def get_open_orders(token_a=None, token_b=None, limit=100):
+    where = "active: true"
+    if token_a:
+        where += f', tokenA_: {{ address: "{token_a.lower()}" }}'
+    if token_b:
+        where += f', tokenB_: {{ address: "{token_b.lower()}" }}'
+
+    query = f"""
+    {{
+      orders(
+        first: {limit}
+        orderBy: orderId
+        orderDirection: desc
+        where: {{ {where} }}
+      ) {{
+        orderId
+        maker
+        amountA
+        amountB
+        tokenA {{ address symbol decimals }}
+        tokenB {{ address symbol decimals }}
+      }}
+    }}
+    """
+
+    response = requests.post(SUBGRAPH_URL, json={"query": query})
+    return response.json()["data"]["orders"]</code></pre>
+
+<h3>Foundry: Create Order Script</h3>
+<pre><code>// script/CreateOrder.s.sol
+pragma solidity ^0.8.33;
+
+import {Script} from "forge-std/Script.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+interface ISwapboard {
+    function createOrder(
+        address tokenA,
+        uint256 amountA,
+        address tokenB,
+        uint256 amountB
+    ) external returns (uint256);
+}
+
+contract CreateOrder is Script {
+    function run() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        address board = vm.envAddress("BOARD_ADDRESS");
+        address tokenA = vm.envAddress("TOKEN_A");
+        address tokenB = vm.envAddress("TOKEN_B");
+        uint256 amountA = vm.envUint("AMOUNT_A");
+        uint256 amountB = vm.envUint("AMOUNT_B");
+
+        vm.startBroadcast(pk);
+
+        IERC20(tokenA).approve(board, amountA);
+        uint256 orderId = ISwapboard(board).createOrder(tokenA, amountA, tokenB, amountB);
+
+        vm.stopBroadcast();
+    }
+}</code></pre>
+
+<p>Run with:</p>
+<pre><code>PRIVATE_KEY=0x... \
+BOARD_ADDRESS=0x... \
+TOKEN_A=0x... \
+TOKEN_B=0x... \
+AMOUNT_A=1000000000000000000 \
+AMOUNT_B=3000000000 \
+forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast</code></pre>
+
+<h2>Error Codes</h2>
+<table>
+  <tr><th>Error</th><th>Selector</th><th>Description</th></tr>
+  <tr><td><code>ZeroAddress()</code></td><td><code>0xd92e233d</code></td><td>Token address is zero</td></tr>
+  <tr><td><code>ZeroAmount()</code></td><td><code>0x1f2a2005</code></td><td>Amount is zero</td></tr>
+  <tr><td><code>SameToken()</code></td><td><code>0x5c122a85</code></td><td>tokenA and tokenB are identical</td></tr>
+  <tr><td><code>NotAContract(address)</code></td><td><code>0x09ee12d5</code></td><td>Address has no code</td></tr>
+  <tr><td><code>BalanceMismatch(uint256,uint256)</code></td><td><code>0x2c5211c6</code></td><td>FOT token detected</td></tr>
+  <tr><td><code>OrderNotFound(uint256)</code></td><td><code>0x97d80e3a</code></td><td>Order doesn't exist</td></tr>
+  <tr><td><code>OrderNotActive(uint256)</code></td><td><code>0x9bd8c2b6</code></td><td>Order already filled/cancelled</td></tr>
+  <tr><td><code>NotMaker(uint256,address,address)</code></td><td><code>0x3d693ada</code></td><td>Caller is not order maker</td></tr>
+</table>
+
+<h2>Notes</h2>
+<ul>
+  <li>All amounts are in base units (wei-style). Multiply by 10^decimals.</li>
+  <li>Orders can be front-run. Consider using Flashbots for fills.</li>
+  <li>Fee-on-transfer tokens for tokenA are rejected at creation.</li>
+  <li>Fee-on-transfer tokens for tokenB: maker receives less than amountB.</li>
+  <li>No partial fills. Orders are filled completely or not at all.</li>
+  <li>Self-fills are allowed (maker can fill own order).</li>
+  <li>No expiry. Orders remain active until filled or canceled.</li>
+  <li>Contract has no admin functions. No pause. No upgrades.</li>
+</ul>
+
+</body>
+</html>

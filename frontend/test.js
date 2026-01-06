@@ -343,10 +343,10 @@ async function runTests() {
     );
 
     const headers = await page.$$eval("thead th", ths => ths.map(t => t.textContent.trim()));
-    const expectedHeaders = ["Trade ID", "Account", "Selling Token", "Sell Size", "Wanted Token", "Wanted Size", "USD Val", "Price"];
+    const expectedHeaders = ["Trade ID", "Seller", "Selling Token", "Sell Size", "Wanted Token", "Wanted Size", "USD Val", "Price"];
     test(
       "Table headers are correct",
-      headers.length === 8 && headers[0].includes("Trade ID") && headers[2].includes("Selling"),
+      headers.length === 8 && headers[0].includes("Trade ID") && headers[1].includes("Seller") && headers[2].includes("Selling"),
       `Got headers: ${headers.join(", ")}`
     );
 
