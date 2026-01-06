@@ -2328,7 +2328,7 @@
             $("#create-amountB").value = "";
             $("#tokenA-info").textContent = "";
             $("#tokenB-info").textContent = "";
-            $("#price-info").textContent = "";
+            $("#price-info").innerHTML = "";
             $("#sell-modal").classList.add("hidden");
 
             loadOrders();
@@ -2805,10 +2805,13 @@
       const amountB = parseFloat(amountBStr);
 
       if (!isNaN(amountA) && !isNaN(amountB) && amountA > 0 && amountB > 0) {
-        const price = amountB / amountA;
-        $("#price-info").textContent = `1 ${tokenASymbol} = ${price.toFixed(6).replace(/\.?0+$/, "")} ${tokenBSymbol}`;
+        const priceAPerB = amountA / amountB;
+        const priceBPerA = amountB / amountA;
+        $("#price-info").innerHTML =
+          `1 ${tokenBSymbol} = ${priceAPerB.toFixed(6).replace(/\.?0+$/, "")} ${tokenASymbol}<br>` +
+          `1 ${tokenASymbol} = ${priceBPerA.toFixed(6).replace(/\.?0+$/, "")} ${tokenBSymbol}`;
       } else {
-        $("#price-info").textContent = "";
+        $("#price-info").innerHTML = "";
       }
     }
 
@@ -2817,10 +2820,10 @@
 
     // Clear price info when tokens change
     $("#create-tokenA").addEventListener("input", () => {
-      $("#price-info").textContent = "";
+      $("#price-info").innerHTML = "";
     });
     $("#create-tokenB").addEventListener("input", () => {
-      $("#price-info").textContent = "";
+      $("#price-info").innerHTML = "";
     });
 
     // Sortable column headers
