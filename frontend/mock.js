@@ -353,6 +353,30 @@
   const MOCK_PAIRS = calculatePairStats();
 
   // ============================================================================
+  // Mock Price Data
+  // ============================================================================
+
+  /**
+   * Static mock prices for development (approximate real prices).
+   * Keys are CoinGecko coin IDs matching COINGECKO_ID_MAP in app.js.
+   * @constant {Object.<string, number>}
+   */
+  const MOCK_PRICES = {
+    "weth": 3500,
+    "usd-coin": 1.0,
+    "tether": 1.0,
+    "dai": 1.0,
+    "wrapped-bitcoin": 95000,
+    "chainlink": 22,
+    "aave": 180,
+    "uniswap": 12,
+    "staked-ether": 3480,
+    "matic-network": 0.45,
+    "pepe": 0.000018,
+    "shiba-inu": 0.000022,
+  };
+
+  // ============================================================================
   // Query Handler
   // ============================================================================
 
@@ -458,10 +482,38 @@
   const originalFetch = window.fetch;
 
   window.fetch = async function (url, options) {
-    // Only intercept subgraph requests
+    const urlStr = typeof url === "string" ? url : url.toString();
+
+    // Intercept CoinGecko price requests
+    if (urlStr.includes("api.coingecko.com/api/v3/simple/price")) {
+      await new Promise((r) => setTimeout(r, MOCK_CONFIG.networkDelay));
+
+      // Parse requested IDs from URL
+      const urlObj = new URL(urlStr);
+      const idsParam = urlObj.searchParams.get("ids") || "";
+      const requestedIds = idsParam.split(",").filter(Boolean);
+
+      const data = {};
+      for (const id of requestedIds) {
+        if (MOCK_PRICES[id] !== undefined) {
+          data[id] = { usd: MOCK_PRICES[id] };
+        }
+      }
+
+      console.log("[Mock] CoinGecko price query:", requestedIds.join(", "));
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => data,
+      };
+    }
+
+    // Intercept subgraph requests
     const isSubgraph =
-      typeof url === "string" &&
-      (url.includes("thegraph.com") || url.includes("subgraph") || url.includes("localhost:8"));
+      urlStr.includes("thegraph.com") ||
+      urlStr.includes("subgraph") ||
+      urlStr.includes("localhost:8");
 
     if (!isSubgraph) {
       return originalFetch.apply(this, arguments);
@@ -541,8 +593,9 @@
               return "0x" + "f".repeat(64);
             }
             if (params?.[0]?.data?.startsWith("0x95d89b41")) {
-              // symbol()
-              return "0x" + Buffer.from("MOCK").toString("hex").padEnd(64, "0");
+              // symbol() - encode "MOCK" as hex without Buffer (browser-compatible)
+              const symbolHex = "MOCK".split("").map(c => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+              return "0x" + symbolHex.padEnd(64, "0");
             }
             if (params?.[0]?.data?.startsWith("0x313ce567")) {
               // decimals()

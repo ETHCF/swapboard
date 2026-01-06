@@ -351,7 +351,7 @@ def get_open_orders(token_a=None, token_b=None, limit=100):
 
 ```solidity
 // script/CreateOrder.s.sol
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.33;
 
 import {Script} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -394,6 +394,19 @@ AMOUNT_A=1000000000000000000 \
 AMOUNT_B=3000000000 \
 forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 ```
+
+## Error Codes
+
+| Error | Selector | Description |
+|-------|----------|-------------|
+| `ZeroAddress()` | `0xd92e233d` | Token address is zero |
+| `ZeroAmount()` | `0x1f2a2005` | Amount is zero |
+| `SameToken()` | `0x5c122a85` | tokenA and tokenB are identical |
+| `NotAContract(address)` | `0x09ee12d5` | Address has no code |
+| `BalanceMismatch(uint256,uint256)` | `0x2c5211c6` | FOT token detected |
+| `OrderNotFound(uint256)` | `0x97d80e3a` | Order doesn't exist |
+| `OrderNotActive(uint256)` | `0x9bd8c2b6` | Order already filled/cancelled |
+| `NotMaker(uint256,address,address)` | `0x3d693ada` | Caller is not order maker |
 
 ## Notes
 

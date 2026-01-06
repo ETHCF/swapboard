@@ -84,25 +84,23 @@ async function runTests() {
   }
 
   async function clickRadio(value) {
-    // Get current row count before clicking
-    const prevCount = await page.$$eval("#order-table tr", rows => rows.length);
-
     await page.click(`input[name="status"][value="${value}"]`);
 
-    // Wait for loading or row count change
+    // Wait for orders to load (not loading, not empty, has real data)
     await page.waitForFunction(
-      (prev) => {
-        const firstCell = document.querySelector("#order-table tr td");
-        const isLoading = firstCell?.textContent?.includes("Loading");
-        const currentCount = document.querySelectorAll("#order-table tr").length;
-        // Wait until not loading AND (count changed OR we've settled)
-        return !isLoading;
+      () => {
+        const rows = document.querySelectorAll("#order-table tr");
+        if (rows.length === 0) return false;
+        const firstCell = rows[0]?.querySelector("td");
+        if (!firstCell) return false;
+        const text = firstCell.textContent || "";
+        // Wait until we have real data (not loading, not "no orders")
+        return !text.includes("Loading") && !text.includes("No orders") && rows.length > 0;
       },
-      { timeout: 3000 },
-      prevCount
+      { timeout: 5000 }
     );
-    // Extra delay to ensure data is rendered
-    await new Promise(r => setTimeout(r, 300));
+    // Extra delay to ensure data is fully rendered
+    await new Promise(r => setTimeout(r, 400));
   }
 
   async function selectToken(selectId, tokenAddress) {
@@ -161,6 +159,17 @@ async function runTests() {
 
     // ==================== STATUS FILTER TESTS ====================
     console.log("\n--- Status Filter Behavior ---");
+
+    // Wait for orders to load (after stats, orders + prices take longer)
+    await page.waitForFunction(
+      () => {
+        const rows = document.querySelectorAll("#order-table tr");
+        const firstCell = rows[0]?.querySelector("td");
+        return rows.length > 0 && !firstCell?.textContent?.includes("Loading") && !firstCell?.textContent?.includes("No orders");
+      },
+      { timeout: 5000 }
+    );
+    await new Promise(r => setTimeout(r, 300));
 
     // Default should be "open" - expect 20 active orders (40% of 50)
     let orderIds = await getOrderIds();

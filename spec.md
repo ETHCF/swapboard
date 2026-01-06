@@ -451,11 +451,3 @@ Documented, not bugs:
 - **Forced ETH**: ETH sent via selfdestruct cannot be recovered. Does not affect functionality.
 - **Malicious tokens**: Contract assumes ERC20 standard compliance. Malicious tokens that lie about balances can cause fund loss. Use trusted tokens only.
 
----
-
-## After Launch
-
-Nothing. No maintenance. No updates. No team. It either works or it doesn't.
-
-If bugs found: deploy new contract, new frontend, new ENS. Old one stays forever.
-

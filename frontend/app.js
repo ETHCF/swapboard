@@ -97,6 +97,138 @@
   let currentFilters = { selling: "", wanting: "", status: "open" };
 
   // ============================================================================
+  // Price Service (CoinGecko)
+  // ============================================================================
+
+  /**
+   * Maps lowercase token addresses to CoinGecko coin IDs.
+   * Only tokens in this registry can have USD prices displayed.
+   * @constant {Object.<string, string>}
+   */
+  const COINGECKO_ID_MAP = {
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "weth",
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "usd-coin",
+    "0xdac17f958d2ee523a2206206994597c13d831ec7": "tether",
+    "0x6b175474e89094c44da98b954eedeac495271d0f": "dai",
+    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": "wrapped-bitcoin",
+    "0x514910771af9ca656af840dff83e8264ecf986ca": "chainlink",
+    "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": "aave",
+    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": "uniswap",
+    "0xae7ab96520de3a18e5e111b5eaab095312d7fe84": "staked-ether",
+    "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0": "matic-network",
+    "0x6982508145454ce325ddbe47a25d4ec3d2311933": "pepe",
+    "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce": "shiba-inu",
+  };
+
+  /**
+   * Price cache with TTL tracking.
+   * @type {Map<string, {usd: number, fetchedAt: number}>}
+   */
+  const priceCache = new Map();
+  const PRICE_CACHE_TTL_MS = 60000;
+  let priceFetchInProgress = null;
+
+  /**
+   * Returns cached price if valid, null otherwise.
+   * @param {string} coinGeckoId - CoinGecko coin ID
+   * @returns {{usd: number, fetchedAt: number}|null}
+   */
+  function getCachedPrice(coinGeckoId) {
+    const cached = priceCache.get(coinGeckoId);
+    if (!cached) return null;
+    if (Date.now() - cached.fetchedAt > PRICE_CACHE_TTL_MS) return null;
+    return cached;
+  }
+
+  /**
+   * Fetches prices for multiple CoinGecko IDs in a single request.
+   * Implements rate limiting via request coalescing.
+   * @param {string[]} coinGeckoIds - Array of CoinGecko coin IDs
+   * @returns {Promise<void>}
+   */
+  async function fetchPrices(coinGeckoIds) {
+    const idsToFetch = coinGeckoIds.filter((id) => !getCachedPrice(id));
+    if (idsToFetch.length === 0) return;
+
+    if (priceFetchInProgress) {
+      await priceFetchInProgress;
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    priceFetchInProgress = (async () => {
+      try {
+        const url = "https://api.coingecko.com/api/v3/simple/price?ids=" +
+          idsToFetch.join(",") + "&vs_currencies=usd";
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          if (res.status === 429) {
+            console.warn("[Price] Rate limited by CoinGecko");
+          }
+          return;
+        }
+
+        const data = await res.json();
+        const now = Date.now();
+
+        for (const id of idsToFetch) {
+          if (data[id] && typeof data[id].usd === "number") {
+            priceCache.set(id, { usd: data[id].usd, fetchedAt: now });
+          }
+        }
+      } catch (e) {
+        clearTimeout(timeoutId);
+        if (e.name === "AbortError") {
+          console.warn("[Price] Request timed out");
+        } else {
+          console.warn("[Price] Fetch failed:", e.message);
+        }
+      }
+    })();
+
+    await priceFetchInProgress;
+    priceFetchInProgress = null;
+  }
+
+  /**
+   * Gets USD price for a token address.
+   * @param {string} tokenAddress - Ethereum token address
+   * @returns {number|null} USD price or null if unavailable
+   */
+  function getTokenPrice(tokenAddress) {
+    const id = COINGECKO_ID_MAP[tokenAddress.toLowerCase()];
+    if (!id) return null;
+    const cached = getCachedPrice(id);
+    return cached ? cached.usd : null;
+  }
+
+  /**
+   * Formats USD value for display.
+   * @param {number|null} usdValue
+   * @returns {string}
+   */
+  function formatUsd(usdValue) {
+    if (usdValue === null || usdValue === undefined) return "$ --";
+    if (usdValue >= 1000000) {
+      return "$ " + (usdValue / 1000000).toFixed(2) + "M";
+    }
+    if (usdValue >= 1000) {
+      return "$ " + usdValue.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+    if (usdValue >= 1) {
+      return "$ " + usdValue.toFixed(2);
+    }
+    if (usdValue >= 0.01) {
+      return "$ " + usdValue.toFixed(4);
+    }
+    return "$ " + usdValue.toExponential(2);
+  }
+
+  // ============================================================================
   // Utility Functions
   // ============================================================================
 
@@ -455,6 +587,16 @@
       return;
     }
 
+    // Batch fetch prices for all tokenA addresses
+    const tokenAddresses = [...new Set(data.orders.map((o) => o.tokenA.address.toLowerCase()))];
+    const coinGeckoIds = tokenAddresses
+      .map((addr) => COINGECKO_ID_MAP[addr])
+      .filter(Boolean);
+
+    if (coinGeckoIds.length > 0) {
+      await fetchPrices(coinGeckoIds);
+    }
+
     for (const order of data.orders) {
       const tr = document.createElement("tr");
       const isMaker = userAddress && order.maker.toLowerCase() === userAddress.toLowerCase();
@@ -475,28 +617,83 @@
         price = formatRatio(priceNum) + " " + escapeHtml(order.tokenB.symbol) + "/" + escapeHtml(order.tokenA.symbol);
       }
 
-      // USD Val placeholder (would need price oracle in production)
-      const usdVal = "$ --";
+      // Calculate USD value of sell side
+      const tokenAPrice = getTokenPrice(order.tokenA.address);
+      let usdVal = "$ --";
+      if (tokenAPrice !== null && amountA > 0n) {
+        const humanAmountA = Number(amountA) / Math.pow(10, tokenADecimals);
+        usdVal = formatUsd(humanAmountA * tokenAPrice);
+      }
 
-      // Build row - full address shown, no truncation
-      const cells = [
-        escapeHtml(order.orderId),
-        order.maker,
-        escapeHtml(order.tokenA.symbol),
-        formatAmount(order.amountA, tokenADecimals),
-        escapeHtml(order.tokenB.symbol),
-        formatAmount(order.amountB, tokenBDecimals),
-        usdVal,
-        price
-      ];
+      // Build row with links
+      // Column 0: Trade ID
+      const tdId = document.createElement("td");
+      tdId.textContent = order.orderId;
+      tr.appendChild(tdId);
 
-      cells.forEach((content, index) => {
-        const td = document.createElement("td");
-        td.textContent = content;
-        if (index === 2) td.title = order.tokenA.address;
-        if (index === 4) td.title = order.tokenB.address;
-        tr.appendChild(td);
-      });
+      // Column 1: Seller (link to Etherscan)
+      const tdSeller = document.createElement("td");
+      const sellerLink = document.createElement("a");
+      sellerLink.href = "https://etherscan.io/address/" + order.maker;
+      sellerLink.target = "_blank";
+      sellerLink.rel = "noopener noreferrer";
+      sellerLink.textContent = truncateAddress(order.maker);
+      sellerLink.title = order.maker;
+      tdSeller.appendChild(sellerLink);
+      tr.appendChild(tdSeller);
+
+      // Column 2: Selling Token (link to CoinGecko)
+      const tdTokenA = document.createElement("td");
+      const tokenAId = COINGECKO_ID_MAP[order.tokenA.address.toLowerCase()];
+      if (tokenAId) {
+        const tokenALink = document.createElement("a");
+        tokenALink.href = "https://www.coingecko.com/en/coins/" + tokenAId;
+        tokenALink.target = "_blank";
+        tokenALink.rel = "noopener noreferrer";
+        tokenALink.textContent = order.tokenA.symbol;
+        tdTokenA.appendChild(tokenALink);
+      } else {
+        tdTokenA.textContent = order.tokenA.symbol;
+      }
+      tdTokenA.title = order.tokenA.address;
+      tr.appendChild(tdTokenA);
+
+      // Column 3: Sell Size
+      const tdAmountA = document.createElement("td");
+      tdAmountA.textContent = formatAmount(order.amountA, tokenADecimals);
+      tr.appendChild(tdAmountA);
+
+      // Column 4: Wanted Token (link to CoinGecko)
+      const tdTokenB = document.createElement("td");
+      const tokenBId = COINGECKO_ID_MAP[order.tokenB.address.toLowerCase()];
+      if (tokenBId) {
+        const tokenBLink = document.createElement("a");
+        tokenBLink.href = "https://www.coingecko.com/en/coins/" + tokenBId;
+        tokenBLink.target = "_blank";
+        tokenBLink.rel = "noopener noreferrer";
+        tokenBLink.textContent = order.tokenB.symbol;
+        tdTokenB.appendChild(tokenBLink);
+      } else {
+        tdTokenB.textContent = order.tokenB.symbol;
+      }
+      tdTokenB.title = order.tokenB.address;
+      tr.appendChild(tdTokenB);
+
+      // Column 5: Wanted Size
+      const tdAmountB = document.createElement("td");
+      tdAmountB.textContent = formatAmount(order.amountB, tokenBDecimals);
+      tr.appendChild(tdAmountB);
+
+      // Column 6: USD Val (nowrap to keep $ and value on same line)
+      const tdUsd = document.createElement("td");
+      tdUsd.textContent = usdVal;
+      tdUsd.style.whiteSpace = "nowrap";
+      tr.appendChild(tdUsd);
+
+      // Column 7: Price
+      const tdPrice = document.createElement("td");
+      tdPrice.textContent = price;
+      tr.appendChild(tdPrice);
 
       // Click handler for filling orders
       if (order.active && !isMaker && userAddress) {
