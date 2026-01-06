@@ -16,7 +16,11 @@ body {
 }
 
 header {
-  text-align: center;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-bottom: 15px;
   padding-bottom: 15px;
   border-bottom: 1px solid #000;
@@ -25,7 +29,6 @@ header {
 h1 {
   font-size: 24px;
   font-weight: bold;
-  margin-bottom: 10px;
 }
 
 .header-box {
@@ -39,7 +42,6 @@ h1 {
   display: flex;
   gap: 15px;
   align-items: center;
-  justify-content: center;
   flex-wrap: wrap;
 }
 

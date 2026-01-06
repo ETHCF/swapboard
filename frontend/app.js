@@ -2344,6 +2344,22 @@
   // Wallet Connection
   // ============================================================================
 
+  const NETWORK_NAMES = {
+    1: "Mainnet",
+    11155111: "Sepolia",
+    5: "Goerli",
+    137: "Polygon",
+    42161: "Arbitrum",
+    10: "Optimism",
+  };
+
+  function updateNetworkIndicator(chainId) {
+    const name = NETWORK_NAMES[chainId] || "Chain " + chainId;
+    const indicator = $("#network-indicator");
+    indicator.textContent = "[" + name + "]";
+    indicator.classList.remove("hidden");
+  }
+
   /**
    * Connects to the user's Ethereum wallet via window.ethereum (MetaMask, etc).
    * Sets up the ethers provider, signer, and contract instance.
@@ -2358,6 +2374,9 @@
       await provider.send("eth_requestAccounts", []);
       signer = await provider.getSigner();
       userAddress = await signer.getAddress();
+
+      const network = await provider.getNetwork();
+      updateNetworkIndicator(Number(network.chainId));
 
       contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
@@ -2863,6 +2882,7 @@
           $("#connect-btn").textContent = "[Connect Wallet]";
           $("#sell-btn").classList.add("hidden");
           $("#notify-btn").classList.add("hidden");
+          $("#network-indicator").classList.add("hidden");
           $("#sell-modal").classList.add("hidden");
           $("#my-orders-label").classList.add("hidden");
           $("#filter-my-orders").checked = false;
