@@ -1646,7 +1646,6 @@
           activeOrders
           filledOrders
           cancelledOrders
-          totalVolumeUsd
         }
       }
     `);
@@ -1657,18 +1656,14 @@
       $("#stat-active").textContent = formatNumber(s.activeOrders || "0");
       $("#stat-filled").textContent = formatNumber(s.filledOrders || "0");
       $("#stat-cancelled").textContent = formatNumber(s.cancelledOrders || "0");
-      if (s.totalVolumeUsd) {
-        $("#stat-volume").textContent = formatUsd(parseFloat(s.totalVolumeUsd));
-      } else {
-        $("#stat-volume").textContent = "$ --";
-      }
+      $("#stat-volume").textContent = "N/A";
     }
   }
 
   async function loadPopularPairs() {
     const data = await querySubgraph(`
       query {
-        pairStatses(first: 10, orderBy: tradeCount, orderDirection: desc) {
+        pairStats_collection(first: 10, orderBy: tradeCount, orderDirection: desc) {
           tokenA {
             address
             symbol
@@ -1682,8 +1677,8 @@
     `);
 
     const pairsList = $("#pairs-list");
-    if (data && data.pairStatses && data.pairStatses.length > 0) {
-      pairsList.innerHTML = data.pairStatses
+    if (data && data.pairStats_collection && data.pairStats_collection.length > 0) {
+      pairsList.innerHTML = data.pairStats_collection
         .map(p => `<a href="#" class="pair-link" data-token-a="${escapeHtml(p.tokenA.address)}" data-token-b="${escapeHtml(p.tokenB.address)}">[${escapeHtml(p.tokenA.symbol)}/${escapeHtml(p.tokenB.symbol)}]</a>`)
         .join(" ");
 
