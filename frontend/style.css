@@ -59,7 +59,9 @@ h1 {
   text-decoration: underline;
 }
 
-#sell-btn.hidden {
+#sell-btn.hidden,
+#network-indicator.hidden,
+#notify-btn.hidden {
   display: none;
 }
 
