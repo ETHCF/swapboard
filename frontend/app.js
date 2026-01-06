@@ -1688,6 +1688,31 @@
     }
   }
 
+  /**
+   * Polls the subgraph until an order's active status changes.
+   * Used after fill/cancel to wait for indexing before refreshing UI.
+   * @param {string} orderId - The order ID to check
+   * @param {boolean} expectedActive - The expected active status after the change
+   * @param {number} maxAttempts - Maximum polling attempts (default 10)
+   * @param {number} interval - Polling interval in ms (default 1500)
+   */
+  async function waitForOrderUpdate(orderId, expectedActive, maxAttempts = 10, interval = 1500) {
+    for (let i = 0; i < maxAttempts; i++) {
+      const data = await querySubgraph(`
+        query {
+          order(id: "${orderId}") {
+            active
+          }
+        }
+      `);
+      if (data && data.order && data.order.active === expectedActive) {
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, interval));
+    }
+    return false;
+  }
+
   async function loadStats() {
     const data = await querySubgraph(`
       query {
@@ -2208,9 +2233,11 @@
           const tx = await contract.fillOrder(order.orderId);
           showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
-          showToast("Order filled!", "success");
+          showToast("Order filled! Updating...", "success", true);
+          await waitForOrderUpdate(order.orderId, false);
           loadOrders();
           loadStats();
+          showToast("Order filled!", "success");
         } catch (e) {
           console.error("Fill error:", e);
           showToast("Fill failed: " + parseContractError(e), "error");
@@ -2250,9 +2277,11 @@
           showToast("Cancelling order...");
           const tx = await contract.cancelOrder(order.orderId);
           await tx.wait();
-          showToast("Order cancelled!", "success");
+          showToast("Order cancelled! Updating...", "success", true);
+          await waitForOrderUpdate(order.orderId, false);
           loadOrders();
           loadStats();
+          showToast("Order cancelled!", "success");
         } catch (e) {
           console.error("Cancel error:", e);
           showToast("Cancel failed: " + parseContractError(e), "error");
@@ -2328,8 +2357,8 @@
             showToast("Confirm order in wallet...", "info", true);
             const tx = await contract.createOrder(tokenAAddr, amountA, tokenBAddr, amountB);
             showToast("Waiting for tx confirmation...", "info", true);
-            await tx.wait();
-            showToast("Order created!", "success");
+            const receipt = await tx.wait();
+            showToast("Order created! Updating...", "success", true);
 
             // Save tokens to recent list
             addRecentToken(tokenAAddr, tokenA.symbol);
@@ -2344,8 +2373,19 @@
             $("#price-info").innerHTML = "";
             $("#sell-modal").classList.add("hidden");
 
+            // Get order ID from event and wait for subgraph to index
+            const orderCreatedEvent = receipt.logs
+              .map(log => { try { return contract.interface.parseLog(log); } catch { return null; } })
+              .find(parsed => parsed && parsed.name === "OrderCreated");
+            if (orderCreatedEvent) {
+              await waitForOrderUpdate(orderCreatedEvent.args.orderId.toString(), true);
+            } else {
+              // Fallback: wait a bit for indexing
+              await new Promise(resolve => setTimeout(resolve, 3000));
+            }
             loadOrders();
             loadStats();
+            showToast("Order created!", "success");
           } catch (e) {
             console.error("Create error:", e);
             showToast("Create failed: " + parseContractError(e), "error");
