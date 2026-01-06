@@ -1721,7 +1721,7 @@
    * @param {Object} variables - Query variables
    * @returns {Promise<Object|null>} Query data or null on error
    */
-  async function querySubgraph(query, variables = {}) {
+  async function querySubgraph(query, variables = {}, silent = false) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT);
     try {
@@ -1734,23 +1734,23 @@
       clearTimeout(timeoutId);
       if (!res.ok) {
         console.error("Subgraph HTTP error:", res.status);
-        showToast("Failed to fetch data. Please try again.", "error");
+        if (!silent) showToast("Failed to fetch data. Please try again.", "error");
         return null;
       }
       const json = await res.json();
       if (json.errors) {
         console.error("Subgraph error:", json.errors);
-        showToast("Error loading data.", "error");
+        if (!silent) showToast("Error loading data.", "error");
         return null;
       }
       return json.data;
     } catch (e) {
       clearTimeout(timeoutId);
       if (e.name === "AbortError") {
-        showToast("Request timed out. Please try again.", "error");
+        if (!silent) showToast("Request timed out. Please try again.", "error");
       } else {
         console.error("Subgraph fetch error:", e);
-        showToast("Network error. Check your connection.", "error");
+        if (!silent) showToast("Network error. Check your connection.", "error");
       }
       return null;
     }
@@ -1772,7 +1772,7 @@
             active
           }
         }
-      `);
+      `, {}, true); // silent mode - don't show error toasts during polling
       if (data && data.order && data.order.active === expectedActive) {
         return true;
       }
@@ -2301,8 +2301,10 @@
           const tx = await contract.fillOrder(order.orderId);
           showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
-          showToast("Order filled! Updating...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
+          console.log("Fill tx confirmed, waiting for subgraph...");
+          showToast("Order filled! Syncing...", "success", true);
+          const indexed = await waitForOrderUpdate(order.orderId, false);
+          console.log("Subgraph sync complete:", indexed);
           loadOrders();
           loadStats();
           showToast("Order filled!", "success");
