@@ -312,13 +312,13 @@
   }
 
   /**
-   * Truncates an address for display (0x1234...5678).
+   * Returns address for display.
    * @param {string} addr - Full Ethereum address
-   * @returns {string} Truncated address or empty string if invalid
+   * @returns {string} Full address or empty string if invalid
    */
   function truncateAddress(addr) {
     if (!addr || !isValidAddress(addr)) return "";
-    return addr.slice(0, 6) + "..." + addr.slice(-4);
+    return addr;
   }
 
   /**
