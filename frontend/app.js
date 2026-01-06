@@ -2370,6 +2370,8 @@
             $("#create-amountB").value = "";
             $("#tokenA-info").textContent = "";
             $("#tokenB-info").textContent = "";
+            $("#tokenA-balance").textContent = "";
+            $("#tokenB-balance").textContent = "";
             $("#price-info").innerHTML = "";
             $("#sell-modal").classList.add("hidden");
 
@@ -2885,7 +2887,7 @@
     $("#create-btn").addEventListener("click", handleCreateOrder);
 
     setupTokenInfoFetch("#create-tokenA", "#tokenA-info", "#tokenA-balance", "#quick-amounts-A");
-    setupTokenInfoFetch("#create-tokenB", "#tokenB-info", null, null);
+    setupTokenInfoFetch("#create-tokenB", "#tokenB-info", "#tokenB-balance", null);
 
     // Add token selectors with Uniswap token list
     fetchUniswapTokenList().then(() => {
