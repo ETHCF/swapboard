@@ -35,6 +35,10 @@ Thumbs.db
 contracts/broadcast/
 contracts/cache_forge/
 
+# Test token contracts (development only)
+contracts/src/TestToken.sol
+contracts/script/DeployTestTokens.s.sol
+
 # Logs
 *.log
 npm-debug.log*
