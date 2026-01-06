@@ -420,9 +420,25 @@
       const first = firstMatch ? parseInt(firstMatch[1]) : 20;
       const skip = skipMatch ? parseInt(skipMatch[1]) : 0;
 
-      // Extract where clause
-      const whereMatch = query.match(/where:\s*\{([^}]+)\}/);
-      const whereClause = whereMatch ? whereMatch[1] : "";
+      // Extract where clause with proper brace matching
+      let whereClause = "";
+      const whereStart = query.indexOf("where:");
+      if (whereStart !== -1) {
+        const braceStart = query.indexOf("{", whereStart);
+        if (braceStart !== -1) {
+          let depth = 0;
+          let end = braceStart;
+          for (let i = braceStart; i < query.length; i++) {
+            if (query[i] === "{") depth++;
+            else if (query[i] === "}") depth--;
+            if (depth === 0) {
+              end = i;
+              break;
+            }
+          }
+          whereClause = query.substring(braceStart + 1, end);
+        }
+      }
 
       // Filter and paginate
       const filtered = filterOrders(whereClause);
