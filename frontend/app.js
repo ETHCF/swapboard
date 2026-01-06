@@ -476,7 +476,7 @@
     const pairsList = $("#pairs-list");
     if (data && data.pairStatses && data.pairStatses.length > 0) {
       pairsList.innerHTML = data.pairStatses
-        .map(p => `<a href="#" class="pair-link" data-token-a="${escapeHtml(p.tokenA.address)}" data-token-b="${escapeHtml(p.tokenB.address)}">${escapeHtml(p.tokenA.symbol)}/${escapeHtml(p.tokenB.symbol)}</a>`)
+        .map(p => `<a href="#" class="pair-link" data-token-a="${escapeHtml(p.tokenA.address)}" data-token-b="${escapeHtml(p.tokenB.address)}">[${escapeHtml(p.tokenA.symbol)}/${escapeHtml(p.tokenB.symbol)}]</a>`)
         .join(" ");
 
       // Attach click handlers to pair links
@@ -629,24 +629,37 @@
       }
 
       // Build row with links
-      // Column 0: Fill button
+      // Column 0: Action button (Fill for others, Cancel for own)
       const tdAction = document.createElement("td");
-      if (order.active && !isMaker) {
-        const fillBtn = document.createElement("a");
-        fillBtn.href = "#";
-        fillBtn.textContent = "[Fill]";
-        fillBtn.classList.add("buy-btn");
-        fillBtn.addEventListener("click", async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (!userAddress) {
-            await connectWallet();
-          }
-          if (userAddress) {
-            handleFillOrder(order);
-          }
-        });
-        tdAction.appendChild(fillBtn);
+      if (order.active) {
+        if (isMaker) {
+          const cancelBtn = document.createElement("a");
+          cancelBtn.href = "#";
+          cancelBtn.textContent = "[Cancel]";
+          cancelBtn.classList.add("cancel-btn");
+          cancelBtn.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleCancelOrder(order);
+          });
+          tdAction.appendChild(cancelBtn);
+        } else {
+          const fillBtn = document.createElement("a");
+          fillBtn.href = "#";
+          fillBtn.textContent = "[Fill]";
+          fillBtn.classList.add("buy-btn");
+          fillBtn.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!userAddress) {
+              await connectWallet();
+            }
+            if (userAddress) {
+              handleFillOrder(order);
+            }
+          });
+          tdAction.appendChild(fillBtn);
+        }
       }
       tr.appendChild(tdAction);
 
@@ -766,23 +779,30 @@
       return;
     }
 
-    const amountStr = formatAmount(order.amountB, order.tokenB.decimals);
+    const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
+    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
 
     showModal(
       "Fill Order #" + order.orderId,
-      `You will send ${amountStr} ${order.tokenB.symbol} and receive tokens in return.`,
+      `You will send ${amountBStr} ${order.tokenB.symbol} and receive ${amountAStr} ${order.tokenA.symbol} in return.`,
       async () => {
         try {
-          showToast("Checking allowance...");
-          const tokenContract = new ethers.Contract(order.tokenB.address, ERC20_ABI, signer);
-          const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
-          const amountB = BigInt(order.amountB);
+          const isLocal = window.location.hostname === "localhost"
+            || window.location.hostname === "127.0.0.1"
+            || window.location.protocol === "file:";
 
-          if (allowance < amountB) {
-            showToast("Approving tokens...");
-            const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountB);
-            await approveTx.wait();
-            showToast("Approval confirmed");
+          if (!isLocal) {
+            showToast("Checking allowance...");
+            const tokenContract = new ethers.Contract(order.tokenB.address, ERC20_ABI, signer);
+            const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+            const amountB = BigInt(order.amountB);
+
+            if (allowance < amountB) {
+              showToast("Approving tokens...");
+              const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountB);
+              await approveTx.wait();
+              showToast("Approval confirmed");
+            }
           }
 
           showToast("Filling order...");
@@ -799,18 +819,21 @@
     );
   }
 
-  async function handleCancelOrder(orderId) {
+  async function handleCancelOrder(order) {
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
+
+    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
+
     showModal(
-      "Cancel Order #" + orderId,
-      "Your deposited tokens will be returned to your wallet.",
+      "Cancel Order #" + order.orderId,
+      `Your ${amountAStr} ${order.tokenA.symbol} will be returned to your wallet.`,
       async () => {
         try {
           showToast("Cancelling order...");
-          const tx = await contract.cancelOrder(orderId);
+          const tx = await contract.cancelOrder(order.orderId);
           await tx.wait();
           showToast("Order cancelled!", "success");
           loadOrders();
@@ -929,6 +952,25 @@
       $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
       $("#sell-btn").classList.remove("hidden");
 
+      // Subscribe to contract events for real-time updates
+      contract.on("OrderFilled", (orderId, taker) => {
+        console.log(`Order ${orderId} filled by ${taker}`);
+        loadOrders();
+        loadStats();
+      });
+
+      contract.on("OrderCanceled", (orderId) => {
+        console.log(`Order ${orderId} canceled`);
+        loadOrders();
+        loadStats();
+      });
+
+      contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
+        console.log(`Order ${orderId} created by ${maker}`);
+        loadOrders();
+        loadStats();
+      });
+
       showToast("Wallet connected", "success");
       loadOrders();
     } catch (e) {
@@ -1030,6 +1072,38 @@
 
     if (window.ethereum) {
       provider = new ethers.BrowserProvider(window.ethereum);
+
+      // Check for existing connection
+      provider.send("eth_accounts", []).then(async (accounts) => {
+        if (accounts && accounts.length > 0) {
+          signer = await provider.getSigner();
+          userAddress = await signer.getAddress();
+          contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+          $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
+          $("#sell-btn").classList.remove("hidden");
+
+          // Subscribe to contract events for real-time updates
+          contract.on("OrderFilled", (orderId, taker) => {
+            console.log(`Order ${orderId} filled by ${taker}`);
+            loadOrders();
+            loadStats();
+          });
+
+          contract.on("OrderCanceled", (orderId) => {
+            console.log(`Order ${orderId} canceled`);
+            loadOrders();
+            loadStats();
+          });
+
+          contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
+            console.log(`Order ${orderId} created by ${maker}`);
+            loadOrders();
+            loadStats();
+          });
+
+          loadOrders();
+        }
+      }).catch(() => {});
 
       window.ethereum.on("accountsChanged", (accounts) => {
         if (accounts.length === 0) {

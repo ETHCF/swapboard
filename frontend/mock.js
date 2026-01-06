@@ -547,8 +547,8 @@
   // Mock Wallet Provider
   // ============================================================================
 
-  if (MOCK_CONFIG.enableMockWallet && !window.ethereum) {
-    console.log("[Mock] Creating mock wallet provider");
+  if (MOCK_CONFIG.enableMockWallet) {
+    console.log("[Mock] Creating mock wallet provider (overriding any existing wallet)");
 
     const mockAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
     let connected = false;
