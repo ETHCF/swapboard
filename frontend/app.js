@@ -2261,12 +2261,18 @@
         "Create Order",
         `Sell ${amountAStr} ${tokenA.symbol} for ${amountBStr} ${tokenB.symbol}`,
         async () => {
+          const createBtn = $("#create-btn");
+          const originalText = createBtn.textContent;
+          createBtn.disabled = true;
+          createBtn.textContent = "Processing...";
+
           try {
             showToast("Checking allowance...", "info", true);
             const tokenContract = new ethers.Contract(tokenAAddr, ERC20_ABI, signer);
             const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
 
             if (allowance < amountA) {
+              createBtn.textContent = "Approving...";
               showToast("Approve tokens in wallet...", "info", true);
               const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountA);
               showToast("Waiting for approval tx...", "info", true);
@@ -2274,6 +2280,7 @@
               showToast("Approval confirmed");
             }
 
+            createBtn.textContent = "Creating...";
             showToast("Confirm order in wallet...", "info", true);
             const tx = await contract.createOrder(tokenAAddr, amountA, tokenBAddr, amountB);
             showToast("Waiting for tx confirmation...", "info", true);
@@ -2300,6 +2307,9 @@
           } catch (e) {
             console.error("Create error:", e);
             showToast("Create failed: " + (e.reason || e.message), "error");
+          } finally {
+            createBtn.disabled = false;
+            createBtn.textContent = originalText;
           }
         }
       );
