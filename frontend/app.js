@@ -1103,7 +1103,11 @@
   let toastTimeout = null;
   function showToast(msg, type = "info", persistent = false) {
     const toast = $("#toast");
-    toast.textContent = msg;
+    if (msg.endsWith("...")) {
+      toast.innerHTML = msg.slice(0, -3) + '<span class="loading-dots"></span>';
+    } else {
+      toast.textContent = msg;
+    }
     toast.className = "toast " + type;
     if (toastTimeout) {
       clearTimeout(toastTimeout);
@@ -2295,7 +2299,7 @@
           const createBtn = $("#create-btn");
           const originalText = createBtn.textContent;
           createBtn.disabled = true;
-          createBtn.textContent = "Processing...";
+          createBtn.innerHTML = 'Processing<span class="loading-dots"></span>';
 
           try {
             showToast("Checking allowance...", "info", true);
@@ -2303,7 +2307,7 @@
             const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
 
             if (allowance < amountA) {
-              createBtn.textContent = "Approving...";
+              createBtn.innerHTML = 'Approving<span class="loading-dots"></span>';
               showToast("Approve tokens in wallet...", "info", true);
               const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountA);
               showToast("Waiting for approval tx...", "info", true);
@@ -2311,7 +2315,7 @@
               showToast("Approval confirmed");
             }
 
-            createBtn.textContent = "Creating...";
+            createBtn.innerHTML = 'Creating<span class="loading-dots"></span>';
             showToast("Confirm order in wallet...", "info", true);
             const tx = await contract.createOrder(tokenAAddr, amountA, tokenBAddr, amountB);
             showToast("Waiting for tx confirmation...", "info", true);
