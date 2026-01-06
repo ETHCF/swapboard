@@ -84,7 +84,15 @@
     "function nextOrderId() external view returns (uint256)",
     "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB)",
     "event OrderFilled(uint256 indexed orderId, address indexed taker)",
-    "event OrderCanceled(uint256 indexed orderId)"
+    "event OrderCanceled(uint256 indexed orderId)",
+    "error ZeroAddress()",
+    "error ZeroAmount()",
+    "error SameToken()",
+    "error NotAContract(address token)",
+    "error BalanceMismatch(uint256 expected, uint256 received)",
+    "error OrderNotFound(uint256 orderId)",
+    "error OrderNotActive(uint256 orderId)",
+    "error NotMaker(uint256 orderId, address caller, address maker)"
   ];
 
   const ERC20_ABI = [
@@ -1139,6 +1147,38 @@
   }
 
   function parseContractError(e) {
+    // Try to decode custom contract errors from error data
+    if (e.data) {
+      try {
+        const iface = new ethers.Interface(CONTRACT_ABI);
+        const decoded = iface.parseError(e.data);
+        if (decoded) {
+          switch (decoded.name) {
+            case "OrderNotActive":
+              return `Order #${decoded.args[0]} is no longer active`;
+            case "OrderNotFound":
+              return `Order #${decoded.args[0]} not found`;
+            case "NotMaker":
+              return "You are not the maker of this order";
+            case "ZeroAddress":
+              return "Invalid token address";
+            case "ZeroAmount":
+              return "Amount must be greater than zero";
+            case "SameToken":
+              return "Offered and wanted tokens must be different";
+            case "NotAContract":
+              return "Token address is not a contract";
+            case "BalanceMismatch":
+              return "Token balance mismatch during transfer";
+            default:
+              return decoded.name;
+          }
+        }
+      } catch {
+        // Could not parse, fall through to string matching
+      }
+    }
+
     const msg = (e.reason || e.message || "").toLowerCase();
     if (msg.includes("user rejected") || msg.includes("user denied")) {
       return "Transaction cancelled";
