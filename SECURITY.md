@@ -6,7 +6,7 @@ If you discover a security vulnerability in Swapboard, please report it responsi
 
 **DO NOT** create a public GitHub issue for security vulnerabilities.
 
-Instead, please send an email to: security@swapboard.eth
+Instead, please send an email to: zcole@linux.com
 
 Include:
 - Description of the vulnerability

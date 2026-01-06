@@ -1,18 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-/**
- * @title ISwapboard
- * @author Swapboard Contributors
- * @notice Interface for the Swapboard OTC trading contract
- * @dev Implement this interface for composability with the Swapboard protocol.
- *      All amounts are in base units (wei-equivalent for 18 decimal tokens).
- */
-
-/// @title ISwapboard
-/// @notice Interface for the Swapboard contract
+/// @title IOTCBoard
+/// @notice Interface for the OTC Bulletin Board contract
 /// @dev All external functions are defined here for composability
-interface ISwapboard {
+interface IOTCBoard {
     /// @notice Represents a single OTC order
     /// @param maker Address that created the order and deposited tokenA
     /// @param tokenA Address of the token being sold (held in escrow)

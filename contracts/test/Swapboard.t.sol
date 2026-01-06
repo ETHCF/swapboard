@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
+/**
+ * @title SwapboardTest
+ * @notice Unit tests for the Swapboard contract
+ * @dev Tests cover all public functions and error conditions.
+ *      Run with: forge test -vvv
+ */
+
 import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20, MockFOT} from "./mocks/MockERC20.sol";
 
+/// @notice Unit tests for Swapboard contract
+/// @dev Uses Foundry's Test framework with MockERC20 tokens
 contract SwapboardTest is Test {
     Swapboard public board;
     MockERC20 public tokenA;
@@ -14,7 +23,9 @@ contract SwapboardTest is Test {
     address public maker = address(0x1);
     address public taker = address(0x2);
 
+    /// @dev 100 tokens with 18 decimals
     uint256 constant AMOUNT_A = 100 ether;
+    /// @dev 250,000 tokens with 6 decimals (USDC-style)
     uint256 constant AMOUNT_B = 250_000e6;
 
     function setUp() public {

@@ -1,3 +1,16 @@
+/**
+ * @fileoverview Swapboard Subgraph Event Handlers
+ * @description AssemblyScript handlers for indexing Swapboard contract events.
+ *              Creates and updates Order, Token, GlobalStats, and PairStats entities.
+ * @author Swapboard Contributors
+ * @license MIT
+ *
+ * Event handlers:
+ * - handleOrderCreated: Creates Order entity, updates token counters
+ * - handleOrderFilled: Marks order inactive, updates volumes
+ * - handleOrderCanceled: Marks order inactive, updates stats
+ */
+
 import { BigInt, Address, log } from "@graphprotocol/graph-ts";
 import {
   OrderCreated,

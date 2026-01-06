@@ -1,7 +1,30 @@
+/**
+ * @fileoverview Swapboard Frontend Application
+ * @description Client-side application for interacting with the Swapboard smart contract.
+ *              Handles wallet connection, order display, and transaction submission.
+ * @author Swapboard Contributors
+ * @license MIT
+ *
+ * Dependencies:
+ * - ethers.js v6 (loaded dynamically from CDN)
+ * - The Graph subgraph for order indexing
+ *
+ * Configuration:
+ * - Update CONFIG.CONTRACT_ADDRESS and CONFIG.SUBGRAPH_URL before deployment
+ * - Local development skips config validation (localhost/file://)
+ */
+
 (function () {
   "use strict";
 
-  // Configuration - Update these before deployment
+  // ============================================================================
+  // Configuration
+  // ============================================================================
+
+  /**
+   * Application configuration. Update these values before deployment.
+   * @constant {Object}
+   */
   const CONFIG = {
     // Contract address on Ethereum mainnet - MUST be updated after deployment
     CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000",
@@ -73,8 +96,18 @@
   let currentPage = 1;
   let currentFilters = { selling: "", wanting: "", status: "open" };
 
+  // ============================================================================
+  // Utility Functions
+  // ============================================================================
+
+  /** @param {string} sel - CSS selector */
   const $ = (sel) => document.querySelector(sel);
 
+  /**
+   * Escapes HTML special characters to prevent XSS.
+   * @param {string|null|undefined} str - String to escape
+   * @returns {string} HTML-safe string
+   */
   function escapeHtml(str) {
     if (str === null || str === undefined) return "";
     const div = document.createElement("div");
@@ -82,16 +115,32 @@
     return div.innerHTML;
   }
 
+  /**
+   * Validates an Ethereum address format.
+   * @param {*} addr - Value to validate
+   * @returns {boolean} True if valid 0x-prefixed 40-character hex string
+   */
   function isValidAddress(addr) {
     if (typeof addr !== "string") return false;
     return /^0x[a-fA-F0-9]{40}$/.test(addr);
   }
 
+  /**
+   * Truncates an address for display (0x1234...5678).
+   * @param {string} addr - Full Ethereum address
+   * @returns {string} Truncated address or empty string if invalid
+   */
   function truncateAddress(addr) {
     if (!addr || !isValidAddress(addr)) return "";
     return addr.slice(0, 6) + "..." + addr.slice(-4);
   }
 
+  /**
+   * Formats a token amount for display with proper decimal handling.
+   * @param {string|bigint} amount - Amount in base units
+   * @param {number} decimals - Token decimals
+   * @returns {string} Human-readable amount with thousands separators
+   */
   function formatAmount(amount, decimals) {
     if (!amount) return "0";
     const str = amount.toString().padStart(decimals + 1, "0");
@@ -118,6 +167,13 @@
     }
   }
 
+  /**
+   * Parses a human-readable amount string to base units.
+   * @param {string} str - Amount string (e.g., "100.5")
+   * @param {number} decimals - Token decimals
+   * @returns {bigint} Amount in base units
+   * @throws {Error} If format is invalid
+   */
   function parseAmount(str, decimals) {
     str = str.trim();
     if (!str) return BigInt(0);
@@ -168,6 +224,16 @@
     $("#modal-cancel").addEventListener("click", cancelHandler);
   }
 
+  // ============================================================================
+  // Token Information
+  // ============================================================================
+
+  /**
+   * Fetches ERC20 token metadata from the blockchain.
+   * Results are cached to avoid redundant RPC calls.
+   * @param {string} address - Token contract address
+   * @returns {Promise<{address: string, symbol: string, name: string, decimals: number}>}
+   */
   async function fetchTokenInfo(address) {
     const lowerAddr = address.toLowerCase();
     if (tokenCache.has(lowerAddr)) {
@@ -193,6 +259,16 @@
     }
   }
 
+  // ============================================================================
+  // Subgraph Queries
+  // ============================================================================
+
+  /**
+   * Executes a GraphQL query against The Graph subgraph.
+   * @param {string} query - GraphQL query string
+   * @param {Object} variables - Query variables
+   * @returns {Promise<Object|null>} Query data or null on error
+   */
   async function querySubgraph(query, variables = {}) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT);
@@ -452,6 +528,14 @@
     $("#next-page").disabled = count < CONFIG.PAGE_SIZE;
   }
 
+  // ============================================================================
+  // Order Actions
+  // ============================================================================
+
+  /**
+   * Handles the fill order flow: fetches order, confirms with user, approves tokens, fills.
+   * @param {string} orderId - Order ID to fill
+   */
   async function handleFillOrder(orderId) {
     if (!signer) {
       showToast("Connect wallet first", "error");
@@ -601,6 +685,14 @@
     }
   }
 
+  // ============================================================================
+  // Wallet Connection
+  // ============================================================================
+
+  /**
+   * Connects to the user's Ethereum wallet via window.ethereum (MetaMask, etc).
+   * Sets up the ethers provider, signer, and contract instance.
+   */
   async function connectWallet() {
     if (typeof window.ethereum === "undefined") {
       showToast("No wallet found. Install MetaMask.", "error");

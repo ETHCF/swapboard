@@ -3,7 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SWAPBOARD</title>
+  <meta name="description" content="Swapboard - Trustless peer-to-peer OTC trading for ERC20 tokens on Ethereum. No fees, no admin, no middleman.">
+  <meta name="keywords" content="ethereum, defi, otc, trading, erc20, swap, decentralized, trustless">
+  <meta name="author" content="Swapboard Contributors">
+
+  <!-- Open Graph / Social -->
+  <meta property="og:title" content="Swapboard - Trustless OTC Trading">
+  <meta property="og:description" content="Peer-to-peer ERC20 token trading on Ethereum. No fees, no admin, no middleman.">
+  <meta property="og:type" content="website">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Swapboard - Trustless OTC Trading">
+  <meta name="twitter:description" content="Peer-to-peer ERC20 token trading on Ethereum. No fees, no admin, no middleman.">
+
+  <title>SWAPBOARD - Trustless OTC Trading</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -38,7 +52,7 @@
   Token ICO: 0
 </div>
 
-<div class="ticker">The ticker is $ETH, motherfucker</div>
+<div class="ticker">The ticker is $ETH</div>
 
 <div id="popular-pairs">
   Popular Pairs: <span id="pairs-list">ETH/BTC ETH/USDT ETH/USDC ETH/DAI stETH/USDT stETH/USDC WBTC/USDT WBTC/USDC BNB/USDT BNB/USDC PEPE/ETH SHIB/ETH</span>
@@ -98,7 +112,7 @@
   <p class="warning">Verify token addresses carefully. Fake tokens can steal your funds. Only use trusted tokens.</p>
   <div class="form-row">
     <label>
-      Selling:
+      Selling Token:
       <input type="text" id="create-tokenA" placeholder="Paste token address">
       <span id="tokenA-info"></span>
     </label>
@@ -109,7 +123,7 @@
   </div>
   <div class="form-row">
     <label>
-      Wanting:
+      Wanted Token:
       <input type="text" id="create-tokenB" placeholder="Paste token address">
       <span id="tokenB-info"></span>
     </label>
@@ -135,8 +149,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="app.js"></script>
-<!-- DEV ONLY: Uncomment to use mock data for local testing
 <script src="mock.js"></script>
--->
 </body>
 </html>

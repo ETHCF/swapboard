@@ -1,6 +1,24 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
+/**
+ * @title Swapboard
+ * @author Swapboard Contributors
+ * @notice Trustless OTC bulletin board for ERC20 token swaps on Ethereum
+ * @dev This contract implements a simple orderbook for peer-to-peer token swaps.
+ *
+ * Key properties:
+ * - No admin functions, fees, or upgrades
+ * - Orders are filled atomically (all-or-nothing)
+ * - Fee-on-transfer tokens are rejected for tokenA (selling token)
+ * - Reentrancy protected via OpenZeppelin ReentrancyGuard
+ *
+ * Security considerations:
+ * - Front-running is possible on fillOrder (inherent to on-chain orderbooks)
+ * - Rebasing tokens may cause unexpected behavior
+ * - Malicious tokens can cause fund loss - users must verify token contracts
+ */
+
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
