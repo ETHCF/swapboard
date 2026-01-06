@@ -310,7 +310,7 @@ tbody tr.highlighted-order:hover {
   font-size: 14px;
   padding: 6px;
   border: 1px solid #000;
-  width: 400px;
+  width: 46ch;
 }
 
 /* Action buttons in table */
