@@ -342,7 +342,7 @@ tbody tr.highlighted-order:hover {
 }
 
 .status-canceled-label {
-  color: #888;
+  color: #c00;
 }
 
 .copy-btn {
