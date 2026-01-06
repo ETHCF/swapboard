@@ -2850,6 +2850,8 @@
         if (accounts && accounts.length > 0) {
           signer = await provider.getSigner();
           userAddress = await signer.getAddress();
+          const network = await provider.getNetwork();
+          updateNetworkIndicator(Number(network.chainId));
           contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
           $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
           $("#sell-btn").classList.remove("hidden");
