@@ -2590,13 +2590,17 @@
       // Subscribe to contract events for real-time updates
       contract.on("OrderFilled", (orderId, taker) => {
         console.log(`Order ${orderId} filled by ${taker}`);
+        console.log(`Current user: ${userAddress}, taker: ${taker}`);
+        console.log(`Should notify: ${taker.toLowerCase() !== userAddress.toLowerCase()}`);
         // Notify if user's order was filled by someone else
         if (taker.toLowerCase() !== userAddress.toLowerCase()) {
+          console.log("Calling showNotification for filled order");
           showNotification("Order Filled", `Your order #${orderId} has been filled!`, "order-" + orderId);
         }
         loadOrders();
         loadStats();
       });
+      console.log("OrderFilled event listener attached");
 
       contract.on("OrderCanceled", (orderId) => {
         console.log(`Order ${orderId} canceled`);
