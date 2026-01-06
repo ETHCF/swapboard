@@ -617,6 +617,7 @@
 
     const dropdown = document.createElement("div");
     dropdown.className = "token-selector-dropdown hidden";
+    dropdown.addEventListener("click", (e) => e.stopPropagation());
     wrapper.appendChild(dropdown);
 
     let selectedIndex = -1;
@@ -687,7 +688,8 @@
 
       item.appendChild(info);
 
-      item.addEventListener("click", () => {
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
         input.value = token.address;
         input.dispatchEvent(new Event("input"));
         dropdown.classList.add("hidden");
@@ -2420,10 +2422,16 @@
               .map(log => { try { return contract.interface.parseLog(log); } catch { return null; } })
               .find(parsed => parsed && parsed.name === "OrderCreated");
             if (orderCreatedEvent) {
-              await waitForOrderUpdate(orderCreatedEvent.args.orderId.toString(), true);
+              const newOrderId = orderCreatedEvent.args.orderId.toString();
+              console.log("Order created with ID:", newOrderId);
+              const indexed = await waitForOrderUpdate(newOrderId, true, 15, 2000);
+              if (!indexed) {
+                console.log("Subgraph indexing timeout for order", newOrderId);
+              }
             } else {
+              console.log("Could not parse OrderCreated event, waiting...");
               // Fallback: wait a bit for indexing
-              await new Promise(resolve => setTimeout(resolve, 3000));
+              await new Promise(resolve => setTimeout(resolve, 5000));
             }
             loadOrders();
             loadStats();
