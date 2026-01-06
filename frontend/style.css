@@ -36,11 +36,18 @@ h1 {
   display: inline-block;
 }
 
-#connect-btn {
+.header-right {
   position: absolute;
   right: 0;
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+
+#connect-btn,
+#sell-btn {
   font-family: inherit;
   font-size: 14px;
   color: #000;
@@ -48,8 +55,13 @@ h1 {
   cursor: pointer;
 }
 
-#connect-btn:hover {
+#connect-btn:hover,
+#sell-btn:hover {
   text-decoration: underline;
+}
+
+#sell-btn.hidden {
+  display: none;
 }
 
 h2 {
@@ -180,6 +192,11 @@ th {
   font-weight: bold;
 }
 
+.swap-icon {
+  opacity: 0.7;
+  font-size: 16px;
+}
+
 tbody tr:hover {
   background: #f5f5f5;
 }
@@ -205,11 +222,6 @@ tbody tr.own-order:hover {
   gap: 10px;
   align-items: center;
   margin-bottom: 40px;
-}
-
-#create-order {
-  border-top: 2px solid #000;
-  padding-top: 20px;
 }
 
 .warning {
@@ -238,10 +250,6 @@ tbody tr.own-order:hover {
   padding: 6px;
   border: 1px solid #000;
   width: 300px;
-}
-
-#create-btn {
-  margin-top: 10px;
 }
 
 /* Action buttons in table */
@@ -298,6 +306,22 @@ tbody tr.own-order:hover {
   width: 90%;
 }
 
+.sell-modal-content {
+  max-width: 700px;
+}
+
+.sell-modal-content .form-row {
+  margin-bottom: 15px;
+}
+
+.sell-modal-content .form-row input {
+  width: 100%;
+}
+
+.sell-modal-content .warning {
+  margin-bottom: 20px;
+}
+
 .modal-content h3 {
   font-size: 16px;
   margin-bottom: 10px;
@@ -317,13 +341,15 @@ tbody tr.own-order:hover {
   flex: 1;
 }
 
-#modal-cancel {
+#modal-cancel,
+#sell-modal-cancel {
   background: #fff;
   color: #000;
   border: 1px solid #000;
 }
 
-#modal-cancel:hover {
+#modal-cancel:hover,
+#sell-modal-cancel:hover {
   background: #f5f5f5;
 }
 

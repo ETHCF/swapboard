@@ -883,6 +883,7 @@
             $("#create-amountB").value = "";
             $("#tokenA-info").textContent = "";
             $("#tokenB-info").textContent = "";
+            $("#sell-modal").classList.add("hidden");
 
             loadOrders();
             loadStats();
@@ -920,8 +921,7 @@
       contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
       $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
-      $("#create-btn").textContent = "Create Order";
-      $("#create-btn").disabled = false;
+      $("#sell-btn").classList.remove("hidden");
 
       showToast("Wallet connected", "success");
       loadOrders();
@@ -974,6 +974,15 @@
       connectWallet();
     });
 
+    $("#sell-btn").addEventListener("click", (e) => {
+      e.preventDefault();
+      $("#sell-modal").classList.remove("hidden");
+    });
+
+    $("#sell-modal-cancel").addEventListener("click", () => {
+      $("#sell-modal").classList.add("hidden");
+    });
+
     // Filter change handlers
     $("#filter-selling").addEventListener("change", () => {
       currentFilters.selling = $("#filter-selling").value;
@@ -1022,8 +1031,8 @@
           signer = null;
           contract = null;
           $("#connect-btn").textContent = "[Connect Wallet]";
-          $("#create-btn").textContent = "Connect Wallet to Create Order";
-          $("#create-btn").disabled = true;
+          $("#sell-btn").classList.add("hidden");
+          $("#sell-modal").classList.add("hidden");
         } else {
           connectWallet();
         }

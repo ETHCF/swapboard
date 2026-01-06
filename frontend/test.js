@@ -306,6 +306,21 @@ async function runTests() {
     // ==================== TOKEN INPUT VALIDATION ====================
     console.log("\n--- Token Input Validation ---");
 
+    // Connect wallet to enable sell button
+    await page.click("#connect-btn");
+    await page.waitForFunction(
+      () => !document.querySelector("#sell-btn").classList.contains("hidden"),
+      { timeout: 3000 }
+    );
+    await new Promise(r => setTimeout(r, 200));
+
+    // Open sell modal
+    await page.click("#sell-btn");
+    await page.waitForFunction(
+      () => !document.querySelector("#sell-modal").classList.contains("hidden"),
+      { timeout: 2000 }
+    );
+
     // Enter invalid address
     await page.type("#create-tokenA", "0xinvalid");
     await new Promise(r => setTimeout(r, 600)); // Wait for debounce
@@ -328,6 +343,9 @@ async function runTests() {
       tokenAInfoValid !== "Invalid address" && tokenAInfoValid !== "",
       `Got "${tokenAInfoValid}"`
     );
+
+    // Close sell modal
+    await page.click("#sell-modal-cancel");
 
     // ==================== TABLE STRUCTURE ====================
     console.log("\n--- Table Structure ---");

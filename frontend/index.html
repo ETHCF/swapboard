@@ -24,7 +24,10 @@
 
 <header>
   <h1><span class="header-box">Welcome to SWAPBOARD</span></h1>
-  <a href="#" id="connect-btn">[Connect Wallet]</a>
+  <div class="header-right">
+    <a href="#" id="sell-btn" class="hidden">[Sell Tokens]</a>
+    <a href="#" id="connect-btn">[Connect Wallet]</a>
+  </div>
 </header>
 
 <p class="tagline">
@@ -92,7 +95,7 @@
         <th>Wanted Token</th>
         <th>Wanted Size</th>
         <th>USD Val</th>
-        <th>Price</th>
+        <th>Price <span class="swap-icon" title="Click to invert ratio">&#8644;</span></th>
       </tr>
     </thead>
     <tbody id="order-table">
@@ -107,33 +110,38 @@
   <button id="next-page">Next &gt;</button>
 </section>
 
-<section id="create-order">
-  <h2>Create Order</h2>
-  <p class="warning">Verify token addresses carefully. Fake tokens can steal your funds. Only use trusted tokens.</p>
-  <div class="form-row">
-    <label>
-      Selling Token:
-      <input type="text" id="create-tokenA" placeholder="Paste token address">
-      <span id="tokenA-info"></span>
-    </label>
-    <label>
-      Amount:
-      <input type="text" id="create-amountA" placeholder="0.0">
-    </label>
+<div id="sell-modal" class="modal hidden">
+  <div class="modal-content sell-modal-content">
+    <h3>Sell Tokens</h3>
+    <p class="warning">Verify token addresses carefully. Fake tokens can steal your funds. Only use trusted tokens.</p>
+    <div class="form-row">
+      <label>
+        Selling Token:
+        <input type="text" id="create-tokenA" placeholder="Paste token address">
+        <span id="tokenA-info"></span>
+      </label>
+      <label>
+        Amount:
+        <input type="text" id="create-amountA" placeholder="0.0">
+      </label>
+    </div>
+    <div class="form-row">
+      <label>
+        Wanted Token:
+        <input type="text" id="create-tokenB" placeholder="Paste token address">
+        <span id="tokenB-info"></span>
+      </label>
+      <label>
+        Amount:
+        <input type="text" id="create-amountB" placeholder="0.0">
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button id="create-btn">Create Order</button>
+      <button id="sell-modal-cancel">Cancel</button>
+    </div>
   </div>
-  <div class="form-row">
-    <label>
-      Wanted Token:
-      <input type="text" id="create-tokenB" placeholder="Paste token address">
-      <span id="tokenB-info"></span>
-    </label>
-    <label>
-      Amount:
-      <input type="text" id="create-amountB" placeholder="0.0">
-    </label>
-  </div>
-  <button id="create-btn" disabled>Connect Wallet to Create Order</button>
-</section>
+</div>
 
 <div id="modal" class="modal hidden">
   <div class="modal-content">
