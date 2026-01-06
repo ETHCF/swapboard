@@ -5,14 +5,13 @@
 }
 
 body {
-  font-family: "Courier New", Courier, monospace;
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
   font-size: 14px;
   line-height: 1.5;
   background: #fff;
   color: #000;
   padding: 20px;
-  max-width: 1400px;
-  margin: 0 auto;
+  padding-top: 15px;
 }
 
 header {
@@ -24,6 +23,7 @@ header {
   margin-bottom: 15px;
   padding-bottom: 15px;
   border-bottom: 1px solid #000;
+  position: relative;
 }
 
 h1 {
@@ -31,11 +31,29 @@ h1 {
   font-weight: bold;
 }
 
-.header-box {
+.ascii-header {
+  display: flex;
+  align-items: center;
+}
+
+.ascii-logo {
+  font-size: 16px;
+  line-height: 1.15;
+  margin: 0;
   background: #e03e2d;
-  color: #000;
-  padding: 4px 16px;
-  display: inline-block;
+  color: #fff;
+  padding: 8px 12px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.header-tagline {
+  font-size: 14px;
+  color: #666;
+  font-weight: 700;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .header-right {
@@ -46,7 +64,8 @@ h1 {
 }
 
 #connect-btn,
-#sell-btn {
+#sell-btn,
+#faq-btn {
   font-family: inherit;
   font-size: 14px;
   color: #000;
@@ -55,7 +74,8 @@ h1 {
 }
 
 #connect-btn:hover,
-#sell-btn:hover {
+#sell-btn:hover,
+#faq-btn:hover {
   text-decoration: underline;
 }
 
@@ -113,41 +133,9 @@ a {
   color: #0000EE;
 }
 
-.tagline {
-  text-align: center;
-  margin-bottom: 8px;
-  font-size: 13px;
-  font-weight: bold;
-}
-
-.api-note {
-  text-align: center;
-  margin-bottom: 15px;
-  font-size: 13px;
-}
-
-.stats-row {
-  text-align: center;
-  font-size: 14px;
-  margin-bottom: 15px;
-}
-
 .stat-label {
   background: #d9d9d9;
   padding: 2px 6px;
-}
-
-.zero-stats {
-  text-align: center;
-  margin-bottom: 10px;
-  line-height: 1.4;
-}
-
-.ticker {
-  text-align: center;
-  font-size: 16px;
-  font-weight: bold;
-  margin-bottom: 15px;
 }
 
 #popular-pairs {
@@ -203,6 +191,9 @@ a {
   vertical-align: middle;
   margin-top: -1px;
 }
+
+#orders { overflow-x: auto; border: 1px solid #000; direction: rtl; }
+#orders table { direction: ltr; }
 
 table {
   width: 100%;
@@ -338,22 +329,30 @@ tbody tr.highlighted-order:hover {
 .buy-btn,
 .cancel-btn {
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12px;
   text-decoration: none;
   cursor: pointer;
+  padding: 4px 8px;
+  display: inline-block;
 }
 
 .buy-btn {
-  color: #000;
+  background: #000;
+  color: #fff;
+}
+
+.buy-btn:hover {
+  background: #333;
 }
 
 .cancel-btn {
+  background: #fff;
   color: #c00;
+  border: 1px solid #c00;
 }
 
-.buy-btn:hover,
 .cancel-btn:hover {
-  text-decoration: underline;
+  background: #fee;
 }
 
 .status-filled-label {
@@ -436,9 +435,15 @@ tbody tr.highlighted-order:hover {
   margin-bottom: 20px;
 }
 
-.order-modal-content {
+.order-modal-content,
+.faq-modal-content {
   max-width: 500px;
 }
+
+.faq-modal-content p { margin-bottom: 15px; }
+.faq-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
+.faq-zero-stats, .faq-api-note { color: #666; font-size: 12px; }
+.faq-ticker { font-weight: bold; }
 
 .order-modal-grid {
   margin: 15px 0;
@@ -730,29 +735,22 @@ footer a:hover {
 }
 
 /* Responsive */
+@media (max-width: 1100px) {
+  .header-tagline { display: none; }
+}
+
 @media (max-width: 768px) {
   body {
     padding: 10px;
   }
 
+  .ascii-logo {
+    font-size: 11px;
+    line-height: 1.1;
+  }
+
   .header-right {
     gap: 10px;
-  }
-
-  .tagline {
-    font-size: 12px;
-  }
-
-  .stats-row {
-    font-size: 12px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: center;
-  }
-
-  .zero-stats {
-    font-size: 12px;
   }
 
   #filters {
@@ -831,15 +829,15 @@ footer a:hover {
   }
 
   /* Hide action column label */
-  #orders tbody td:first-child::before {
+  #orders tbody td:last-child::before {
     content: "";
   }
 
-  #orders tbody td:first-child {
-    justify-content: flex-start;
-    padding-bottom: 8px;
-    border-bottom: 1px solid #eee;
-    margin-bottom: 4px;
+  #orders tbody td:last-child {
+    justify-content: flex-end;
+    padding-top: 8px;
+    border-top: 1px solid #eee;
+    margin-top: 4px;
   }
 
   /* Pagination on mobile */

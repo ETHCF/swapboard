@@ -1987,7 +1987,6 @@
         }
         tdAction.appendChild(statusSpan);
       }
-      tr.appendChild(tdAction);
 
       // Column 1: Trade ID (clickable to open detail modal)
       const tdId = document.createElement("td");
@@ -2127,6 +2126,9 @@
         });
       }
       tr.appendChild(tdPrice);
+
+      // Column 9: Action (last column - Fill/Cancel/Status)
+      tr.appendChild(tdAction);
 
       tbody.appendChild(tr);
     }
@@ -2451,6 +2453,7 @@
       $("#sell-btn").classList.remove("hidden");
       $("#notify-btn").classList.remove("hidden");
       $("#my-orders-label").classList.remove("hidden");
+      $(".header-tagline").style.display = "none";
 
       // Subscribe to contract events for real-time updates
       contract.on("OrderFilled", (orderId, taker) => {
@@ -2747,6 +2750,22 @@
       }
     });
 
+    // FAQ modal
+    $("#faq-btn").addEventListener("click", (e) => {
+      e.preventDefault();
+      $("#faq-modal").classList.remove("hidden");
+    });
+
+    $("#faq-modal-close").addEventListener("click", () => {
+      $("#faq-modal").classList.add("hidden");
+    });
+
+    $("#faq-modal").addEventListener("click", (e) => {
+      if (e.target === $("#faq-modal")) {
+        $("#faq-modal").classList.add("hidden");
+      }
+    });
+
     // Filter change handlers
     $("#filter-selling").addEventListener("change", () => {
       currentFilters.selling = $("#filter-selling").value;
@@ -2916,6 +2935,7 @@
           $("#sell-btn").classList.remove("hidden");
           $("#notify-btn").classList.remove("hidden");
           $("#my-orders-label").classList.remove("hidden");
+          $(".header-tagline").style.display = "none";
 
           // Subscribe to contract events for real-time updates
           contract.on("OrderFilled", (orderId, taker) => {

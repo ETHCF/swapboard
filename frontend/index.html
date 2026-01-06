@@ -30,43 +30,22 @@
 <body>
 
 <header>
-  <h1><span class="header-box">Welcome to SWAPBOARD</span></h1>
+  <div class="ascii-header">
+<pre class="ascii-logo">
+┌─┐┬ ┬┌─┐┌─┐┌┐ ┌─┐┌─┐┬─┐┌┬┐
+└─┐│││├─┤├─┘├┴┐│ │├─┤├┬┘ ││
+└─┘└┴┘┴ ┴┴  └─┘└─┘┴ ┴┴└──┴┘
+</pre>
+    </div>
+  <span class="header-tagline">Peer-to-peer OTC bulletin board on Ethereum</span>
   <div class="header-right">
     <span id="network-indicator" class="hidden"></span>
+    <a href="#" id="faq-btn">[About]</a>
     <a href="#" id="notify-btn" class="hidden" title="Toggle notifications">[Notify: Off]</a>
     <a href="#" id="sell-btn" class="hidden">[Sell Tokens]</a>
     <a href="#" id="connect-btn">[Connect Wallet]</a>
   </div>
 </header>
-
-<p class="tagline">
-  Swapboard is a no frills, 0% fee, peer-to-peer OTC bulletin board for trading any ERC20 token on Ethereum.<br>
-  The <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">contract</a> is <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">audited</a> and immutable, with no admin rights. This is just a front end.
-</p>
-
-<p class="api-note">Note to market makers: <a href="API.html">API docs</a> available for arbitrage / trading bots</p>
-
-<div class="stats-row">
-  <span class="stat-label">Total Trades:</span> <span id="stat-total">--</span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="stat-label">Open:</span> <span id="stat-active">--</span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="stat-label">Filled:</span> <span id="stat-filled">--</span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="stat-label">Cancelled:</span> <span id="stat-cancelled">--</span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="stat-label">Volume:</span> <span id="stat-volume">--</span>
-</div>
-
-<div class="zero-stats">
-  Fees: 0<br>
-  Employees: 0<br>
-  Revenue: 0<br>
-  VC Fundraising: 0<br>
-  Token ICO: 0
-</div>
-
-<div class="ticker">The ticker is $ETH, motherfucker</div>
 
 <div id="popular-pairs">
   Popular Pairs: <span id="pairs-list"></span>
@@ -103,7 +82,6 @@
   <table>
     <thead>
       <tr>
-        <th></th>
         <th class="sortable" data-sort="orderId">Trade ID<span class="sort-indicator"> &#9660;</span></th>
         <th class="sortable" data-sort="maker">Maker<span class="sort-indicator"></span></th>
         <th class="sortable" data-sort="tokenA">Offered Token<span class="sort-indicator"></span></th>
@@ -112,6 +90,7 @@
         <th class="sortable" data-sort="amountB">Wanted Size<span class="sort-indicator"></span></th>
         <th class="sortable" data-sort="usdVal">USD Val<span class="sort-indicator"></span></th>
         <th class="sortable" data-sort="price">Price<span class="sort-indicator"></span> <span class="swap-icon" title="Click to invert ratio">&#8644;</span></th>
+        <th></th>
       </tr>
     </thead>
     <tbody id="order-table">
@@ -220,6 +199,31 @@
       </div>
     </div>
     <div class="modal-actions" id="order-modal-actions"></div>
+  </div>
+</div>
+
+<div id="faq-modal" class="modal hidden">
+  <div class="modal-content faq-modal-content">
+    <h3>About Swapboard</h3>
+    <p>Swapboard is a no frills, 0% fee, peer-to-peer OTC bulletin board for trading any ERC20 token on Ethereum.</p>
+    <p>The <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">contract</a> is <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">audited</a> and immutable, with no admin rights. This is just a front end.</p>
+
+    <div class="faq-stats">
+      <span class="stat-label">Total Trades:</span> <span id="stat-total">--</span>
+      <span class="stat-label">Open:</span> <span id="stat-active">--</span>
+      <span class="stat-label">Filled:</span> <span id="stat-filled">--</span>
+      <span class="stat-label">Cancelled:</span> <span id="stat-cancelled">--</span>
+      <span class="stat-label">Volume:</span> <span id="stat-volume">--</span>
+    </div>
+
+    <p class="faq-zero-stats">Fees: 0 · Employees: 0 · Revenue: 0 · VC: 0 · ICO: 0</p>
+    <p class="faq-ticker">The ticker is $ETH, motherfucker</p>
+
+    <p class="faq-api-note">Market makers: <a href="API.html">API docs</a> available for arbitrage / trading bots</p>
+
+    <div class="modal-actions">
+      <button id="faq-modal-close">Close</button>
+    </div>
   </div>
 </div>
 
