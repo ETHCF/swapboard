@@ -44,7 +44,6 @@ jobs:
         with:
           files: contracts/lcov.info
           flags: contracts
-          fail_ci_if_error: false
 
   subgraph:
     name: Subgraph Tests

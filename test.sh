@@ -26,15 +26,14 @@ run_contract_tests() {
 run_subgraph_tests() {
   echo "2. Subgraph Tests (Matchstick)"
   echo "-----------------------------------------"
-  cd "$ROOT_DIR/subgraph" && pnpm build
+  cd "$ROOT_DIR/subgraph"
+  pnpm install --silent
+  pnpm build
   if docker info > /dev/null 2>&1; then
-    SUBGRAPH_DIR="$(pwd)"
-    docker run --rm -v "${SUBGRAPH_DIR}":/matchstick -w /matchstick matchstick sh -c \
-      "rm -rf node_modules && npm install --silent && npm install -g @graphprotocol/graph-cli --silent && graph codegen && ../binary-linux-22"
-    pnpm install --silent
+    pnpm test
   else
-    echo "Docker not running - trying native matchstick binary..."
-    pnpm test:local || echo "WARN: Subgraph tests skipped (matchstick requires Docker)"
+    echo "ERROR: Docker required for subgraph tests"
+    exit 1
   fi
   cd "$ROOT_DIR"
   echo ""
