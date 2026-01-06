@@ -1148,37 +1148,49 @@
     }
   }
 
+  function decodeContractError(data) {
+    if (!data || data === "0x") return null;
+    try {
+      const iface = new ethers.Interface(CONTRACT_ABI);
+      const decoded = iface.parseError(data);
+      if (!decoded) return null;
+      switch (decoded.name) {
+        case "OrderNotActive":
+          return `Order #${decoded.args[0]} is no longer active`;
+        case "OrderNotFound":
+          return `Order #${decoded.args[0]} not found`;
+        case "NotMaker":
+          return "You are not the maker of this order";
+        case "ZeroAddress":
+          return "Invalid token address";
+        case "ZeroAmount":
+          return "Amount must be greater than zero";
+        case "SameToken":
+          return "Offered and wanted tokens must be different";
+        case "NotAContract":
+          return "Token address is not a contract";
+        case "BalanceMismatch":
+          return "Token balance mismatch during transfer";
+        default:
+          return decoded.name;
+      }
+    } catch {
+      return null;
+    }
+  }
+
   function parseContractError(e) {
     // Try to decode custom contract errors from error data
-    if (e.data) {
-      try {
-        const iface = new ethers.Interface(CONTRACT_ABI);
-        const decoded = iface.parseError(e.data);
-        if (decoded) {
-          switch (decoded.name) {
-            case "OrderNotActive":
-              return `Order #${decoded.args[0]} is no longer active`;
-            case "OrderNotFound":
-              return `Order #${decoded.args[0]} not found`;
-            case "NotMaker":
-              return "You are not the maker of this order";
-            case "ZeroAddress":
-              return "Invalid token address";
-            case "ZeroAmount":
-              return "Amount must be greater than zero";
-            case "SameToken":
-              return "Offered and wanted tokens must be different";
-            case "NotAContract":
-              return "Token address is not a contract";
-            case "BalanceMismatch":
-              return "Token balance mismatch during transfer";
-            default:
-              return decoded.name;
-          }
-        }
-      } catch {
-        // Could not parse, fall through to string matching
-      }
+    // ethers v6 puts data in different places depending on error type
+    const errorData = e.data || e.error?.data || e.info?.error?.data;
+    const decoded = decodeContractError(errorData);
+    if (decoded) return decoded;
+
+    // Check for data in error message (ethers v6 format)
+    const msgMatch = (e.message || "").match(/data="(0x[a-fA-F0-9]+)"/);
+    if (msgMatch) {
+      const decoded2 = decodeContractError(msgMatch[1]);
+      if (decoded2) return decoded2;
     }
 
     const msg = (e.reason || e.message || "").toLowerCase();
