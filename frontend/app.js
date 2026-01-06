@@ -1931,7 +1931,7 @@
       }
 
       // Build row with links
-      // Column 0: Action button (Fill for others, Cancel for own)
+      // Column 0: Action button (Fill for others, Cancel for own) or status
       const tdAction = document.createElement("td");
       tdAction.dataset.label = "";
       if (order.active) {
@@ -1963,6 +1963,16 @@
           });
           tdAction.appendChild(fillBtn);
         }
+      } else {
+        const statusSpan = document.createElement("span");
+        if (order.taker) {
+          statusSpan.textContent = "[FILLED]";
+          statusSpan.classList.add("status-filled-label");
+        } else {
+          statusSpan.textContent = "[CANCELED]";
+          statusSpan.classList.add("status-canceled-label");
+        }
+        tdAction.appendChild(statusSpan);
       }
       tr.appendChild(tdAction);
 

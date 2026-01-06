@@ -337,6 +337,14 @@ tbody tr.highlighted-order:hover {
   text-decoration: underline;
 }
 
+.status-filled-label {
+  color: #080;
+}
+
+.status-canceled-label {
+  color: #888;
+}
+
 .copy-btn {
   font-family: "Segoe UI Symbol", "DejaVu Sans", Arial, sans-serif;
   font-size: 13px;
