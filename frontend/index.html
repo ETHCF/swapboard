@@ -25,6 +25,7 @@
 <header>
   <h1><span class="header-box">Welcome to SWAPBOARD</span></h1>
   <div class="header-right">
+    <a href="#" id="notify-btn" class="hidden" title="Toggle notifications">[Notify: Off]</a>
     <a href="#" id="sell-btn" class="hidden">[Sell Tokens]</a>
     <a href="#" id="connect-btn">[Connect Wallet]</a>
   </div>
@@ -32,7 +33,7 @@
 
 <p class="tagline">
   Swapboard is a no frills, 0% fee, peer-to-peer OTC bulletin board for trading any ERC20 token on Ethereum.<br>
-  The <a href="#">contract</a> is audited and immutable, with no admin rights. This is just a front end.
+  The <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">contract</a> is <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">audited</a> and immutable, with no admin rights. This is just a front end.
 </p>
 
 <p class="api-note">Note to market makers: <a href="API.html">API docs</a> available for arbitrage / trading bots</p>
@@ -45,6 +46,10 @@
   <span class="stat-label">Filled:</span> <span id="stat-filled">--</span>
   &nbsp;&nbsp;&nbsp;
   <span class="stat-label">Cancelled:</span> <span id="stat-cancelled">--</span>
+  &nbsp;&nbsp;&nbsp;
+  <span class="stat-label">Volume:</span> <span id="stat-volume">--</span>
+  &nbsp;&nbsp;&nbsp;
+  <span id="refresh-indicator" class="refresh-indicator" title="Auto-refreshing"></span>
 </div>
 
 <div class="zero-stats">
@@ -63,7 +68,7 @@
 
 <div id="filters">
   <span class="filter-left">
-    Filters: Selling token:
+    Filters: Offered Token:
     <select id="filter-selling">
       <option value="">All</option>
     </select>
@@ -72,6 +77,10 @@
     <select id="filter-wanting">
       <option value="">ALL</option>
     </select>
+    &nbsp;&nbsp;
+    <label class="my-orders-filter hidden" id="my-orders-label">
+      <input type="checkbox" id="filter-my-orders"> My Orders
+    </label>
   </span>
   <span class="filter-right">
     All Trades: <input type="radio" name="status" value="all">
@@ -89,14 +98,14 @@
     <thead>
       <tr>
         <th></th>
-        <th>Trade ID</th>
-        <th>Maker</th>
-        <th>Offered Token</th>
-        <th>Offered Size</th>
-        <th>Wanted Token</th>
-        <th>Wanted Size</th>
-        <th>USD Val</th>
-        <th>Price <span class="swap-icon" title="Click to invert ratio">&#8644;</span></th>
+        <th class="sortable" data-sort="orderId">Trade ID<span class="sort-indicator"> &#9660;</span></th>
+        <th class="sortable" data-sort="maker">Maker<span class="sort-indicator"></span></th>
+        <th class="sortable" data-sort="tokenA">Offered Token<span class="sort-indicator"></span></th>
+        <th class="sortable" data-sort="amountA">Offered Size<span class="sort-indicator"></span></th>
+        <th class="sortable" data-sort="tokenB">Wanted Token<span class="sort-indicator"></span></th>
+        <th class="sortable" data-sort="amountB">Wanted Size<span class="sort-indicator"></span></th>
+        <th class="sortable" data-sort="usdVal">USD Val<span class="sort-indicator"></span></th>
+        <th class="sortable" data-sort="price">Price<span class="sort-indicator"></span> <span class="swap-icon" title="Click to invert ratio">&#8644;</span></th>
       </tr>
     </thead>
     <tbody id="order-table">
@@ -117,24 +126,32 @@
     <p class="warning">Verify token addresses. Fake tokens can steal funds.</p>
     <div class="form-row">
       <label>
-        Selling Token:
-        <input type="text" id="create-tokenA" placeholder="Paste token address">
+        Offered Token:
+        <input type="text" id="create-tokenA" placeholder="Search or paste address">
         <span id="tokenA-info"></span>
+        <span id="tokenA-balance" class="token-balance"></span>
       </label>
       <label>
         Amount:
         <input type="text" id="create-amountA" placeholder="0.0">
+        <span class="quick-amounts" id="quick-amounts-A"></span>
       </label>
     </div>
     <div class="form-row">
       <label>
         Wanted Token:
-        <input type="text" id="create-tokenB" placeholder="Paste token address">
+        <input type="text" id="create-tokenB" placeholder="Search or paste address">
         <span id="tokenB-info"></span>
+      </label>
+      <label>
+        Price per Token:
+        <input type="text" id="create-price" placeholder="0.0">
+        <span id="price-info" class="price-info"></span>
       </label>
       <label>
         Amount:
         <input type="text" id="create-amountB" placeholder="0.0">
+        <span id="amountB-info" class="price-info"></span>
       </label>
     </div>
     <div class="modal-actions">
@@ -155,10 +172,59 @@
   </div>
 </div>
 
+<div id="order-modal" class="modal hidden">
+  <div class="modal-content order-modal-content">
+    <h3>Trade #<span id="order-modal-id"></span></h3>
+    <div class="order-modal-grid">
+      <div class="order-modal-row">
+        <span class="order-modal-label">Status</span>
+        <span id="order-modal-status"></span>
+      </div>
+      <div class="order-modal-row">
+        <span class="order-modal-label">Created</span>
+        <span id="order-modal-date"></span>
+      </div>
+      <div class="order-modal-row">
+        <span class="order-modal-label">Maker</span>
+        <span id="order-modal-maker"></span>
+      </div>
+      <div class="order-modal-row">
+        <span class="order-modal-label">Offered</span>
+        <span id="order-modal-offered"></span>
+      </div>
+      <div class="order-modal-row">
+        <span class="order-modal-label">Wanted</span>
+        <span id="order-modal-wanted"></span>
+      </div>
+      <div class="order-modal-row">
+        <span class="order-modal-label">USD Value</span>
+        <span id="order-modal-usd"></span>
+      </div>
+      <div class="order-modal-row">
+        <span class="order-modal-label">Price</span>
+        <span id="order-modal-price"></span>
+      </div>
+      <div class="order-modal-row" id="order-modal-market-row">
+        <span class="order-modal-label">vs Market</span>
+        <span id="order-modal-market"></span>
+      </div>
+      <div class="order-modal-row" id="order-modal-taker-row">
+        <span class="order-modal-label">Taker</span>
+        <span id="order-modal-taker"></span>
+      </div>
+      <div class="order-modal-row">
+        <span class="order-modal-label">Share Link</span>
+        <span id="order-modal-link"></span>
+      </div>
+    </div>
+    <div class="modal-actions" id="order-modal-actions"></div>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 
 <footer>
-  <a href="https://github.com/swapboard/swapboard" target="_blank" rel="noopener noreferrer">[GitHub]</a>
+  <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">[GitHub]</a>
   <a href="API.html">[API Docs]</a>
 </footer>
 

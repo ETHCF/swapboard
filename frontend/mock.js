@@ -319,6 +319,7 @@
       activeOrders: String(stats.active),
       filledOrders: String(stats.filled),
       cancelledOrders: String(stats.cancelled),
+      totalVolumeUsd: "2543876.42",
     };
   }
 

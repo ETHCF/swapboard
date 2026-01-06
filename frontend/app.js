@@ -93,8 +93,21 @@
   let contract = null;
 
   const tokenCache = new Map();
+  const ensCache = new Map();
   let currentPage = 1;
-  let currentFilters = { selling: "", wanting: "", status: "open" };
+  let currentFilters = { selling: "", wanting: "", status: "open", myOrders: false };
+  let currentSort = { column: "orderId", direction: "desc" };
+  let cachedOrders = [];
+  let highlightedOrderId = null;
+  let notificationsEnabled = false;
+  const RECENT_TOKENS_KEY = "swapboard_recent_tokens";
+  const MAX_RECENT_TOKENS = 5;
+  const FILTERS_KEY = "swapboard_filters";
+  const SORT_KEY = "swapboard_sort";
+  const UNISWAP_TOKEN_LIST_URL = "https://tokens.uniswap.org";
+  let uniswapTokens = [];
+  let autoRefreshInterval = null;
+  const AUTO_REFRESH_MS = 30000;
 
   // ============================================================================
   // Price Service (CoinGecko)
@@ -207,6 +220,46 @@
   }
 
   /**
+   * Calculates the market rate deviation for an order.
+   * @param {Object} order - Order with tokenA/tokenB and amounts
+   * @returns {{deviation: number, label: string}|null} Deviation percentage and label, or null if unavailable
+   */
+  function calculateMarketDeviation(order) {
+    const priceA = getTokenPrice(order.tokenA.address);
+    const priceB = getTokenPrice(order.tokenB.address);
+
+    if (priceA === null || priceB === null) return null;
+    if (priceA === 0 || priceB === 0) return null;
+
+    const amountA = BigInt(order.amountA);
+    const amountB = BigInt(order.amountB);
+
+    if (amountA === 0n || amountB === 0n) return null;
+
+    // Market rate: how many tokenB per tokenA at market prices
+    const marketRate = priceA / priceB;
+
+    // Order rate: how many tokenB per tokenA this order offers
+    const humanAmountA = Number(amountA) / Math.pow(10, order.tokenA.decimals);
+    const humanAmountB = Number(amountB) / Math.pow(10, order.tokenB.decimals);
+    const orderRate = humanAmountB / humanAmountA;
+
+    // Deviation: positive = seller asking more (bad for buyer), negative = discount (good for buyer)
+    const deviation = ((orderRate - marketRate) / marketRate) * 100;
+
+    let label;
+    if (Math.abs(deviation) < 0.5) {
+      label = "~market";
+    } else if (deviation > 0) {
+      label = "+" + deviation.toFixed(1) + "%";
+    } else {
+      label = deviation.toFixed(1) + "%";
+    }
+
+    return { deviation, label };
+  }
+
+  /**
    * Formats USD value for display.
    * @param {number|null} usdValue
    * @returns {string}
@@ -268,6 +321,611 @@
   }
 
   /**
+   * Resolves an address to its ENS name if available.
+   * Results are cached to avoid redundant lookups.
+   * @param {string} address - Ethereum address
+   * @returns {Promise<string|null>} ENS name or null if not found
+   */
+  async function resolveEns(address) {
+    if (!address || !provider) return null;
+    const lowerAddr = address.toLowerCase();
+
+    if (ensCache.has(lowerAddr)) {
+      return ensCache.get(lowerAddr);
+    }
+
+    try {
+      const name = await provider.lookupAddress(address);
+      ensCache.set(lowerAddr, name);
+      return name;
+    } catch (e) {
+      ensCache.set(lowerAddr, null);
+      return null;
+    }
+  }
+
+  /**
+   * Batch resolves ENS names for multiple addresses.
+   * @param {string[]} addresses - Array of Ethereum addresses
+   * @returns {Promise<void>}
+   */
+  async function batchResolveEns(addresses) {
+    if (!provider) return;
+
+    const uncached = addresses.filter(addr => !ensCache.has(addr.toLowerCase()));
+    if (uncached.length === 0) return;
+
+    // Resolve in parallel, limit to 10 concurrent lookups
+    const batchSize = 10;
+    for (let i = 0; i < uncached.length; i += batchSize) {
+      const batch = uncached.slice(i, i + batchSize);
+      await Promise.all(batch.map(addr => resolveEns(addr)));
+    }
+  }
+
+  /**
+   * Gets cached ENS name for an address.
+   * @param {string} address - Ethereum address
+   * @returns {string|null} Cached ENS name or null
+   */
+  function getCachedEns(address) {
+    return ensCache.get(address.toLowerCase()) || null;
+  }
+
+  /**
+   * Gets order ID from URL hash if present.
+   * Supports formats: #order-123, #order=123, #123
+   * @returns {string|null} Order ID or null
+   */
+  function getOrderIdFromHash() {
+    const hash = window.location.hash;
+    if (!hash) return null;
+
+    // Format: #order-123 (new format)
+    const dashMatch = hash.match(/^#order-(\d+)$/);
+    if (dashMatch) return dashMatch[1];
+
+    // Format: #order=123
+    const orderMatch = hash.match(/^#order=(\d+)$/);
+    if (orderMatch) return orderMatch[1];
+
+    // Format: #123
+    const simpleMatch = hash.match(/^#(\d+)$/);
+    if (simpleMatch) return simpleMatch[1];
+
+    return null;
+  }
+
+  /**
+   * Creates a shareable URL for an order.
+   * @param {string} orderId - Order ID
+   * @returns {string} Full URL with hash
+   */
+  function getOrderShareUrl(orderId) {
+    const url = new URL(window.location.href);
+    url.hash = "order-" + orderId;
+    return url.toString();
+  }
+
+  /**
+   * Creates a share button for an order.
+   * @param {string} orderId - Order ID
+   * @returns {HTMLElement} Share button element
+   */
+  /**
+   * Requests notification permission from the user.
+   * @returns {Promise<boolean>} True if permission granted
+   */
+  async function requestNotificationPermission() {
+    if (!("Notification" in window)) {
+      showToast("Browser does not support notifications", "error");
+      return false;
+    }
+
+    if (Notification.permission === "granted") {
+      return true;
+    }
+
+    if (Notification.permission === "denied") {
+      showToast("Notifications blocked. Enable in browser settings.", "error");
+      return false;
+    }
+
+    const permission = await Notification.requestPermission();
+    return permission === "granted";
+  }
+
+  /**
+   * Shows a browser notification.
+   * @param {string} title - Notification title
+   * @param {string} body - Notification body
+   * @param {string} [tag] - Notification tag for grouping
+   */
+  function showNotification(title, body, tag) {
+    if (!notificationsEnabled || Notification.permission !== "granted") {
+      return;
+    }
+
+    try {
+      const notification = new Notification(title, {
+        body: body,
+        icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>S</text></svg>",
+        tag: tag,
+        requireInteraction: false
+      });
+
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+
+      setTimeout(() => notification.close(), 10000);
+    } catch (e) {
+      console.error("Notification error:", e);
+    }
+  }
+
+  /**
+   * Estimates gas cost for a transaction and formats it for display.
+   * @param {Object} txParams - Transaction parameters for estimation
+   * @returns {Promise<{gas: string, eth: string, usd: string}|null>} Formatted gas costs or null on error
+   */
+  async function estimateGasCost(txParams) {
+    if (!provider) return null;
+
+    try {
+      const [gasEstimate, feeData] = await Promise.all([
+        provider.estimateGas(txParams),
+        provider.getFeeData()
+      ]);
+
+      const gasPrice = feeData.gasPrice || feeData.maxFeePerGas;
+      if (!gasPrice) return null;
+
+      const gasCostWei = gasEstimate * gasPrice;
+      const gasCostEth = Number(gasCostWei) / 1e18;
+
+      // Get ETH price for USD estimate
+      const ethPrice = getTokenPrice("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+      const gasCostUsd = ethPrice ? gasCostEth * ethPrice : null;
+
+      return {
+        gas: gasEstimate.toString(),
+        eth: gasCostEth < 0.0001 ? gasCostEth.toExponential(2) : gasCostEth.toFixed(6),
+        usd: gasCostUsd ? formatUsd(gasCostUsd) : "$ --"
+      };
+    } catch (e) {
+      console.error("Gas estimation error:", e);
+      return null;
+    }
+  }
+
+  /**
+   * Toggles notifications on/off.
+   */
+  async function toggleNotifications() {
+    if (notificationsEnabled) {
+      notificationsEnabled = false;
+      localStorage.setItem("swapboard_notifications", "false");
+      showToast("Notifications disabled");
+      return;
+    }
+
+    const granted = await requestNotificationPermission();
+    if (granted) {
+      notificationsEnabled = true;
+      localStorage.setItem("swapboard_notifications", "true");
+      showToast("Notifications enabled", "success");
+    }
+  }
+
+  /**
+   * Fetches and caches the Uniswap token list.
+   * Filters to Ethereum mainnet tokens only.
+   */
+  async function fetchUniswapTokenList() {
+    if (uniswapTokens.length > 0) return;
+
+    try {
+      const res = await fetch(UNISWAP_TOKEN_LIST_URL);
+      if (!res.ok) return;
+
+      const data = await res.json();
+      // Filter to Ethereum mainnet (chainId: 1)
+      uniswapTokens = (data.tokens || [])
+        .filter(t => t.chainId === 1)
+        .map(t => ({
+          address: t.address.toLowerCase(),
+          symbol: t.symbol,
+          name: t.name,
+          decimals: t.decimals,
+          logoURI: t.logoURI
+        }));
+
+      console.log(`Loaded ${uniswapTokens.length} tokens from Uniswap list`);
+    } catch (e) {
+      console.error("Failed to fetch Uniswap token list:", e);
+    }
+  }
+
+  /**
+   * Searches tokens by symbol or name.
+   * @param {string} query - Search query
+   * @param {number} limit - Max results
+   * @returns {Array} Matching tokens
+   */
+  function searchTokens(query, limit = 10) {
+    if (!query || query.length < 1) return [];
+
+    const q = query.toLowerCase();
+    const results = [];
+
+    // Exact symbol matches first
+    for (const t of uniswapTokens) {
+      if (t.symbol.toLowerCase() === q) {
+        results.push(t);
+      }
+    }
+
+    // Symbol starts with query
+    for (const t of uniswapTokens) {
+      if (t.symbol.toLowerCase().startsWith(q) && !results.includes(t)) {
+        results.push(t);
+        if (results.length >= limit) return results;
+      }
+    }
+
+    // Symbol or name contains query
+    for (const t of uniswapTokens) {
+      if ((t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)) && !results.includes(t)) {
+        results.push(t);
+        if (results.length >= limit) return results;
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Creates a token selector dropdown for a token input.
+   * @param {HTMLInputElement} input - Token input element
+   */
+  function createTokenSelector(input) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "token-selector-wrapper";
+
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+
+    const dropdown = document.createElement("div");
+    dropdown.className = "token-selector-dropdown hidden";
+    wrapper.appendChild(dropdown);
+
+    let selectedIndex = -1;
+
+    function renderDropdown(tokens, recentTokens = []) {
+      dropdown.innerHTML = "";
+      selectedIndex = -1;
+
+      if (recentTokens.length > 0) {
+        const recentTitle = document.createElement("div");
+        recentTitle.className = "token-selector-title";
+        recentTitle.textContent = "Recent";
+        dropdown.appendChild(recentTitle);
+
+        recentTokens.forEach((t, idx) => {
+          const item = createTokenItem(t, idx);
+          dropdown.appendChild(item);
+        });
+      }
+
+      if (tokens.length > 0) {
+        const title = document.createElement("div");
+        title.className = "token-selector-title";
+        title.textContent = recentTokens.length > 0 ? "Search Results" : "Tokens";
+        dropdown.appendChild(title);
+
+        tokens.forEach((t, idx) => {
+          const item = createTokenItem(t, recentTokens.length + idx);
+          dropdown.appendChild(item);
+        });
+      }
+
+      if (tokens.length === 0 && recentTokens.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "token-selector-empty";
+        empty.textContent = "Type to search tokens...";
+        dropdown.appendChild(empty);
+      }
+
+      dropdown.classList.remove("hidden");
+    }
+
+    function createTokenItem(token, index) {
+      const item = document.createElement("div");
+      item.className = "token-selector-item";
+      item.dataset.index = index;
+
+      if (token.logoURI) {
+        const img = document.createElement("img");
+        img.src = token.logoURI;
+        img.className = "token-logo";
+        img.onerror = () => { img.style.display = "none"; };
+        item.appendChild(img);
+      }
+
+      const info = document.createElement("div");
+      info.className = "token-info";
+
+      const symbol = document.createElement("span");
+      symbol.className = "token-symbol";
+      symbol.textContent = token.symbol;
+      info.appendChild(symbol);
+
+      const name = document.createElement("span");
+      name.className = "token-name";
+      name.textContent = token.name;
+      info.appendChild(name);
+
+      item.appendChild(info);
+
+      item.addEventListener("click", () => {
+        input.value = token.address;
+        input.dispatchEvent(new Event("input"));
+        dropdown.classList.add("hidden");
+      });
+
+      item.addEventListener("mouseenter", () => {
+        updateSelection(index);
+      });
+
+      return item;
+    }
+
+    function updateSelection(index) {
+      const items = dropdown.querySelectorAll(".token-selector-item");
+      items.forEach((item, i) => {
+        item.classList.toggle("selected", parseInt(item.dataset.index) === index);
+      });
+      selectedIndex = index;
+    }
+
+    function getItemCount() {
+      return dropdown.querySelectorAll(".token-selector-item").length;
+    }
+
+    input.addEventListener("focus", () => {
+      const query = input.value.trim();
+      if (query.length >= 2 && !query.startsWith("0x")) {
+        const results = searchTokens(query);
+        renderDropdown(results, []);
+      } else {
+        const recent = getRecentTokens();
+        renderDropdown([], recent);
+      }
+    });
+
+    input.addEventListener("input", () => {
+      const query = input.value.trim();
+
+      // If it looks like an address, don't show token selector
+      if (query.startsWith("0x")) {
+        dropdown.classList.add("hidden");
+        return;
+      }
+
+      if (query.length >= 1) {
+        const results = searchTokens(query);
+        renderDropdown(results, []);
+      } else {
+        const recent = getRecentTokens();
+        renderDropdown([], recent);
+      }
+    });
+
+    input.addEventListener("keydown", (e) => {
+      if (dropdown.classList.contains("hidden")) return;
+
+      const itemCount = getItemCount();
+      if (itemCount === 0) return;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        updateSelection(selectedIndex < itemCount - 1 ? selectedIndex + 1 : 0);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        updateSelection(selectedIndex > 0 ? selectedIndex - 1 : itemCount - 1);
+      } else if (e.key === "Enter" && selectedIndex >= 0) {
+        e.preventDefault();
+        const items = dropdown.querySelectorAll(".token-selector-item");
+        const selected = Array.from(items).find(item => parseInt(item.dataset.index) === selectedIndex);
+        if (selected) selected.click();
+      } else if (e.key === "Escape") {
+        dropdown.classList.add("hidden");
+      }
+    });
+
+    input.addEventListener("blur", () => {
+      // Delay to allow click on dropdown item
+      setTimeout(() => {
+        dropdown.classList.add("hidden");
+      }, 200);
+    });
+  }
+
+  /**
+   * Gets recent tokens from localStorage.
+   * @returns {Array<{address: string, symbol: string}>} Recent tokens array
+   */
+  function getRecentTokens() {
+    try {
+      const stored = localStorage.getItem(RECENT_TOKENS_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /**
+   * Adds a token to recent tokens list.
+   * @param {string} address - Token address
+   * @param {string} symbol - Token symbol
+   */
+  function addRecentToken(address, symbol) {
+    if (!address || !symbol) return;
+
+    const recent = getRecentTokens();
+    const lowerAddr = address.toLowerCase();
+
+    // Remove if already exists
+    const filtered = recent.filter(t => t.address.toLowerCase() !== lowerAddr);
+
+    // Add to front
+    filtered.unshift({ address, symbol });
+
+    // Limit to max
+    const trimmed = filtered.slice(0, MAX_RECENT_TOKENS);
+
+    try {
+      localStorage.setItem(RECENT_TOKENS_KEY, JSON.stringify(trimmed));
+    } catch (e) {
+      console.error("Failed to save recent tokens:", e);
+    }
+  }
+
+  /**
+   * Saves current filter preferences to localStorage.
+   */
+  function saveFilterPreferences() {
+    try {
+      localStorage.setItem(FILTERS_KEY, JSON.stringify(currentFilters));
+    } catch (e) {
+      console.error("Failed to save filter preferences:", e);
+    }
+  }
+
+  /**
+   * Saves current sort preferences to localStorage.
+   */
+  function saveSortPreferences() {
+    try {
+      localStorage.setItem(SORT_KEY, JSON.stringify(currentSort));
+    } catch (e) {
+      console.error("Failed to save sort preferences:", e);
+    }
+  }
+
+  /**
+   * Loads filter preferences from localStorage.
+   */
+  function loadFilterPreferences() {
+    try {
+      const stored = localStorage.getItem(FILTERS_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.status) currentFilters.status = parsed.status;
+        if (parsed.selling) currentFilters.selling = parsed.selling;
+        if (parsed.wanting) currentFilters.wanting = parsed.wanting;
+      }
+    } catch (e) {
+      console.error("Failed to load filter preferences:", e);
+    }
+  }
+
+  /**
+   * Loads sort preferences from localStorage.
+   */
+  function loadSortPreferences() {
+    try {
+      const stored = localStorage.getItem(SORT_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.column) currentSort.column = parsed.column;
+        if (parsed.direction) currentSort.direction = parsed.direction;
+      }
+    } catch (e) {
+      console.error("Failed to load sort preferences:", e);
+    }
+  }
+
+  /**
+   * Creates a recent tokens dropdown for a token input field.
+   * @param {HTMLInputElement} input - Token input element
+   * @param {string} infoId - Info element selector
+   */
+  function createRecentTokensDropdown(input, infoId) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "recent-tokens-wrapper";
+    wrapper.style.position = "relative";
+
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+
+    const dropdown = document.createElement("div");
+    dropdown.className = "recent-tokens-dropdown hidden";
+    wrapper.appendChild(dropdown);
+
+    function showDropdown() {
+      const recent = getRecentTokens();
+      if (recent.length === 0) return;
+
+      dropdown.innerHTML = "";
+      const title = document.createElement("div");
+      title.className = "recent-tokens-title";
+      title.textContent = "Recent:";
+      dropdown.appendChild(title);
+
+      recent.forEach(token => {
+        const item = document.createElement("div");
+        item.className = "recent-token-item";
+        item.textContent = token.symbol;
+        item.title = token.address;
+        item.addEventListener("click", () => {
+          input.value = token.address;
+          input.dispatchEvent(new Event("input"));
+          dropdown.classList.add("hidden");
+        });
+        dropdown.appendChild(item);
+      });
+
+      dropdown.classList.remove("hidden");
+    }
+
+    function hideDropdown() {
+      setTimeout(() => {
+        dropdown.classList.add("hidden");
+      }, 200);
+    }
+
+    input.addEventListener("focus", showDropdown);
+    input.addEventListener("blur", hideDropdown);
+  }
+
+  /**
+   * Creates a copy button that copies text to clipboard.
+   * @param {string} text - Text to copy
+   * @returns {HTMLElement} Copy button element
+   */
+  function createCopyButton(text) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.innerHTML = "&#x29C9;";
+    btn.classList.add("copy-btn");
+    btn.title = "Copy to clipboard";
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.innerHTML = "&#x2713;";
+        setTimeout(() => { btn.innerHTML = "&#x29C9;"; }, 1000);
+      } catch (err) {
+        console.error("Copy failed:", err);
+      }
+    });
+    return btn;
+  }
+
+  /**
    * Formats a token amount for display with proper decimal handling.
    * @param {string|bigint} amount - Amount in base units
    * @param {number} decimals - Token decimals
@@ -285,6 +943,27 @@
 
   function formatNumber(num) {
     return String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  /**
+   * Formats a timestamp as relative time (e.g., "2h ago", "3d ago").
+   * @param {number|string} timestamp - Unix timestamp in seconds
+   * @returns {string} Relative time string
+   */
+  function formatTimeAgo(timestamp) {
+    if (!timestamp) return "";
+
+    const now = Math.floor(Date.now() / 1000);
+    const ts = typeof timestamp === "string" ? parseInt(timestamp) : timestamp;
+    const diff = now - ts;
+
+    if (diff < 0) return "just now";
+    if (diff < 60) return diff + "s ago";
+    if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+    if (diff < 604800) return Math.floor(diff / 86400) + "d ago";
+    if (diff < 2592000) return Math.floor(diff / 604800) + "w ago";
+    return Math.floor(diff / 2592000) + "mo ago";
   }
 
   function formatRatio(num) {
@@ -333,10 +1012,194 @@
     }, 5000);
   }
 
-  function showModal(title, body, onConfirm) {
+  /**
+   * Sorts orders array based on current sort state.
+   * @param {Array} orders - Orders array from subgraph
+   * @returns {Array} Sorted orders array
+   */
+  function sortOrders(orders) {
+    const col = currentSort.column;
+    const dir = currentSort.direction === "asc" ? 1 : -1;
+
+    return [...orders].sort((a, b) => {
+      let valA, valB;
+
+      switch (col) {
+        case "orderId":
+          valA = parseInt(a.orderId);
+          valB = parseInt(b.orderId);
+          break;
+        case "maker":
+          valA = a.maker.toLowerCase();
+          valB = b.maker.toLowerCase();
+          break;
+        case "tokenA":
+          valA = (a.tokenA.symbol || "").toLowerCase();
+          valB = (b.tokenA.symbol || "").toLowerCase();
+          break;
+        case "amountA":
+          valA = Number(BigInt(a.amountA)) / Math.pow(10, a.tokenA.decimals);
+          valB = Number(BigInt(b.amountA)) / Math.pow(10, b.tokenA.decimals);
+          break;
+        case "tokenB":
+          valA = (a.tokenB.symbol || "").toLowerCase();
+          valB = (b.tokenB.symbol || "").toLowerCase();
+          break;
+        case "amountB":
+          valA = Number(BigInt(a.amountB)) / Math.pow(10, a.tokenB.decimals);
+          valB = Number(BigInt(b.amountB)) / Math.pow(10, b.tokenB.decimals);
+          break;
+        case "usdVal":
+          const priceA = getTokenPrice(a.tokenA.address);
+          const priceB = getTokenPrice(b.tokenA.address);
+          const humanA = Number(BigInt(a.amountA)) / Math.pow(10, a.tokenA.decimals);
+          const humanB = Number(BigInt(b.amountA)) / Math.pow(10, b.tokenA.decimals);
+          valA = priceA !== null ? humanA * priceA : -1;
+          valB = priceB !== null ? humanB * priceB : -1;
+          break;
+        case "price":
+          const amtA1 = BigInt(a.amountA);
+          const amtB1 = BigInt(a.amountB);
+          const amtA2 = BigInt(b.amountA);
+          const amtB2 = BigInt(b.amountB);
+          valA = amtA1 > 0n ? Number(amtB1) / Number(amtA1) * Math.pow(10, a.tokenA.decimals - a.tokenB.decimals) : 0;
+          valB = amtA2 > 0n ? Number(amtB2) / Number(amtA2) * Math.pow(10, b.tokenA.decimals - b.tokenB.decimals) : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (typeof valA === "string") {
+        return valA.localeCompare(valB) * dir;
+      }
+      return (valA - valB) * dir;
+    });
+  }
+
+  /**
+   * Handles column header click for sorting.
+   * @param {string} column - Column identifier
+   */
+  function handleSort(column) {
+    if (currentSort.column === column) {
+      currentSort.direction = currentSort.direction === "asc" ? "desc" : "asc";
+    } else {
+      currentSort.column = column;
+      currentSort.direction = "desc";
+    }
+    saveSortPreferences();
+    renderOrders();
+    updateSortIndicators();
+  }
+
+  /**
+   * Updates sort indicators in table headers.
+   */
+  function updateSortIndicators() {
+    document.querySelectorAll("thead th[data-sort]").forEach(th => {
+      const col = th.dataset.sort;
+      const indicator = th.querySelector(".sort-indicator");
+      if (indicator) {
+        if (col === currentSort.column) {
+          indicator.textContent = currentSort.direction === "asc" ? " \u25B2" : " \u25BC";
+        } else {
+          indicator.textContent = "";
+        }
+      }
+    });
+  }
+
+  /**
+   * Renders skeleton loading rows in the order table.
+   * @param {number} count - Number of skeleton rows to render
+   */
+  function renderSkeletonRows(count = 10) {
+    const tbody = $("#order-table");
+    tbody.innerHTML = "";
+
+    for (let i = 0; i < count; i++) {
+      const tr = document.createElement("tr");
+
+      // Column 0: Action (empty)
+      const tdAction = document.createElement("td");
+      tr.appendChild(tdAction);
+
+      // Column 1: Trade ID
+      const tdId = document.createElement("td");
+      const skelId = document.createElement("span");
+      skelId.className = "skeleton skeleton-short";
+      tdId.appendChild(skelId);
+      tr.appendChild(tdId);
+
+      // Column 2: Maker
+      const tdMaker = document.createElement("td");
+      const skelMaker = document.createElement("span");
+      skelMaker.className = "skeleton skeleton-text";
+      tdMaker.appendChild(skelMaker);
+      tr.appendChild(tdMaker);
+
+      // Column 3: Offered Token
+      const tdTokenA = document.createElement("td");
+      const skelTokenA = document.createElement("span");
+      skelTokenA.className = "skeleton skeleton-short";
+      tdTokenA.appendChild(skelTokenA);
+      tr.appendChild(tdTokenA);
+
+      // Column 4: Offered Size
+      const tdAmtA = document.createElement("td");
+      const skelAmtA = document.createElement("span");
+      skelAmtA.className = "skeleton skeleton-number";
+      tdAmtA.appendChild(skelAmtA);
+      tr.appendChild(tdAmtA);
+
+      // Column 5: Wanted Token
+      const tdTokenB = document.createElement("td");
+      const skelTokenB = document.createElement("span");
+      skelTokenB.className = "skeleton skeleton-short";
+      tdTokenB.appendChild(skelTokenB);
+      tr.appendChild(tdTokenB);
+
+      // Column 6: Wanted Size
+      const tdAmtB = document.createElement("td");
+      const skelAmtB = document.createElement("span");
+      skelAmtB.className = "skeleton skeleton-number";
+      tdAmtB.appendChild(skelAmtB);
+      tr.appendChild(tdAmtB);
+
+      // Column 7: USD Val
+      const tdUsd = document.createElement("td");
+      const skelUsd = document.createElement("span");
+      skelUsd.className = "skeleton skeleton-short";
+      tdUsd.appendChild(skelUsd);
+      tr.appendChild(tdUsd);
+
+      // Column 8: Price
+      const tdPrice = document.createElement("td");
+      const skelPrice = document.createElement("span");
+      skelPrice.className = "skeleton skeleton-text";
+      tdPrice.appendChild(skelPrice);
+      tr.appendChild(tdPrice);
+
+      tbody.appendChild(tr);
+    }
+  }
+
+  function showModal(title, body, onConfirm, gasEstimate) {
     const modal = $("#modal");
     $("#modal-title").textContent = title;
-    $("#modal-body").textContent = body;
+
+    const bodyEl = $("#modal-body");
+    bodyEl.textContent = body;
+
+    // Add gas estimate if available
+    if (gasEstimate) {
+      const gasDiv = document.createElement("div");
+      gasDiv.className = "gas-estimate";
+      gasDiv.innerHTML = "<br>Estimated gas: " + escapeHtml(gasEstimate.gas) +
+        " (~" + escapeHtml(gasEstimate.eth) + " ETH / " + escapeHtml(gasEstimate.usd) + ")";
+      bodyEl.appendChild(gasDiv);
+    }
+
     modal.classList.remove("hidden");
 
     const confirmHandler = () => {
@@ -354,6 +1217,216 @@
 
     $("#modal-confirm").addEventListener("click", confirmHandler);
     $("#modal-cancel").addEventListener("click", cancelHandler);
+  }
+
+  /**
+   * Opens the order detail modal for a specific order.
+   * @param {Object} order - Order object with all metadata
+   */
+  function openOrderModal(order) {
+    const modal = $("#order-modal");
+
+    // Trade ID
+    $("#order-modal-id").textContent = order.orderId;
+
+    // Status
+    const statusEl = $("#order-modal-status");
+    statusEl.innerHTML = "";
+    const statusSpan = document.createElement("span");
+    statusSpan.className = "order-modal-status";
+    if (order.active) {
+      statusSpan.textContent = "Open";
+      statusSpan.classList.add("status-open");
+    } else if (order.taker) {
+      statusSpan.textContent = "Filled";
+      statusSpan.classList.add("status-filled");
+    } else {
+      statusSpan.textContent = "Cancelled";
+      statusSpan.classList.add("status-cancelled");
+    }
+    statusEl.appendChild(statusSpan);
+
+    // Created date
+    const dateEl = $("#order-modal-date");
+    if (order.createdAt) {
+      const date = new Date(parseInt(order.createdAt) * 1000);
+      dateEl.textContent = date.toLocaleString() + " (" + formatTimeAgo(order.createdAt) + ")";
+    } else {
+      dateEl.textContent = "--";
+    }
+
+    // Maker
+    const makerEl = $("#order-modal-maker");
+    makerEl.innerHTML = "";
+    const makerLink = document.createElement("a");
+    makerLink.href = "https://etherscan.io/address/" + order.maker;
+    makerLink.target = "_blank";
+    makerLink.rel = "noopener noreferrer";
+    const ensName = getCachedEns(order.maker);
+    makerLink.textContent = ensName || truncateAddress(order.maker);
+    makerLink.title = order.maker;
+    makerEl.appendChild(makerLink);
+    makerEl.appendChild(createCopyButton(order.maker));
+
+    // Offered
+    const offeredEl = $("#order-modal-offered");
+    offeredEl.innerHTML = "";
+    const tokenADecimals = order.tokenA.decimals || 18;
+    const amountA = BigInt(order.amountA);
+    const formattedAmountA = formatAmount(amountA, tokenADecimals);
+    const tokenAId = COINGECKO_ID_MAP[order.tokenA.address.toLowerCase()];
+    if (tokenAId) {
+      const tokenALink = document.createElement("a");
+      tokenALink.href = "https://www.coingecko.com/en/coins/" + tokenAId;
+      tokenALink.target = "_blank";
+      tokenALink.textContent = formattedAmountA + " " + order.tokenA.symbol;
+      offeredEl.appendChild(tokenALink);
+    } else {
+      offeredEl.textContent = formattedAmountA + " " + order.tokenA.symbol;
+    }
+    offeredEl.appendChild(createCopyButton(order.tokenA.address));
+
+    // Wanted
+    const wantedEl = $("#order-modal-wanted");
+    wantedEl.innerHTML = "";
+    const tokenBDecimals = order.tokenB.decimals || 18;
+    const amountB = BigInt(order.amountB);
+    const formattedAmountB = formatAmount(amountB, tokenBDecimals);
+    const tokenBId = COINGECKO_ID_MAP[order.tokenB.address.toLowerCase()];
+    if (tokenBId) {
+      const tokenBLink = document.createElement("a");
+      tokenBLink.href = "https://www.coingecko.com/en/coins/" + tokenBId;
+      tokenBLink.target = "_blank";
+      tokenBLink.textContent = formattedAmountB + " " + order.tokenB.symbol;
+      wantedEl.appendChild(tokenBLink);
+    } else {
+      wantedEl.textContent = formattedAmountB + " " + order.tokenB.symbol;
+    }
+    wantedEl.appendChild(createCopyButton(order.tokenB.address));
+
+    // USD Value
+    const usdEl = $("#order-modal-usd");
+    const tokenAPrice = getTokenPrice(order.tokenA.address);
+    if (tokenAPrice !== null && amountA > 0n) {
+      const humanAmountA = Number(amountA) / Math.pow(10, tokenADecimals);
+      usdEl.textContent = formatUsd(humanAmountA * tokenAPrice);
+    } else {
+      usdEl.textContent = "$ --";
+    }
+
+    // Price (both directions)
+    const priceEl = $("#order-modal-price");
+    if (amountA > 0n && amountB > 0n) {
+      const humanA = Number(amountA) / Math.pow(10, tokenADecimals);
+      const humanB = Number(amountB) / Math.pow(10, tokenBDecimals);
+      const priceAPerB = humanA / humanB;
+      const priceBPerA = humanB / humanA;
+      priceEl.innerHTML = "1 " + escapeHtml(order.tokenB.symbol) + " = " + priceAPerB.toFixed(6) + " " + escapeHtml(order.tokenA.symbol) + "<br>" +
+                          "1 " + escapeHtml(order.tokenA.symbol) + " = " + priceBPerA.toFixed(6) + " " + escapeHtml(order.tokenB.symbol);
+    } else {
+      priceEl.textContent = "--";
+    }
+
+    // Market rate comparison
+    const marketRow = $("#order-modal-market-row");
+    const marketEl = $("#order-modal-market");
+    const marketDev = calculateMarketDeviation(order);
+    if (marketDev) {
+      marketRow.style.display = "flex";
+      marketEl.innerHTML = "";
+      const devSpan = document.createElement("span");
+      devSpan.className = "market-deviation";
+      if (marketDev.deviation < -1) {
+        devSpan.classList.add("good-deal");
+      } else if (marketDev.deviation > 5) {
+        devSpan.classList.add("bad-deal");
+      }
+      devSpan.textContent = marketDev.label;
+      marketEl.appendChild(devSpan);
+    } else {
+      marketRow.style.display = "none";
+    }
+
+    // Taker (only if filled)
+    const takerRow = $("#order-modal-taker-row");
+    const takerEl = $("#order-modal-taker");
+    if (order.taker) {
+      takerRow.style.display = "flex";
+      takerEl.innerHTML = "";
+      const takerLink = document.createElement("a");
+      takerLink.href = "https://etherscan.io/address/" + order.taker;
+      takerLink.target = "_blank";
+      takerLink.rel = "noopener noreferrer";
+      const takerEns = getCachedEns(order.taker);
+      takerLink.textContent = takerEns || truncateAddress(order.taker);
+      takerLink.title = order.taker;
+      takerEl.appendChild(takerLink);
+      takerEl.appendChild(createCopyButton(order.taker));
+    } else {
+      takerRow.style.display = "none";
+    }
+
+    // Share link
+    const linkEl = $("#order-modal-link");
+    linkEl.innerHTML = "";
+    const linkInput = document.createElement("input");
+    linkInput.type = "text";
+    linkInput.className = "order-modal-link-input";
+    linkInput.value = getOrderShareUrl(order.orderId);
+    linkInput.readOnly = true;
+    linkInput.addEventListener("click", () => linkInput.select());
+    linkEl.appendChild(linkInput);
+    linkEl.appendChild(createCopyButton(getOrderShareUrl(order.orderId)));
+
+    // Actions
+    const actionsEl = $("#order-modal-actions");
+    actionsEl.innerHTML = "";
+
+    if (order.active) {
+      const isOwnOrder = userAddress && order.maker.toLowerCase() === userAddress.toLowerCase();
+      if (isOwnOrder) {
+        const cancelBtn = document.createElement("button");
+        cancelBtn.textContent = "Cancel Order";
+        cancelBtn.style.background = "#c00";
+        cancelBtn.addEventListener("click", async () => {
+          modal.classList.add("hidden");
+          handleCancelOrder(order);
+        });
+        actionsEl.appendChild(cancelBtn);
+      } else {
+        const fillBtn = document.createElement("button");
+        fillBtn.textContent = "Fill Order";
+        fillBtn.addEventListener("click", async () => {
+          modal.classList.add("hidden");
+          if (!userAddress) {
+            await connectWallet();
+          }
+          if (userAddress) {
+            handleFillOrder(order);
+          }
+        });
+        actionsEl.appendChild(fillBtn);
+      }
+    }
+
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "Close";
+    closeBtn.style.background = "#fff";
+    closeBtn.style.color = "#000";
+    closeBtn.style.border = "1px solid #000";
+    closeBtn.addEventListener("click", () => {
+      modal.classList.add("hidden");
+      // Clear hash when closing manually
+      if (window.location.hash) {
+        history.pushState("", document.title, window.location.pathname + window.location.search);
+      }
+    });
+    actionsEl.appendChild(closeBtn);
+
+    // Update URL hash
+    window.location.hash = "order-" + order.orderId;
+
+    modal.classList.remove("hidden");
   }
 
   // ============================================================================
@@ -444,6 +1517,7 @@
           activeOrders
           filledOrders
           cancelledOrders
+          totalVolumeUsd
         }
       }
     `);
@@ -454,6 +1528,11 @@
       $("#stat-active").textContent = formatNumber(s.activeOrders || "0");
       $("#stat-filled").textContent = formatNumber(s.filledOrders || "0");
       $("#stat-cancelled").textContent = formatNumber(s.cancelledOrders || "0");
+      if (s.totalVolumeUsd) {
+        $("#stat-volume").textContent = formatUsd(parseFloat(s.totalVolumeUsd));
+      } else {
+        $("#stat-volume").textContent = "$ --";
+      }
     }
   }
 
@@ -530,7 +1609,12 @@
     }
   }
 
-  async function loadOrders() {
+  async function loadOrders(silent = false) {
+    // Show skeleton loading state (skip for silent auto-refresh)
+    if (!silent) {
+      renderSkeletonRows(CONFIG.PAGE_SIZE);
+    }
+
     const skip = (currentPage - 1) * CONFIG.PAGE_SIZE;
     const conditions = [];
 
@@ -548,6 +1632,9 @@
     if (currentFilters.wanting && isValidAddress(currentFilters.wanting)) {
       conditions.push(`tokenB_: { address: "${currentFilters.wanting.toLowerCase()}" }`);
     }
+    if (currentFilters.myOrders && userAddress) {
+      conditions.push(`maker: "${userAddress.toLowerCase()}"`);
+    }
 
     const where = conditions.length > 0 ? `where: { ${conditions.join(", ")} }` : "";
 
@@ -560,6 +1647,7 @@
           amountB
           active
           taker
+          createdAt
           tokenA {
             address
             symbol
@@ -574,30 +1662,73 @@
       }
     `);
 
+    if (!data || !data.orders) {
+      cachedOrders = [];
+    } else {
+      cachedOrders = data.orders;
+    }
+
+    // Batch fetch prices for all tokenA and tokenB addresses
+    if (cachedOrders.length > 0) {
+      const tokenAddressesA = cachedOrders.map((o) => o.tokenA.address.toLowerCase());
+      const tokenAddressesB = cachedOrders.map((o) => o.tokenB.address.toLowerCase());
+      const allTokenAddresses = [...new Set([...tokenAddressesA, ...tokenAddressesB])];
+      const coinGeckoIds = allTokenAddresses
+        .map((addr) => COINGECKO_ID_MAP[addr])
+        .filter(Boolean);
+
+      if (coinGeckoIds.length > 0) {
+        await fetchPrices(coinGeckoIds);
+      }
+
+      // Batch resolve ENS names for all maker addresses
+      const makerAddresses = [...new Set(cachedOrders.map((o) => o.maker))];
+      batchResolveEns(makerAddresses).then(() => {
+        // Re-render to show ENS names once resolved
+        renderOrders();
+      });
+    }
+
+    renderOrders();
+    updateSortIndicators();
+
+    // Open modal if there's a highlighted order ID from URL hash
+    if (highlightedOrderId) {
+      const order = findOrderById(highlightedOrderId);
+      if (order) {
+        openOrderModal(order);
+      }
+      highlightedOrderId = null; // Clear after opening
+    }
+  }
+
+  /**
+   * Finds an order by ID from cached orders.
+   * @param {string} orderId - Order ID to find
+   * @returns {Object|null} Order object or null
+   */
+  function findOrderById(orderId) {
+    return cachedOrders.find((o) => o.orderId === orderId) || null;
+  }
+
+  function renderOrders() {
     const tbody = $("#order-table");
     tbody.innerHTML = "";
 
-    if (!data || !data.orders || data.orders.length === 0) {
+    if (cachedOrders.length === 0) {
       const tr = document.createElement("tr");
       const td = document.createElement("td");
       td.colSpan = 9;
       td.textContent = "No orders found";
       tr.appendChild(td);
       tbody.appendChild(tr);
+      updatePagination(0);
       return;
     }
 
-    // Batch fetch prices for all tokenA addresses
-    const tokenAddresses = [...new Set(data.orders.map((o) => o.tokenA.address.toLowerCase()))];
-    const coinGeckoIds = tokenAddresses
-      .map((addr) => COINGECKO_ID_MAP[addr])
-      .filter(Boolean);
+    const sortedOrders = sortOrders(cachedOrders);
 
-    if (coinGeckoIds.length > 0) {
-      await fetchPrices(coinGeckoIds);
-    }
-
-    for (const order of data.orders) {
+    for (const order of sortedOrders) {
       const tr = document.createElement("tr");
       const isMaker = userAddress && order.maker.toLowerCase() === userAddress.toLowerCase();
 
@@ -663,32 +1794,42 @@
       }
       tr.appendChild(tdAction);
 
-      // Column 1: Trade ID (link to tx on Etherscan)
+      // Column 1: Trade ID (clickable to open detail modal)
       const tdId = document.createElement("td");
-      if (order.createdTx) {
-        const idLink = document.createElement("a");
-        idLink.href = "https://etherscan.io/tx/" + order.createdTx;
-        idLink.target = "_blank";
-        idLink.rel = "noopener noreferrer";
-        idLink.textContent = order.orderId;
-        tdId.appendChild(idLink);
-      } else {
-        tdId.textContent = order.orderId;
-      }
+      const idLink = document.createElement("a");
+      idLink.href = "#order-" + order.orderId;
+      idLink.textContent = order.orderId;
+      idLink.classList.add("trade-id-link");
+      idLink.addEventListener("click", (e) => {
+        e.preventDefault();
+        openOrderModal(order);
+      });
+      tdId.appendChild(idLink);
       tr.appendChild(tdId);
 
-      // Column 1: Seller (link to Etherscan)
+      // Highlight if this is the linked order
+      if (highlightedOrderId === order.orderId) {
+        tr.classList.add("highlighted-order");
+        tr.id = "order-" + order.orderId;
+      }
+
+      // Column 2: Maker (link to Etherscan + copy, show ENS if available)
       const tdSeller = document.createElement("td");
+      const sellerWrap = document.createElement("span");
+      sellerWrap.style.whiteSpace = "nowrap";
       const sellerLink = document.createElement("a");
       sellerLink.href = "https://etherscan.io/address/" + order.maker;
       sellerLink.target = "_blank";
       sellerLink.rel = "noopener noreferrer";
-      sellerLink.textContent = truncateAddress(order.maker);
+      const ensName = getCachedEns(order.maker);
+      sellerLink.textContent = ensName || truncateAddress(order.maker);
       sellerLink.title = order.maker;
-      tdSeller.appendChild(sellerLink);
+      sellerWrap.appendChild(sellerLink);
+      sellerWrap.appendChild(createCopyButton(order.maker));
+      tdSeller.appendChild(sellerWrap);
       tr.appendChild(tdSeller);
 
-      // Column 2: Selling Token (link to CoinGecko)
+      // Column 3: Offered Token (link to CoinGecko + copy)
       const tdTokenA = document.createElement("td");
       const tokenAId = COINGECKO_ID_MAP[order.tokenA.address.toLowerCase()];
       if (tokenAId) {
@@ -699,17 +1840,20 @@
         tokenALink.textContent = order.tokenA.symbol;
         tdTokenA.appendChild(tokenALink);
       } else {
-        tdTokenA.textContent = order.tokenA.symbol;
+        const tokenASpan = document.createElement("span");
+        tokenASpan.textContent = order.tokenA.symbol;
+        tdTokenA.appendChild(tokenASpan);
       }
+      tdTokenA.appendChild(createCopyButton(order.tokenA.address));
       tdTokenA.title = order.tokenA.address;
       tr.appendChild(tdTokenA);
 
-      // Column 3: Sell Size
+      // Column 4: Sell Size
       const tdAmountA = document.createElement("td");
       tdAmountA.textContent = formatAmount(order.amountA, tokenADecimals);
       tr.appendChild(tdAmountA);
 
-      // Column 4: Wanted Token (link to CoinGecko)
+      // Column 5: Wanted Token (link to CoinGecko + copy)
       const tdTokenB = document.createElement("td");
       const tokenBId = COINGECKO_ID_MAP[order.tokenB.address.toLowerCase()];
       if (tokenBId) {
@@ -720,25 +1864,46 @@
         tokenBLink.textContent = order.tokenB.symbol;
         tdTokenB.appendChild(tokenBLink);
       } else {
-        tdTokenB.textContent = order.tokenB.symbol;
+        const tokenBSpan = document.createElement("span");
+        tokenBSpan.textContent = order.tokenB.symbol;
+        tdTokenB.appendChild(tokenBSpan);
       }
+      tdTokenB.appendChild(createCopyButton(order.tokenB.address));
       tdTokenB.title = order.tokenB.address;
       tr.appendChild(tdTokenB);
 
-      // Column 5: Wanted Size
+      // Column 6: Wanted Size
       const tdAmountB = document.createElement("td");
       tdAmountB.textContent = formatAmount(order.amountB, tokenBDecimals);
       tr.appendChild(tdAmountB);
 
-      // Column 6: USD Val (nowrap to keep $ and value on same line)
+      // Column 7: USD Val (nowrap to keep $ and value on same line)
       const tdUsd = document.createElement("td");
       tdUsd.textContent = usdVal;
       tdUsd.style.whiteSpace = "nowrap";
       tr.appendChild(tdUsd);
 
-      // Column 7: Price (clickable to invert ratio)
+      // Column 8: Price (clickable to invert ratio) + market deviation
       const tdPrice = document.createElement("td");
-      tdPrice.textContent = priceNormal;
+      const priceSpan = document.createElement("span");
+      priceSpan.textContent = priceNormal;
+      tdPrice.appendChild(priceSpan);
+
+      // Add market deviation indicator
+      const marketDev = calculateMarketDeviation(order);
+      if (marketDev) {
+        const devSpan = document.createElement("span");
+        devSpan.className = "market-deviation";
+        if (marketDev.deviation < -1) {
+          devSpan.classList.add("good-deal");
+        } else if (marketDev.deviation > 5) {
+          devSpan.classList.add("bad-deal");
+        }
+        devSpan.textContent = " " + marketDev.label;
+        devSpan.title = "Compared to market rate";
+        tdPrice.appendChild(devSpan);
+      }
+
       if (priceNormal !== "N/A") {
         tdPrice.dataset.priceNormal = priceNormal;
         tdPrice.dataset.priceInverted = priceInverted;
@@ -748,7 +1913,7 @@
         tdPrice.addEventListener("click", function(e) {
           e.stopPropagation();
           const isNormal = this.dataset.showingNormal === "true";
-          this.textContent = isNormal ? this.dataset.priceInverted : this.dataset.priceNormal;
+          priceSpan.textContent = isNormal ? this.dataset.priceInverted : this.dataset.priceNormal;
           this.dataset.showingNormal = isNormal ? "false" : "true";
         });
       }
@@ -756,7 +1921,17 @@
 
       tbody.appendChild(tr);
     }
-    updatePagination(data.orders.length);
+    updatePagination(sortedOrders.length);
+
+    // Scroll to highlighted order if present
+    if (highlightedOrderId) {
+      const highlightedRow = document.getElementById("order-" + highlightedOrderId);
+      if (highlightedRow) {
+        setTimeout(() => {
+          highlightedRow.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 100);
+      }
+    }
   }
 
   function updatePagination(count) {
@@ -781,6 +1956,20 @@
 
     const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
     const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
+
+    // Estimate gas cost
+    showToast("Estimating gas...");
+    let gasEstimate = null;
+    try {
+      const txData = contract.interface.encodeFunctionData("fillOrder", [order.orderId]);
+      gasEstimate = await estimateGasCost({
+        from: userAddress,
+        to: CONFIG.CONTRACT_ADDRESS,
+        data: txData
+      });
+    } catch (e) {
+      console.error("Gas estimation failed:", e);
+    }
 
     showModal(
       "Fill Order #" + order.orderId,
@@ -815,7 +2004,8 @@
           console.error("Fill error:", e);
           showToast("Fill failed: " + (e.reason || e.message), "error");
         }
-      }
+      },
+      gasEstimate
     );
   }
 
@@ -826,6 +2016,20 @@
     }
 
     const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
+
+    // Estimate gas cost
+    showToast("Estimating gas...");
+    let gasEstimate = null;
+    try {
+      const txData = contract.interface.encodeFunctionData("cancelOrder", [order.orderId]);
+      gasEstimate = await estimateGasCost({
+        from: userAddress,
+        to: CONFIG.CONTRACT_ADDRESS,
+        data: txData
+      });
+    } catch (e) {
+      console.error("Gas estimation failed:", e);
+    }
 
     showModal(
       "Cancel Order #" + order.orderId,
@@ -842,7 +2046,8 @@
           console.error("Cancel error:", e);
           showToast("Cancel failed: " + (e.reason || e.message), "error");
         }
-      }
+      },
+      gasEstimate
     );
   }
 
@@ -906,6 +2111,10 @@
             await tx.wait();
             showToast("Order created!", "success");
 
+            // Save tokens to recent list
+            addRecentToken(tokenAAddr, tokenA.symbol);
+            addRecentToken(tokenBAddr, tokenB.symbol);
+
             $("#create-tokenA").value = "";
             $("#create-tokenB").value = "";
             $("#create-amountA").value = "";
@@ -951,10 +2160,16 @@
 
       $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
       $("#sell-btn").classList.remove("hidden");
+      $("#notify-btn").classList.remove("hidden");
+      $("#my-orders-label").classList.remove("hidden");
 
       // Subscribe to contract events for real-time updates
       contract.on("OrderFilled", (orderId, taker) => {
         console.log(`Order ${orderId} filled by ${taker}`);
+        // Notify if user's order was filled by someone else
+        if (taker.toLowerCase() !== userAddress.toLowerCase()) {
+          showNotification("Order Filled", `Your order #${orderId} has been filled!`, "order-" + orderId);
+        }
         loadOrders();
         loadStats();
       });
@@ -979,9 +2194,10 @@
     }
   }
 
-  function setupTokenInfoFetch(inputId, infoId) {
+  function setupTokenInfoFetch(inputId, infoId, balanceId, quickAmountsId) {
     const input = $(inputId);
     let timeout = null;
+    let currentTokenInfo = null;
 
     input.addEventListener("input", () => {
       clearTimeout(timeout);
@@ -989,13 +2205,84 @@
 
       if (!isValidAddress(addr)) {
         $(infoId).textContent = addr ? "Invalid address" : "";
+        if (balanceId) $(balanceId).textContent = "";
+        if (quickAmountsId) $(quickAmountsId).innerHTML = "";
+        currentTokenInfo = null;
         return;
       }
 
       timeout = setTimeout(async () => {
         $(infoId).textContent = "Loading...";
+        if (balanceId) $(balanceId).textContent = "";
+        if (quickAmountsId) $(quickAmountsId).innerHTML = "";
+
         const info = await fetchTokenInfo(addr);
-        $(infoId).textContent = info.symbol + " (" + info.decimals + " decimals)";
+        currentTokenInfo = info;
+
+        // Show token info with CoinGecko verification link if available
+        const infoEl = $(infoId);
+        infoEl.innerHTML = "";
+
+        const coinGeckoId = COINGECKO_ID_MAP[addr.toLowerCase()];
+        if (coinGeckoId) {
+          const link = document.createElement("a");
+          link.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = info.symbol;
+          link.title = "Verify on CoinGecko";
+          infoEl.appendChild(link);
+          infoEl.appendChild(document.createTextNode(" (" + info.decimals + " decimals) "));
+
+          const verifyLink = document.createElement("a");
+          verifyLink.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
+          verifyLink.target = "_blank";
+          verifyLink.rel = "noopener noreferrer";
+          verifyLink.textContent = "[verify]";
+          verifyLink.className = "verify-link";
+          infoEl.appendChild(verifyLink);
+        } else {
+          // Unknown token - show warning
+          const symbolSpan = document.createElement("span");
+          symbolSpan.textContent = info.symbol;
+          infoEl.appendChild(symbolSpan);
+          infoEl.appendChild(document.createTextNode(" (" + info.decimals + " decimals) "));
+
+          const warnSpan = document.createElement("span");
+          warnSpan.className = "token-warning";
+          warnSpan.textContent = "[unknown token]";
+          warnSpan.title = "This token is not in our verified list. Double-check the address.";
+          infoEl.appendChild(warnSpan);
+        }
+
+        // Fetch balance if connected
+        if (balanceId && userAddress && provider) {
+          try {
+            const tokenContract = new ethers.Contract(addr, ERC20_ABI, provider);
+            const balance = await tokenContract.balanceOf(userAddress);
+            const formatted = formatAmount(balance.toString(), info.decimals);
+            $(balanceId).textContent = "Balance: " + formatted;
+
+            // Add quick amount buttons
+            if (quickAmountsId && balance > 0n) {
+              const amountInput = inputId === "#create-tokenA" ? "#create-amountA" : "#create-amountB";
+              $(quickAmountsId).innerHTML = "";
+              [25, 50, 75, 100].forEach(pct => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.textContent = pct + "%";
+                btn.classList.add("quick-amt-btn");
+                btn.addEventListener("click", () => {
+                  const amt = (balance * BigInt(pct)) / 100n;
+                  $(amountInput).value = formatAmount(amt.toString(), info.decimals);
+                });
+                $(quickAmountsId).appendChild(btn);
+              });
+            }
+          } catch (e) {
+            console.error("Balance fetch error:", e);
+          }
+        }
       }, CONFIG.DEBOUNCE_DELAY);
     });
   }
@@ -1017,9 +2304,132 @@
   function initApp() {
     validateConfig();
 
+    // Load saved preferences
+    loadFilterPreferences();
+    loadSortPreferences();
+
+    // Apply loaded filter preferences to UI
+    if (currentFilters.status) {
+      const radio = $(`input[name="status"][value="${currentFilters.status}"]`);
+      if (radio) radio.checked = true;
+    }
+    if (currentFilters.selling) {
+      $("#filter-selling").value = currentFilters.selling;
+    }
+    if (currentFilters.wanting) {
+      $("#filter-wanting").value = currentFilters.wanting;
+    }
+
+    // Check for order link in URL hash (overrides saved status filter)
+    const linkedOrderId = getOrderIdFromHash();
+    if (linkedOrderId) {
+      highlightedOrderId = linkedOrderId;
+      // Switch to "all" filter to find the order regardless of status
+      currentFilters.status = "all";
+      $('input[name="status"][value="all"]').checked = true;
+    }
+
+    // Keyboard shortcuts
+    document.addEventListener("keydown", (e) => {
+      // Ignore when typing in inputs
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
+        // Only handle Escape in inputs
+        if (e.key === "Escape") {
+          e.target.blur();
+        }
+        return;
+      }
+
+      // Ignore if modifier keys are pressed (except for ?)
+      if (e.ctrlKey || e.altKey || e.metaKey) {
+        return;
+      }
+
+      switch (e.key) {
+        case "c":
+          // Connect wallet
+          if (!userAddress) {
+            e.preventDefault();
+            connectWallet();
+          }
+          break;
+
+        case "s":
+          // Open sell modal (when connected)
+          if (userAddress && $("#sell-modal").classList.contains("hidden")) {
+            e.preventDefault();
+            $("#sell-modal").classList.remove("hidden");
+          }
+          break;
+
+        case "Escape":
+          // Close modals
+          e.preventDefault();
+          $("#modal").classList.add("hidden");
+          $("#sell-modal").classList.add("hidden");
+          $("#order-modal").classList.add("hidden");
+          // Clear hash when closing via escape
+          if (window.location.hash) {
+            history.pushState("", document.title, window.location.pathname + window.location.search);
+          }
+          break;
+
+        case "r":
+          // Refresh orders
+          e.preventDefault();
+          loadOrders();
+          loadStats();
+          showToast("Refreshing...");
+          break;
+
+        case "?":
+          // Show shortcuts help
+          e.preventDefault();
+          showModal(
+            "Keyboard Shortcuts",
+            "c - Connect wallet\ns - Sell tokens\nr - Refresh orders\nEsc - Close modals\n? - Show this help",
+            () => {}
+          );
+          break;
+      }
+    });
+
+    // Handle hash changes
+    window.addEventListener("hashchange", () => {
+      const newOrderId = getOrderIdFromHash();
+      if (newOrderId) {
+        // Try to find order in cache first
+        const order = findOrderById(newOrderId);
+        if (order) {
+          openOrderModal(order);
+        } else {
+          // Order not in cache, switch to "all" filter and reload
+          highlightedOrderId = newOrderId;
+          currentFilters.status = "all";
+          $('input[name="status"][value="all"]').checked = true;
+          loadOrders();
+        }
+      } else {
+        // Hash cleared, close order modal
+        $("#order-modal").classList.add("hidden");
+      }
+    });
+
+    // Load notification preference from localStorage
+    if (localStorage.getItem("swapboard_notifications") === "true" && Notification.permission === "granted") {
+      notificationsEnabled = true;
+      $("#notify-btn").textContent = "[Notify: On]";
+    }
+
     $("#connect-btn").addEventListener("click", (e) => {
       e.preventDefault();
       connectWallet();
+    });
+
+    $("#notify-btn").addEventListener("click", async (e) => {
+      e.preventDefault();
+      await toggleNotifications();
+      $("#notify-btn").textContent = notificationsEnabled ? "[Notify: On]" : "[Notify: Off]";
     });
 
     $("#sell-btn").addEventListener("click", (e) => {
@@ -1031,16 +2441,34 @@
       $("#sell-modal").classList.add("hidden");
     });
 
+    // Click outside to close modals
+    $("#order-modal").addEventListener("click", (e) => {
+      if (e.target === $("#order-modal")) {
+        $("#order-modal").classList.add("hidden");
+        if (window.location.hash) {
+          history.pushState("", document.title, window.location.pathname + window.location.search);
+        }
+      }
+    });
+
+    $("#sell-modal").addEventListener("click", (e) => {
+      if (e.target === $("#sell-modal")) {
+        $("#sell-modal").classList.add("hidden");
+      }
+    });
+
     // Filter change handlers
     $("#filter-selling").addEventListener("change", () => {
       currentFilters.selling = $("#filter-selling").value;
       currentPage = 1;
+      saveFilterPreferences();
       loadOrders();
     });
 
     $("#filter-wanting").addEventListener("change", () => {
       currentFilters.wanting = $("#filter-wanting").value;
       currentPage = 1;
+      saveFilterPreferences();
       loadOrders();
     });
 
@@ -1049,8 +2477,16 @@
       radio.addEventListener("change", () => {
         currentFilters.status = radio.value;
         currentPage = 1;
+        saveFilterPreferences();
         loadOrders();
       });
+    });
+
+    // My Orders filter
+    $("#filter-my-orders").addEventListener("change", () => {
+      currentFilters.myOrders = $("#filter-my-orders").checked;
+      currentPage = 1;
+      loadOrders();
     });
 
     $("#prev-page").addEventListener("click", () => {
@@ -1067,8 +2503,63 @@
 
     $("#create-btn").addEventListener("click", handleCreateOrder);
 
-    setupTokenInfoFetch("#create-tokenA", "#tokenA-info");
-    setupTokenInfoFetch("#create-tokenB", "#tokenB-info");
+    setupTokenInfoFetch("#create-tokenA", "#tokenA-info", "#tokenA-balance", "#quick-amounts-A");
+    setupTokenInfoFetch("#create-tokenB", "#tokenB-info", null, null);
+
+    // Add token selectors with Uniswap token list
+    fetchUniswapTokenList().then(() => {
+      createTokenSelector($("#create-tokenA"));
+      createTokenSelector($("#create-tokenB"));
+    });
+
+    // Price calculator - auto-calculate wanted amount from price
+    function updatePriceCalculation() {
+      const amountAStr = $("#create-amountA").value.trim();
+      const priceStr = $("#create-price").value.trim();
+      const tokenASymbol = $("#tokenA-info").textContent.split(" ")[0] || "Token A";
+      const tokenBSymbol = $("#tokenB-info").textContent.split(" ")[0] || "Token B";
+
+      const amountA = parseFloat(amountAStr);
+      const price = parseFloat(priceStr);
+
+      if (!isNaN(amountA) && !isNaN(price) && amountA > 0 && price > 0) {
+        const amountB = amountA * price;
+        $("#create-amountB").value = amountB.toFixed(6).replace(/\.?0+$/, "");
+        $("#price-info").textContent = `1 ${tokenASymbol} = ${price} ${tokenBSymbol}`;
+        $("#amountB-info").textContent = `${amountA} x ${price} = ${amountB.toFixed(6).replace(/\.?0+$/, "")}`;
+      } else if (!isNaN(price) && price > 0) {
+        $("#price-info").textContent = `1 ${tokenASymbol} = ${price} ${tokenBSymbol}`;
+        $("#amountB-info").textContent = "";
+      } else {
+        $("#price-info").textContent = "";
+        $("#amountB-info").textContent = "";
+      }
+    }
+
+    $("#create-price").addEventListener("input", updatePriceCalculation);
+    $("#create-amountA").addEventListener("input", updatePriceCalculation);
+
+    // Clear price info when tokens change
+    $("#create-tokenA").addEventListener("input", () => {
+      $("#price-info").textContent = "";
+      $("#amountB-info").textContent = "";
+    });
+    $("#create-tokenB").addEventListener("input", () => {
+      $("#price-info").textContent = "";
+      $("#amountB-info").textContent = "";
+    });
+
+    // Sortable column headers
+    document.querySelectorAll("thead th.sortable").forEach(th => {
+      th.addEventListener("click", (e) => {
+        // Don't sort if clicking the swap icon
+        if (e.target.classList.contains("swap-icon")) return;
+        const col = th.dataset.sort;
+        if (col) {
+          handleSort(col);
+        }
+      });
+    });
 
     if (window.ethereum) {
       provider = new ethers.BrowserProvider(window.ethereum);
@@ -1081,10 +2572,15 @@
           contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
           $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
           $("#sell-btn").classList.remove("hidden");
+          $("#notify-btn").classList.remove("hidden");
+          $("#my-orders-label").classList.remove("hidden");
 
           // Subscribe to contract events for real-time updates
           contract.on("OrderFilled", (orderId, taker) => {
             console.log(`Order ${orderId} filled by ${taker}`);
+            if (taker.toLowerCase() !== userAddress.toLowerCase()) {
+              showNotification("Order Filled", `Your order #${orderId} has been filled!`, "order-" + orderId);
+            }
             loadOrders();
             loadStats();
           });
@@ -1112,7 +2608,11 @@
           contract = null;
           $("#connect-btn").textContent = "[Connect Wallet]";
           $("#sell-btn").classList.add("hidden");
+          $("#notify-btn").classList.add("hidden");
           $("#sell-modal").classList.add("hidden");
+          $("#my-orders-label").classList.add("hidden");
+          $("#filter-my-orders").checked = false;
+          currentFilters.myOrders = false;
         } else {
           connectWallet();
         }
@@ -1128,6 +2628,28 @@
     loadPopularPairs();
     loadTokenFilters();
     loadOrders();
+
+    // Start auto-refresh
+    startAutoRefresh();
+  }
+
+  /**
+   * Starts the auto-refresh interval for orders.
+   */
+  function startAutoRefresh() {
+    if (autoRefreshInterval) {
+      clearInterval(autoRefreshInterval);
+    }
+    autoRefreshInterval = setInterval(async () => {
+      const indicator = $("#refresh-indicator");
+      if (indicator) indicator.classList.add("active");
+      try {
+        await loadOrders(true);
+        await loadStats();
+      } finally {
+        if (indicator) indicator.classList.remove("active");
+      }
+    }, AUTO_REFRESH_MS);
   }
 
   if (document.readyState === "loading") {

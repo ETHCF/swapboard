@@ -117,6 +117,25 @@ a {
   padding: 2px 6px;
 }
 
+.refresh-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ccc;
+  vertical-align: middle;
+}
+
+.refresh-indicator.active {
+  background: #4caf50;
+  animation: refresh-pulse 1s ease-in-out infinite;
+}
+
+@keyframes refresh-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 .zero-stats {
   text-align: center;
   margin-bottom: 10px;
@@ -169,9 +188,18 @@ a {
   cursor: pointer;
 }
 
-#filters input[type="radio"] {
+#filters input[type="radio"],
+#filters input[type="checkbox"] {
   cursor: pointer;
   margin-left: 3px;
+}
+
+.my-orders-filter {
+  cursor: pointer;
+}
+
+.my-orders-filter.hidden {
+  display: none;
 }
 
 table {
@@ -190,6 +218,20 @@ th, td {
 th {
   background: #ecf0f1;
   font-weight: bold;
+}
+
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+th.sortable:hover {
+  background: #dde4e6;
+}
+
+.sort-indicator {
+  font-size: 10px;
+  opacity: 0.7;
 }
 
 .swap-icon {
@@ -212,6 +254,21 @@ th {
   text-decoration: underline;
 }
 
+.market-deviation {
+  font-size: 11px;
+  color: #666;
+  margin-left: 4px;
+}
+
+.market-deviation.good-deal {
+  color: #080;
+  font-weight: bold;
+}
+
+.market-deviation.bad-deal {
+  color: #c00;
+}
+
 tbody tr:hover {
   background: #f5f5f5;
 }
@@ -222,6 +279,20 @@ tbody tr.own-order {
 
 tbody tr.own-order:hover {
   background: #fff9c4;
+}
+
+tbody tr.highlighted-order {
+  background: #e3f2fd;
+  animation: highlight-pulse 2s ease-out;
+}
+
+tbody tr.highlighted-order:hover {
+  background: #bbdefb;
+}
+
+@keyframes highlight-pulse {
+  0% { background: #90caf9; }
+  100% { background: #e3f2fd; }
 }
 
 #pagination {
@@ -262,16 +333,54 @@ tbody tr.own-order:hover {
 }
 
 /* Action buttons in table */
-.buy-btn {
+.buy-btn,
+.cancel-btn {
   font-family: inherit;
   font-size: 13px;
-  color: #000;
   text-decoration: none;
   cursor: pointer;
 }
 
-.buy-btn:hover {
+.buy-btn {
+  color: #000;
+}
+
+.cancel-btn {
+  color: #c00;
+}
+
+.buy-btn:hover,
+.cancel-btn:hover {
   text-decoration: underline;
+}
+
+.copy-btn {
+  font-family: "Segoe UI Symbol", "DejaVu Sans", Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  margin-left: 4px;
+  color: #555;
+  vertical-align: middle;
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+}
+
+.copy-btn:hover {
+  color: #000;
+  background: none;
+}
+
+
+.order-age {
+  font-size: 10px;
+  color: #888;
+  display: block;
+  margin-top: 2px;
 }
 
 /* Modal */
@@ -316,6 +425,190 @@ tbody tr.own-order:hover {
   margin-bottom: 20px;
 }
 
+.order-modal-content {
+  max-width: 500px;
+}
+
+.order-modal-grid {
+  margin: 15px 0;
+}
+
+.order-modal-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.order-modal-row:last-child {
+  border-bottom: none;
+}
+
+.order-modal-label {
+  font-weight: bold;
+  color: #666;
+}
+
+.order-modal-row a {
+  color: #000;
+}
+
+.order-modal-status {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.order-modal-status.status-open {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.order-modal-status.status-filled {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.order-modal-status.status-cancelled {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.order-modal-link-input {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  width: 200px;
+  background: #f5f5f5;
+}
+
+.trade-id-link {
+  color: #000;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.token-balance {
+  display: block;
+  font-size: 12px;
+  color: #666;
+  margin-top: 4px;
+}
+
+.price-info {
+  display: block;
+  font-size: 11px;
+  color: #666;
+  margin-top: 4px;
+}
+
+.verify-link {
+  font-size: 11px;
+  color: #080;
+}
+
+.token-warning {
+  font-size: 11px;
+  color: #c00;
+  cursor: help;
+}
+
+.quick-amounts {
+  display: flex;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.quick-amt-btn {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: #000;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+.quick-amt-btn:hover {
+  background: #333;
+}
+
+.token-selector-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.token-selector-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-top: none;
+  z-index: 100;
+  max-height: 250px;
+  overflow-y: auto;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.token-selector-dropdown.hidden {
+  display: none;
+}
+
+.token-selector-title {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #666;
+  background: #f5f5f5;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.token-selector-item {
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.token-selector-item:hover,
+.token-selector-item.selected {
+  background: #e8e8e8;
+}
+
+.token-selector-empty {
+  padding: 12px 10px;
+  color: #888;
+  font-size: 12px;
+  text-align: center;
+}
+
+.token-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+}
+
+.token-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.token-symbol {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.token-name {
+  font-size: 11px;
+  color: #666;
+}
+
 .modal-content h3 {
   font-size: 16px;
   margin-bottom: 10px;
@@ -324,6 +617,12 @@ tbody tr.own-order:hover {
 .modal-content p {
   margin-bottom: 20px;
   word-break: break-all;
+}
+
+.gas-estimate {
+  font-size: 12px;
+  color: #666;
+  margin-top: 10px;
 }
 
 .modal-actions {
@@ -387,6 +686,36 @@ footer a {
 
 footer a:hover {
   text-decoration: underline;
+}
+
+/* Loading Skeleton */
+.skeleton {
+  background: linear-gradient(90deg, #e8e8e8 25%, #f5f5f5 50%, #e8e8e8 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+  border-radius: 2px;
+  display: inline-block;
+  height: 1em;
+}
+
+.skeleton-text {
+  width: 60%;
+  min-width: 40px;
+}
+
+.skeleton-short {
+  width: 40%;
+  min-width: 30px;
+}
+
+.skeleton-number {
+  width: 50%;
+  min-width: 50px;
+}
+
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 /* Responsive */

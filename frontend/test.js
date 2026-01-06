@@ -221,28 +221,28 @@ async function runTests() {
       opts.map(o => o.textContent)
     );
     test(
-      "Selling filter has token options",
+      "Offered filter has token options",
       sellingOptions.length > 1,
       `Expected multiple options, got ${sellingOptions.length}`
     );
 
     test(
-      "Selling filter includes WETH",
+      "Offered filter includes WETH",
       sellingOptions.includes("WETH"),
       `Options: ${sellingOptions.join(", ")}`
     );
 
-    // Filter by WETH as selling token - should reduce results
+    // Filter by WETH as offered token - should reduce results
     const beforeWethFilter = orderIds.length;
     await selectToken("#filter-selling", EXPECTED.tokens.weth);
     orderIds = await getOrderIds();
     test(
-      "WETH selling filter reduces results",
+      "WETH offered filter reduces results",
       orderIds.length < beforeWethFilter && orderIds.length > 0,
       `Before: ${beforeWethFilter}, After: ${orderIds.length}`
     );
 
-    // Reset selling filter
+    // Reset offered filter
     await selectToken("#filter-selling", "");
     orderIds = await getOrderIds();
 
@@ -256,7 +256,7 @@ async function runTests() {
       `Before: ${beforeUsdtFilter}, After: ${orderIds.length}`
     );
 
-    // Combined filter: WETH selling + USDT wanting - should further reduce
+    // Combined filter: WETH offered + USDT wanted - should further reduce
     const beforeCombinedFilter = orderIds.length;
     await selectToken("#filter-selling", EXPECTED.tokens.weth);
     orderIds = await getOrderIds();
@@ -274,19 +274,21 @@ async function runTests() {
     console.log("\n--- Order Data Accuracy ---");
 
     // Verify first row has valid data structure
-    // Column order: [0] Buy btn, [1] Trade ID, [2] Seller, [3] Selling Token, [4] Sell Size, [5] Wanted Token, [6] Wanted Size, [7] USD Val, [8] Price
+    // Column order: [0] Buy btn, [1] Trade ID, [2] Maker, [3] Offered Token, [4] Offered Size, [5] Wanted Token, [6] Wanted Size, [7] USD Val, [8] Price
     const firstRow = await page.$$eval("#order-table tr:first-child td", cells =>
       cells.map(c => c.textContent.trim())
     );
 
+    // Trade ID column now includes share button, extract just the number
+    const tradeIdMatch = firstRow[1].match(/^(\d+)/);
     test(
       "First order has numeric ID",
-      /^\d+$/.test(firstRow[1]),
+      tradeIdMatch !== null,
       `Expected numeric ID, got "${firstRow[1]}"`
     );
 
     test(
-      "First order has valid selling token symbol",
+      "First order has valid offered token symbol",
       firstRow[3] && firstRow[3].length > 0 && firstRow[3] !== "undefined",
       `Got "${firstRow[3]}"`
     );
