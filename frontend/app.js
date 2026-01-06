@@ -466,7 +466,13 @@
    * @param {string} [tag] - Notification tag for grouping
    */
   function showNotification(title, body, tag) {
-    if (!notificationsEnabled || Notification.permission !== "granted") {
+    console.log("showNotification called:", { title, body, notificationsEnabled, permission: Notification.permission });
+    if (!notificationsEnabled) {
+      console.log("Notifications not enabled");
+      return;
+    }
+    if (Notification.permission !== "granted") {
+      console.log("Notification permission not granted:", Notification.permission);
       return;
     }
 
@@ -484,6 +490,7 @@
       };
 
       setTimeout(() => notification.close(), 10000);
+      console.log("Notification created successfully");
     } catch (e) {
       console.error("Notification error:", e);
     }
@@ -528,18 +535,22 @@
    * Toggles notifications on/off.
    */
   async function toggleNotifications() {
+    console.log("toggleNotifications called, current state:", notificationsEnabled);
     if (notificationsEnabled) {
       notificationsEnabled = false;
       localStorage.setItem("swapboard_notifications", "false");
       showToast("Notifications disabled");
+      console.log("Notifications disabled");
       return;
     }
 
     const granted = await requestNotificationPermission();
+    console.log("Permission request result:", granted, "Notification.permission:", Notification.permission);
     if (granted) {
       notificationsEnabled = true;
       localStorage.setItem("swapboard_notifications", "true");
       showToast("Notifications enabled", "success");
+      console.log("Notifications enabled");
     }
   }
 
