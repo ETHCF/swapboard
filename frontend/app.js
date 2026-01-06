@@ -2367,9 +2367,11 @@
 
   function updateNetworkIndicator(chainId) {
     const name = NETWORK_NAMES[chainId] || "Chain " + chainId;
-    const indicator = $("#network-indicator");
-    indicator.textContent = "[" + name + "]";
-    indicator.classList.remove("hidden");
+    const indicator = document.getElementById("network-indicator");
+    if (indicator) {
+      indicator.textContent = "[" + name + "]";
+      indicator.classList.remove("hidden");
+    }
   }
 
   /**
