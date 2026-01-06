@@ -26,10 +26,10 @@
    * @constant {Object}
    */
   const CONFIG = {
-    // Contract address on Ethereum mainnet - MUST be updated after deployment
-    CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000",
-    // The Graph subgraph endpoint - MUST be updated after deployment
-    SUBGRAPH_URL: "https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest",
+    // Contract address on Sepolia testnet
+    CONTRACT_ADDRESS: "0xBe3D7A555aa633263110d10d37AB40Ef3a2b8BBa",
+    // Goldsky subgraph endpoint (Sepolia)
+    SUBGRAPH_URL: "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/1.0.0/gn",
     // Number of orders per page
     PAGE_SIZE: 20,
     // Request timeout in milliseconds
@@ -1974,6 +1974,8 @@
       // Column 3: Offered Token (link to CoinGecko + copy)
       const tdTokenA = document.createElement("td");
       tdTokenA.dataset.label = "Offered";
+      const tokenAWrap = document.createElement("span");
+      tokenAWrap.style.whiteSpace = "nowrap";
       const tokenAId = COINGECKO_ID_MAP[order.tokenA.address.toLowerCase()];
       if (tokenAId) {
         const tokenALink = document.createElement("a");
@@ -1981,13 +1983,14 @@
         tokenALink.target = "_blank";
         tokenALink.rel = "noopener noreferrer";
         tokenALink.textContent = order.tokenA.symbol;
-        tdTokenA.appendChild(tokenALink);
+        tokenAWrap.appendChild(tokenALink);
       } else {
         const tokenASpan = document.createElement("span");
         tokenASpan.textContent = order.tokenA.symbol;
-        tdTokenA.appendChild(tokenASpan);
+        tokenAWrap.appendChild(tokenASpan);
       }
-      tdTokenA.appendChild(createCopyButton(order.tokenA.address));
+      tokenAWrap.appendChild(createCopyButton(order.tokenA.address));
+      tdTokenA.appendChild(tokenAWrap);
       tdTokenA.title = order.tokenA.address;
       tr.appendChild(tdTokenA);
 
@@ -2000,6 +2003,8 @@
       // Column 5: Wanted Token (link to CoinGecko + copy)
       const tdTokenB = document.createElement("td");
       tdTokenB.dataset.label = "Wanted";
+      const tokenBWrap = document.createElement("span");
+      tokenBWrap.style.whiteSpace = "nowrap";
       const tokenBId = COINGECKO_ID_MAP[order.tokenB.address.toLowerCase()];
       if (tokenBId) {
         const tokenBLink = document.createElement("a");
@@ -2007,13 +2012,14 @@
         tokenBLink.target = "_blank";
         tokenBLink.rel = "noopener noreferrer";
         tokenBLink.textContent = order.tokenB.symbol;
-        tdTokenB.appendChild(tokenBLink);
+        tokenBWrap.appendChild(tokenBLink);
       } else {
         const tokenBSpan = document.createElement("span");
         tokenBSpan.textContent = order.tokenB.symbol;
-        tdTokenB.appendChild(tokenBSpan);
+        tokenBWrap.appendChild(tokenBSpan);
       }
-      tdTokenB.appendChild(createCopyButton(order.tokenB.address));
+      tokenBWrap.appendChild(createCopyButton(order.tokenB.address));
+      tdTokenB.appendChild(tokenBWrap);
       tdTokenB.title = order.tokenB.address;
       tr.appendChild(tdTokenB);
 

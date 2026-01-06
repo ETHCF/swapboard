@@ -6,9 +6,7 @@ import {Swapboard} from "../src/Swapboard.sol";
 
 contract Deploy is Script {
     function run() external returns (Swapboard board) {
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-
-        vm.startBroadcast(deployerPrivateKey);
+        vm.startBroadcast();
 
         board = new Swapboard();
 

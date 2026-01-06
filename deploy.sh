@@ -48,7 +48,7 @@ log "Deployment target: $NETWORK"
 if [[ "$SKIP_CONTRACT" != "true" ]]; then
     log "Step 1: Deploying contract..."
 
-    check_env "PRIVATE_KEY"
+    # Private key loaded from Foundry keystore via --account flag
 
     if [[ "$NETWORK" == "mainnet" ]]; then
         check_env "MAINNET_RPC_URL"
@@ -65,6 +65,7 @@ if [[ "$SKIP_CONTRACT" != "true" ]]; then
     # Deploy and capture output
     DEPLOY_OUTPUT=$(forge script script/Deploy.s.sol \
         --rpc-url "$RPC_URL" \
+        --account deployer \
         --broadcast \
         --verify 2>&1) || {
         echo "$DEPLOY_OUTPUT"
