@@ -2917,10 +2917,12 @@
     });
 
     $("#notify-btn").addEventListener("click", async (e) => {
+      console.log("Notify button clicked");
       e.preventDefault();
       await toggleNotifications();
       $("#notify-btn").textContent = notificationsEnabled ? "[Notify: On]" : "[Notify: Off]";
     });
+    console.log("Notify button event listener attached");
 
     $("#sell-btn").addEventListener("click", (e) => {
       e.preventDefault();
