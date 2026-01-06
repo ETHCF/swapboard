@@ -90,7 +90,7 @@ button:disabled {
 }
 
 a {
-  color: #000;
+  color: #0000EE;
 }
 
 .tagline {
@@ -113,7 +113,7 @@ a {
 }
 
 .stat-label {
-  background: #c0c0c0;
+  background: #d9d9d9;
   padding: 2px 6px;
 }
 
@@ -432,7 +432,7 @@ tbody tr.highlighted-order:hover {
 }
 
 .order-modal-row a {
-  color: #000;
+  color: #0000EE;
 }
 
 .order-modal-status {
@@ -662,7 +662,7 @@ footer {
 }
 
 footer a {
-  color: #000;
+  color: #0000EE;
   text-decoration: none;
 }
 
