@@ -2406,6 +2406,7 @@
 
       contract.on("OrderCanceled", (orderId) => {
         console.log(`Order ${orderId} canceled`);
+        showToast(`Order #${orderId} canceled`, "info");
         loadOrders();
         loadStats();
       });
@@ -2860,6 +2861,7 @@
 
           contract.on("OrderCanceled", (orderId) => {
             console.log(`Order ${orderId} canceled`);
+            showToast(`Order #${orderId} canceled`, "info");
             loadOrders();
             loadStats();
           });
