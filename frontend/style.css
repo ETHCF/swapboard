@@ -389,7 +389,7 @@ tbody tr.highlighted-order:hover {
 }
 
 .sell-modal-content {
-  max-width: 800px;
+  max-width: 900px;
 }
 
 .sell-modal-content .form-row {
@@ -397,7 +397,8 @@ tbody tr.highlighted-order:hover {
 }
 
 .sell-modal-content .form-row input {
-  width: 100%;
+  width: 46ch;
+  min-width: 46ch;
 }
 
 .sell-modal-content .warning {
