@@ -16,8 +16,11 @@ body {
 }
 
 header {
-  position: relative;
-  text-align: center;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-bottom: 15px;
   padding-bottom: 15px;
   border-bottom: 1px solid #000;
@@ -26,7 +29,6 @@ header {
 h1 {
   font-size: 24px;
   font-weight: bold;
-  display: inline-block;
 }
 
 .header-box {
@@ -37,13 +39,10 @@ h1 {
 }
 
 .header-right {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
   display: flex;
   gap: 15px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 #connect-btn,
@@ -707,10 +706,8 @@ footer a:hover {
   }
 
   .header-right {
-    position: static;
-    transform: none;
-    margin-top: 10px;
     justify-content: center;
+    width: 100%;
   }
 
   .tagline {
