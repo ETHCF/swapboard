@@ -1100,13 +1100,29 @@
     return BigInt(intPart + decPart);
   }
 
-  function showToast(msg, type = "info") {
+  let toastTimeout = null;
+  function showToast(msg, type = "info", persistent = false) {
     const toast = $("#toast");
     toast.textContent = msg;
     toast.className = "toast " + type;
-    setTimeout(() => {
-      toast.className = "toast hidden";
-    }, 5000);
+    if (toastTimeout) {
+      clearTimeout(toastTimeout);
+      toastTimeout = null;
+    }
+    if (!persistent) {
+      toastTimeout = setTimeout(() => {
+        toast.className = "toast hidden";
+      }, 5000);
+    }
+  }
+
+  function hideToast() {
+    const toast = $("#toast");
+    toast.className = "toast hidden";
+    if (toastTimeout) {
+      clearTimeout(toastTimeout);
+      toastTimeout = null;
+    }
   }
 
   /**
@@ -2130,21 +2146,23 @@
             || window.location.protocol === "file:";
 
           if (!isLocal) {
-            showToast("Checking allowance...");
+            showToast("Checking allowance...", "info", true);
             const tokenContract = new ethers.Contract(order.tokenB.address, ERC20_ABI, signer);
             const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
             const amountB = BigInt(order.amountB);
 
             if (allowance < amountB) {
-              showToast("Approving tokens...");
+              showToast("Approve tokens in wallet...", "info", true);
               const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountB);
+              showToast("Waiting for approval tx...", "info", true);
               await approveTx.wait();
               showToast("Approval confirmed");
             }
           }
 
-          showToast("Filling order...");
+          showToast("Confirm fill in wallet...", "info", true);
           const tx = await contract.fillOrder(order.orderId);
+          showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
           showToast("Order filled!", "success");
           loadOrders();
@@ -2244,19 +2262,21 @@
         `Sell ${amountAStr} ${tokenA.symbol} for ${amountBStr} ${tokenB.symbol}`,
         async () => {
           try {
-            showToast("Checking allowance...");
+            showToast("Checking allowance...", "info", true);
             const tokenContract = new ethers.Contract(tokenAAddr, ERC20_ABI, signer);
             const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
 
             if (allowance < amountA) {
-              showToast("Approving tokens...");
+              showToast("Approve tokens in wallet...", "info", true);
               const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountA);
+              showToast("Waiting for approval tx...", "info", true);
               await approveTx.wait();
               showToast("Approval confirmed");
             }
 
-            showToast("Creating order...");
+            showToast("Confirm order in wallet...", "info", true);
             const tx = await contract.createOrder(tokenAAddr, amountA, tokenBAddr, amountB);
+            showToast("Waiting for tx confirmation...", "info", true);
             await tx.wait();
             showToast("Order created!", "success");
 
