@@ -36,6 +36,8 @@
     REQUEST_TIMEOUT: 30000,
     // Debounce delay for token info fetch
     DEBOUNCE_DELAY: 500,
+    // Show market deviation percentage (vs CoinGecko prices)
+    SHOW_MARKET_DEVIATION: false,
   };
 
   const EXPECTED_CHAIN_ID = 11155111;
@@ -1563,19 +1565,23 @@
     // Market rate comparison
     const marketRow = $("#order-modal-market-row");
     const marketEl = $("#order-modal-market");
-    const marketDev = calculateMarketDeviation(order);
-    if (marketDev) {
-      marketRow.style.display = "flex";
-      marketEl.innerHTML = "";
-      const devSpan = document.createElement("span");
-      devSpan.className = "market-deviation";
-      if (marketDev.deviation < -1) {
-        devSpan.classList.add("good-deal");
-      } else if (marketDev.deviation > 5) {
-        devSpan.classList.add("bad-deal");
+    if (CONFIG.SHOW_MARKET_DEVIATION) {
+      const marketDev = calculateMarketDeviation(order);
+      if (marketDev) {
+        marketRow.style.display = "flex";
+        marketEl.innerHTML = "";
+        const devSpan = document.createElement("span");
+        devSpan.className = "market-deviation";
+        if (marketDev.deviation < -1) {
+          devSpan.classList.add("good-deal");
+        } else if (marketDev.deviation > 5) {
+          devSpan.classList.add("bad-deal");
+        }
+        devSpan.textContent = marketDev.label;
+        marketEl.appendChild(devSpan);
+      } else {
+        marketRow.style.display = "none";
       }
-      devSpan.textContent = marketDev.label;
-      marketEl.appendChild(devSpan);
     } else {
       marketRow.style.display = "none";
     }
@@ -2201,18 +2207,20 @@
       tdPrice.appendChild(priceSpan);
 
       // Add market deviation indicator
-      const marketDev = calculateMarketDeviation(order);
-      if (marketDev) {
-        const devSpan = document.createElement("span");
-        devSpan.className = "market-deviation";
-        if (marketDev.deviation < -1) {
-          devSpan.classList.add("good-deal");
-        } else if (marketDev.deviation > 5) {
-          devSpan.classList.add("bad-deal");
+      if (CONFIG.SHOW_MARKET_DEVIATION) {
+        const marketDev = calculateMarketDeviation(order);
+        if (marketDev) {
+          const devSpan = document.createElement("span");
+          devSpan.className = "market-deviation";
+          if (marketDev.deviation < -1) {
+            devSpan.classList.add("good-deal");
+          } else if (marketDev.deviation > 5) {
+            devSpan.classList.add("bad-deal");
+          }
+          devSpan.textContent = " " + marketDev.label;
+          devSpan.title = "Compared to market rate";
+          tdPrice.appendChild(devSpan);
         }
-        devSpan.textContent = " " + marketDev.label;
-        devSpan.title = "Compared to market rate";
-        tdPrice.appendChild(devSpan);
       }
 
       if (priceNormal !== "N/A") {
