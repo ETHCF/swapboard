@@ -556,7 +556,7 @@
 
     window.ethereum = {
       isMetaMask: true,
-      chainId: "0x1",
+      chainId: "0xaa36a7", // Sepolia
       selectedAddress: null,
 
       request: async function ({ method, params }) {
@@ -572,7 +572,7 @@
             return connected ? [mockAddress] : [];
 
           case "eth_chainId":
-            return "0x1";
+            return "0xaa36a7"; // Sepolia
 
           case "wallet_switchEthereumChain":
             return null;
@@ -614,6 +614,10 @@
           case "eth_gasPrice":
             return "0x3b9aca00";
 
+          case "eth_getBalance":
+            // Return 1 ETH
+            return "0x" + BigInt(1000000000000000000n).toString(16).padStart(64, "0");
+
           case "eth_getTransactionReceipt":
             return {
               status: "0x1",
@@ -626,7 +630,7 @@
             return "0x" + Math.floor(Date.now() / 12000).toString(16);
 
           case "net_version":
-            return "1";
+            return "11155111"; // Sepolia
 
           default:
             console.warn("[Mock Wallet] Unhandled:", method);

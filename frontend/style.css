@@ -65,6 +65,51 @@ h1 {
   display: none;
 }
 
+.wallet-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.wallet-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: #fff;
+  border: 1px solid #000;
+  min-width: 180px;
+  z-index: 1000;
+  margin-top: 4px;
+}
+
+.wallet-menu.hidden {
+  display: none;
+}
+
+.wallet-menu a {
+  display: block;
+  padding: 8px 12px;
+  color: #000;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.wallet-menu a:hover {
+  background: #f0f0f0;
+}
+
+.wallet-menu-header {
+  padding: 8px 12px;
+  font-weight: bold;
+  border-bottom: 1px solid #ccc;
+  background: #f8f8f8;
+  font-size: 13px;
+}
+
+.wallet-menu-divider {
+  border-top: 1px solid #ccc;
+  margin: 4px 0;
+}
+
 h2 {
   font-size: 16px;
   font-weight: bold;

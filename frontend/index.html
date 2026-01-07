@@ -35,7 +35,24 @@
     <span id="network-indicator" class="hidden"></span>
     <a href="#" id="notify-btn" class="hidden" title="Toggle notifications">[Notify: Off]</a>
     <a href="#" id="sell-btn" class="hidden">[Sell Tokens]</a>
-    <a href="#" id="connect-btn">[Connect Wallet]</a>
+    <div class="wallet-dropdown">
+      <a href="#" id="connect-btn">[Connect Wallet]</a>
+      <div id="wallet-menu" class="wallet-menu hidden">
+        <div class="wallet-menu-header">
+          <span id="wallet-balance">-- ETH</span>
+        </div>
+        <a href="#" id="wallet-copy">Copy Address</a>
+        <a href="#" id="wallet-etherscan" target="_blank" rel="noopener">View on Etherscan</a>
+        <div class="wallet-menu-divider"></div>
+        <a href="#" id="wallet-open-orders">My Open Orders</a>
+        <a href="#" id="wallet-filled-orders">My Filled Orders</a>
+        <a href="#" id="wallet-cancelled-orders">My Cancelled Orders</a>
+        <a href="#" id="wallet-export">Export My Orders</a>
+        <div class="wallet-menu-divider"></div>
+        <a href="#" id="wallet-switch">Switch Wallet</a>
+        <a href="#" id="wallet-disconnect">Disconnect</a>
+      </div>
+    </div>
   </div>
 </header>
 

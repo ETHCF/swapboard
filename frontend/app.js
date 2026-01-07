@@ -2592,6 +2592,7 @@
       $("#sell-btn").classList.remove("hidden");
       $("#notify-btn").classList.remove("hidden");
       $("#my-orders-label").classList.remove("hidden");
+      updateWalletMenu();
 
       // Subscribe to contract events for real-time updates
       contract.on("OrderFilled", (orderId, taker) => {
@@ -2626,6 +2627,80 @@
     } catch (e) {
       console.error("Connect error:", e);
       showToast("Connection failed: " + e.message, "error");
+    }
+  }
+
+  function disconnectWallet() {
+    userAddress = null;
+    signer = null;
+    contract = null;
+    $("#connect-btn").textContent = "[Connect Wallet]";
+    $("#sell-btn").classList.add("hidden");
+    $("#notify-btn").classList.add("hidden");
+    $("#network-indicator").classList.add("hidden");
+    $("#my-orders-label").classList.add("hidden");
+    $("#filter-my-orders").checked = false;
+    currentFilters.myOrders = false;
+    loadOrders();
+  }
+
+  function updateWalletMenu() {
+    if (!userAddress) return;
+    const etherscanBase = EXPECTED_CHAIN.blockExplorerUrls[0];
+    $("#wallet-etherscan").href = etherscanBase + "/address/" + userAddress;
+    provider.getBalance(userAddress).then(bal => {
+      const eth = ethers.formatEther(bal);
+      $("#wallet-balance").textContent = parseFloat(eth).toFixed(4) + " ETH";
+    }).catch(() => {});
+  }
+
+  function applyWalletFilter(status) {
+    document.querySelector(`input[name="status"][value="${status}"]`).checked = true;
+    currentFilters.status = status;
+    $("#filter-my-orders").checked = true;
+    currentFilters.myOrders = true;
+    currentPage = 1;
+    loadOrders();
+    $("#wallet-menu").classList.add("hidden");
+  }
+
+  async function exportMyOrders() {
+    const query = `{
+      orders(
+        where: { maker: "${userAddress.toLowerCase()}" }
+        orderBy: orderId
+        orderDirection: desc
+        first: 1000
+      ) {
+        orderId tokenA tokenASymbol amountA tokenB tokenBSymbol amountB
+        active createdAt filledAt cancelledAt taker
+      }
+    }`;
+    const data = await querySubgraph(query, {}, true);
+    if (!data || !data.orders) {
+      showToast("Failed to export orders", "error");
+      return;
+    }
+    const headers = ["Trade ID","Status","Offered Token","Offered Amount","Wanted Token","Wanted Amount","Created","Closed","Taker"];
+    const rows = data.orders.map(o => {
+      const status = o.active ? "Open" : (o.filledAt ? "Filled" : "Cancelled");
+      return [o.orderId, status, o.tokenASymbol||o.tokenA, o.amountA, o.tokenBSymbol||o.tokenB, o.amountB, o.createdAt, o.filledAt||o.cancelledAt||"", o.taker||""];
+    });
+    const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
+    downloadCSV(csv, `swapboard-orders-${userAddress.slice(0,8)}.csv`);
+    showToast("Orders exported", "success");
+  }
+
+  async function switchWallet() {
+    try {
+      await window.ethereum.request({
+        method: "wallet_requestPermissions",
+        params: [{ eth_accounts: {} }]
+      });
+    } catch (err) {
+      if (err.code !== 4001) {
+        showToast("Failed to switch wallet", "error");
+      }
     }
   }
 
@@ -2926,7 +3001,71 @@
 
     $("#connect-btn").addEventListener("click", (e) => {
       e.preventDefault();
-      connectWallet();
+      e.stopPropagation();
+      if (userAddress) {
+        $("#wallet-menu").classList.toggle("hidden");
+      } else {
+        connectWallet();
+      }
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".wallet-dropdown")) {
+        $("#wallet-menu").classList.add("hidden");
+      }
+    });
+
+    $("#wallet-copy").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigator.clipboard.writeText(userAddress).then(() => {
+        showToast("Address copied", "success");
+      });
+      $("#wallet-menu").classList.add("hidden");
+    });
+
+    $("#wallet-disconnect").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      disconnectWallet();
+      $("#wallet-menu").classList.add("hidden");
+    });
+
+    $("#wallet-open-orders").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      applyWalletFilter("open");
+    });
+
+    $("#wallet-filled-orders").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      applyWalletFilter("filled");
+    });
+
+    $("#wallet-cancelled-orders").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      applyWalletFilter("cancelled");
+    });
+
+    $("#wallet-export").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      exportMyOrders();
+      $("#wallet-menu").classList.add("hidden");
+    });
+
+    $("#wallet-switch").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      $("#wallet-menu").classList.add("hidden");
+      switchWallet();
+    });
+
+    $("#wallet-etherscan").addEventListener("click", (e) => {
+      e.stopPropagation();
+      $("#wallet-menu").classList.add("hidden");
     });
 
     $("#notify-btn").addEventListener("click", async (e) => {
@@ -3167,38 +3306,18 @@
 
       window.ethereum.on("accountsChanged", (accounts) => {
         if (accounts.length === 0) {
-          userAddress = null;
-          signer = null;
-          contract = null;
-          $("#connect-btn").textContent = "[Connect Wallet]";
-          $("#sell-btn").classList.add("hidden");
-          $("#notify-btn").classList.add("hidden");
-          $("#network-indicator").classList.add("hidden");
+          disconnectWallet();
           $("#sell-modal").classList.add("hidden");
-          $("#my-orders-label").classList.add("hidden");
-          $("#filter-my-orders").checked = false;
-          currentFilters.myOrders = false;
         } else {
           connectWallet();
         }
-        loadOrders();
       });
 
       window.ethereum.on("chainChanged", (chainIdHex) => {
         const chainId = parseInt(chainIdHex, 16);
         if (chainId !== EXPECTED_CHAIN_ID) {
           showToast("Please switch to Sepolia network", "error");
-          userAddress = null;
-          signer = null;
-          contract = null;
-          $("#connect-btn").textContent = "[Connect Wallet]";
-          $("#sell-btn").classList.add("hidden");
-          $("#notify-btn").classList.add("hidden");
-          document.getElementById("network-indicator").classList.add("hidden");
-          $("#my-orders-label").classList.add("hidden");
-          $("#filter-my-orders").checked = false;
-          currentFilters.myOrders = false;
-          loadOrders();
+          disconnectWallet();
         } else {
           window.location.reload();
         }
