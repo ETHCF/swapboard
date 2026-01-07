@@ -16,6 +16,7 @@
 
 (function () {
   "use strict";
+  console.log("[Swapboard] v2 - wallet dropdown");
 
   // ============================================================================
   // Configuration
