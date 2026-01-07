@@ -2672,8 +2672,15 @@
         orderDirection: desc
         first: 1000
       ) {
-        orderId tokenA tokenASymbol amountA tokenB tokenBSymbol amountB
-        active createdAt filledAt cancelledAt taker
+        orderId
+        maker
+        amountA
+        amountB
+        active
+        taker
+        createdAt
+        tokenA { address symbol decimals }
+        tokenB { address symbol decimals }
       }
     }`;
     const data = await querySubgraph(query, {}, true);
@@ -2681,10 +2688,12 @@
       showToast("Failed to export orders", "error");
       return;
     }
-    const headers = ["Trade ID","Status","Offered Token","Offered Amount","Wanted Token","Wanted Amount","Created","Closed","Taker"];
+    const headers = ["Trade ID","Status","Offered Token","Offered Amount","Wanted Token","Wanted Amount","Created","Taker"];
     const rows = data.orders.map(o => {
-      const status = o.active ? "Open" : (o.filledAt ? "Filled" : "Cancelled");
-      return [o.orderId, status, o.tokenASymbol||o.tokenA, o.amountA, o.tokenBSymbol||o.tokenB, o.amountB, o.createdAt, o.filledAt||o.cancelledAt||"", o.taker||""];
+      const status = o.active ? "Open" : (o.taker ? "Filled" : "Cancelled");
+      const amtA = o.tokenA.decimals ? (parseFloat(o.amountA) / Math.pow(10, o.tokenA.decimals)).toString() : o.amountA;
+      const amtB = o.tokenB.decimals ? (parseFloat(o.amountB) / Math.pow(10, o.tokenB.decimals)).toString() : o.amountB;
+      return [o.orderId, status, o.tokenA.symbol, amtA, o.tokenB.symbol, amtB, o.createdAt, o.taker || ""];
     });
     const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
     downloadCSV(csv, `swapboard-orders-${userAddress.slice(0,8)}.csv`);
@@ -2692,12 +2701,16 @@
   }
 
   async function switchWallet() {
+    console.log("switchWallet called");
     try {
+      console.log("Requesting wallet_requestPermissions");
       await window.ethereum.request({
         method: "wallet_requestPermissions",
         params: [{ eth_accounts: {} }]
       });
+      console.log("wallet_requestPermissions completed");
     } catch (err) {
+      console.log("switchWallet error:", err);
       if (err.code !== 4001) {
         showToast("Failed to switch wallet", "error");
       }
