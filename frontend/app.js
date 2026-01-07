@@ -3002,8 +3002,13 @@
     $("#connect-btn").addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      console.log("connect-btn clicked, userAddress:", userAddress);
       if (userAddress) {
-        $("#wallet-menu").classList.toggle("hidden");
+        const menu = $("#wallet-menu");
+        console.log("menu element:", menu);
+        console.log("menu classList before:", menu.classList.toString());
+        menu.classList.toggle("hidden");
+        console.log("menu classList after:", menu.classList.toString());
       } else {
         connectWallet();
       }
