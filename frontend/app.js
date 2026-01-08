@@ -2705,9 +2705,24 @@
     showToast("Exported " + data.orders.length + " orders", "success");
   }
 
-  function switchWallet() {
-    disconnectWallet();
-    showToast("Disconnected. Click Connect to switch wallet.", "info");
+  async function switchWallet() {
+    try {
+      // Revoke permissions to force account picker on reconnect
+      await window.ethereum.request({
+        method: "wallet_revokePermissions",
+        params: [{ eth_accounts: {} }]
+      });
+    } catch (err) {
+      // wallet_revokePermissions may not be supported in all wallets
+    }
+
+    // Clear local state
+    userAddress = null;
+    signer = null;
+    contract = null;
+
+    // Immediately reconnect - should show account picker
+    await connectWallet();
   }
 
   function setupTokenInfoFetch(inputId, infoId, balanceId, quickAmountsId) {
