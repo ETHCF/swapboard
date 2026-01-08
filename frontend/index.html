@@ -260,22 +260,40 @@
 <div id="toast" class="toast hidden"></div>
 
 <footer>
-  <div class="footer-links">
-    <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">[GitHub]</a>
-    <a href="API.html">[API Docs]</a>
-  </div>
-  <div class="build-info">
-    <a href="https://github.com/ethcf/swapboard/commit/__COMMIT_FULL__" target="_blank" rel="noopener noreferrer" title="View commit on GitHub">Build: __COMMIT_HASH__</a>
-    <span class="hash-toggle" id="hash-toggle" title="Show file hashes for verification">[Verify]</span>
-  </div>
-  <div class="file-hashes hidden" id="file-hashes">
-    <div class="hash-row"><span class="hash-file">index.html</span><code class="hash-value">__HASH_HTML__</code></div>
-    <div class="hash-row"><span class="hash-file">app.js</span><code class="hash-value">__HASH_APPJS__</code></div>
-    <div class="hash-row"><span class="hash-file">style.css</span><code class="hash-value">__HASH_CSS__</code></div>
-    <div class="hash-row"><span class="hash-file">mock.js</span><code class="hash-value">__HASH_MOCK__</code></div>
-    <div class="hash-help">Verify with: <code>curl -s URL | sha256sum</code></div>
-  </div>
+  <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">[GitHub]</a>
+  <a href="API.html">[API Docs]</a>
+  <a href="https://github.com/ethcf/swapboard/commit/__COMMIT_FULL__" target="_blank" rel="noopener noreferrer" title="View commit on GitHub">[Build: __COMMIT_HASH__]</a>
+  <a href="#" id="hash-toggle" title="Verify build integrity">[Verify]</a>
 </footer>
+
+<div id="verify-modal" class="modal hidden">
+  <div class="modal-content verify-modal-content">
+    <h3>Build Verification</h3>
+    <p class="verify-intro">Verify that deployed files match the source code on GitHub.</p>
+    <div class="verify-grid">
+      <div class="verify-row">
+        <span class="verify-file">index.html</span>
+        <code class="verify-hash">__HASH_HTML__</code>
+      </div>
+      <div class="verify-row">
+        <span class="verify-file">app.js</span>
+        <code class="verify-hash">__HASH_APPJS__</code>
+      </div>
+      <div class="verify-row">
+        <span class="verify-file">style.css</span>
+        <code class="verify-hash">__HASH_CSS__</code>
+      </div>
+      <div class="verify-row">
+        <span class="verify-file">mock.js</span>
+        <code class="verify-hash">__HASH_MOCK__</code>
+      </div>
+    </div>
+    <p class="verify-help">To verify: <code>curl -s [URL] | sha256sum</code></p>
+    <div class="modal-actions">
+      <button id="verify-modal-close">Close</button>
+    </div>
+  </div>
+</div>
 
 <script src="mock.js"></script>
 <script src="app.js"></script>
