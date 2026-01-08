@@ -3096,6 +3096,11 @@
       toggleTheme();
     });
 
+    $("#hash-toggle").addEventListener("click", (e) => {
+      e.preventDefault();
+      $("#file-hashes").classList.toggle("hidden");
+    });
+
     $("#connect-btn").addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
