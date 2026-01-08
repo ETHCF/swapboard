@@ -1194,7 +1194,7 @@
         case "BalanceMismatch":
           return "Token balance mismatch during transfer";
         default:
-          return decoded.name;
+          return "Transaction rejected by contract";
       }
     } catch {
       return null;
@@ -1235,7 +1235,23 @@
     if (msg.includes("gas") && msg.includes("estimation")) {
       return "Transaction would fail. Check order status and try again.";
     }
-    return e.reason || e.shortMessage || e.message || "Unknown error";
+    if (msg.includes("network") || msg.includes("disconnected")) {
+      return "Network error. Check your connection.";
+    }
+    if (msg.includes("timeout")) {
+      return "Request timed out. Please try again.";
+    }
+    if (msg.includes("replacement") && msg.includes("underpriced")) {
+      return "Gas price too low. Try again with higher gas.";
+    }
+    if (msg.includes("execution reverted")) {
+      return "Transaction failed. The order may no longer be available.";
+    }
+    // Avoid showing raw technical messages - use short message if available
+    if (e.shortMessage && e.shortMessage.length < 100) {
+      return e.shortMessage;
+    }
+    return "Transaction failed. Please try again.";
   }
 
   /**
