@@ -84,6 +84,19 @@
     return;
   }
 
+  // Show mock mode banner
+  document.addEventListener("DOMContentLoaded", function() {
+    const banner = document.createElement("div");
+    banner.id = "mock-banner";
+    banner.style.cssText = "position:fixed;top:0;left:0;right:0;background:#ff6600;color:#fff;padding:8px 15px;font-size:13px;font-weight:bold;z-index:9999;display:flex;justify-content:space-between;align-items:center;font-family:monospace;";
+    banner.innerHTML = 'MOCK MODE ACTIVE - Data is simulated <button id="mock-disable" style="background:#fff;color:#ff6600;border:none;padding:4px 10px;cursor:pointer;font-weight:bold;font-family:inherit;">Disable</button>';
+    document.body.prepend(banner);
+    document.getElementById("mock-disable").addEventListener("click", function() {
+      localStorage.removeItem("swapboard_mock");
+      window.location.reload();
+    });
+  });
+
   // ============================================================================
   // Configuration
   // ============================================================================

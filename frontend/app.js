@@ -507,13 +507,10 @@
    * @param {string} [tag] - Notification tag for grouping
    */
   function showNotification(title, body, tag) {
-    console.log("showNotification called:", { title, body, notificationsEnabled, permission: Notification.permission });
     if (!notificationsEnabled) {
-      console.log("Notifications not enabled");
       return;
     }
     if (Notification.permission !== "granted") {
-      console.log("Notification permission not granted:", Notification.permission);
       return;
     }
 
@@ -529,7 +526,6 @@
       };
 
       setTimeout(() => notification.close(), 10000);
-      console.log("Notification created successfully");
     } catch (e) {
       console.error("Notification error:", e);
     }
@@ -574,22 +570,18 @@
    * Toggles notifications on/off.
    */
   async function toggleNotifications() {
-    console.log("toggleNotifications called, current state:", notificationsEnabled);
     if (notificationsEnabled) {
       notificationsEnabled = false;
       localStorage.setItem("swapboard_notifications", "false");
       showToast("Notifications disabled");
-      console.log("Notifications disabled");
       return;
     }
 
     const granted = await requestNotificationPermission();
-    console.log("Permission request result:", granted, "Notification.permission:", Notification.permission);
     if (granted) {
       notificationsEnabled = true;
       localStorage.setItem("swapboard_notifications", "true");
       showToast("Notifications enabled", "success");
-      console.log("Notifications enabled");
     }
   }
 
@@ -615,8 +607,6 @@
           decimals: t.decimals,
           logoURI: t.logoURI
         }));
-
-      console.log(`Loaded ${uniswapTokens.length} tokens from Uniswap list`);
     } catch (e) {
       console.error("Failed to fetch Uniswap token list:", e);
     }
@@ -2373,10 +2363,8 @@
           const tx = await contract.fillOrder(order.orderId);
           showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
-          console.log("Fill tx confirmed, waiting for subgraph...");
           showToast("Order filled! Syncing...", "success", true);
-          const indexed = await waitForOrderUpdate(order.orderId, false);
-          console.log("Subgraph sync complete:", indexed);
+          await waitForOrderUpdate(order.orderId, false);
           loadOrders();
           loadStats();
           showToast("Order filled!", "success");
@@ -2529,13 +2517,8 @@
               .find(parsed => parsed && parsed.name === "OrderCreated");
             if (orderCreatedEvent) {
               const newOrderId = orderCreatedEvent.args.orderId.toString();
-              console.log("Order created with ID:", newOrderId);
-              const indexed = await waitForOrderUpdate(newOrderId, true, 15, 2000);
-              if (!indexed) {
-                console.log("Subgraph indexing timeout for order", newOrderId);
-              }
+              await waitForOrderUpdate(newOrderId, true, 15, 2000);
             } else {
-              console.log("Could not parse OrderCreated event, waiting...");
               // Fallback: wait a bit for indexing
               await new Promise(resolve => setTimeout(resolve, 5000));
             }
@@ -2651,28 +2634,20 @@
 
       // Subscribe to contract events for real-time updates
       contract.on("OrderFilled", (orderId, taker) => {
-        console.log(`Order ${orderId} filled by ${taker}`);
-        console.log(`Current user: ${userAddress}, taker: ${taker}`);
-        console.log(`Should notify: ${taker.toLowerCase() !== userAddress.toLowerCase()}`);
-        // Notify if user's order was filled by someone else
         if (taker.toLowerCase() !== userAddress.toLowerCase()) {
-          console.log("Calling showNotification for filled order");
           showNotification("Order Filled", `Your order #${orderId} has been filled!`, "order-" + orderId);
         }
         loadOrders();
         loadStats();
       });
-      console.log("OrderFilled event listener attached");
 
       contract.on("OrderCanceled", (orderId) => {
-        console.log(`Order ${orderId} canceled`);
         showToast(`Order #${orderId} canceled`, "info");
         loadOrders();
         loadStats();
       });
 
       contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
-        console.log(`Order ${orderId} created by ${maker}`);
         loadOrders();
         loadStats();
       });
@@ -3051,7 +3026,6 @@
   }
 
   function initApp() {
-    console.log("initApp started");
     validateConfig();
 
     // Initialize dark mode from localStorage or system preference
@@ -3150,7 +3124,6 @@
       }
     });
 
-    console.log("About to add hashchange listener");
     // Handle hash changes
     window.addEventListener("hashchange", () => {
       const newOrderId = getOrderIdFromHash();
@@ -3172,7 +3145,6 @@
       }
     });
 
-    console.log("About to load notification preferences");
     // Load notification preference from localStorage
     if (localStorage.getItem("swapboard_notifications") === "true" && Notification.permission === "granted") {
       notificationsEnabled = true;
@@ -3297,12 +3269,10 @@
     });
 
     $("#notify-btn").addEventListener("click", async (e) => {
-      console.log("Notify button clicked");
       e.preventDefault();
       await toggleNotifications();
       $("#notify-btn").textContent = notificationsEnabled ? "[Notify: On]" : "[Notify: Off]";
     });
-    console.log("Notify button event listener attached");
 
     $("#sell-btn").addEventListener("click", (e) => {
       e.preventDefault();
@@ -3507,7 +3477,6 @@
 
           // Subscribe to contract events for real-time updates
           contract.on("OrderFilled", (orderId, taker) => {
-            console.log(`Order ${orderId} filled by ${taker}`);
             if (taker.toLowerCase() !== userAddress.toLowerCase()) {
               showNotification("Order Filled", `Your order #${orderId} has been filled!`, "order-" + orderId);
             }
@@ -3516,14 +3485,12 @@
           });
 
           contract.on("OrderCanceled", (orderId) => {
-            console.log(`Order ${orderId} canceled`);
             showToast(`Order #${orderId} canceled`, "info");
             loadOrders();
             loadStats();
           });
 
           contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
-            console.log(`Order ${orderId} created by ${maker}`);
             loadOrders();
             loadStats();
           });
@@ -3583,14 +3550,7 @@
   // Register service worker for PWA support
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sw.js").then(
-        (registration) => {
-          console.log("ServiceWorker registered:", registration.scope);
-        },
-        (error) => {
-          console.log("ServiceWorker registration failed:", error);
-        }
-      );
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
     });
   }
 })();
