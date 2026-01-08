@@ -64,6 +64,7 @@
         <a href="#" id="wallet-filled-orders">My Filled Orders</a>
         <a href="#" id="wallet-cancelled-orders">My Cancelled Orders</a>
         <a href="#" id="wallet-export">Export My Orders</a>
+        <a href="#" id="wallet-revoke">Revoke Approvals</a>
         <div class="wallet-menu-divider"></div>
         <a href="#" id="wallet-switch">Switch Wallet</a>
         <a href="#" id="wallet-disconnect">Disconnect</a>
@@ -276,6 +277,19 @@
     </span>
   </div>
 </footer>
+
+<div id="revoke-modal" class="modal hidden">
+  <div class="modal-content revoke-modal-content">
+    <h3>Revoke Approvals</h3>
+    <p class="revoke-intro">Remove token approvals granted to the Swapboard contract.</p>
+    <div id="revoke-list" class="revoke-list">
+      <div class="revoke-loading">Checking approvals...</div>
+    </div>
+    <div class="modal-actions">
+      <button id="revoke-modal-close">Close</button>
+    </div>
+  </div>
+</div>
 
 <div id="verify-modal" class="modal hidden">
   <div class="modal-content verify-modal-content">

@@ -880,6 +880,75 @@ footer code {
   color: #fff;
 }
 
+.revoke-modal-content {
+  max-width: 450px;
+}
+
+.revoke-intro {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 15px;
+}
+
+.revoke-list {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  padding: 12px 15px;
+  margin-bottom: 15px;
+  min-height: 60px;
+}
+
+.revoke-loading {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.revoke-empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.revoke-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.revoke-row:last-child {
+  border-bottom: none;
+}
+
+.revoke-token {
+  font-weight: bold;
+  font-size: 13px;
+}
+
+.revoke-allowance {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.revoke-btn {
+  background: var(--bad-deal);
+  color: #fff;
+  border: none;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.revoke-btn:hover {
+  opacity: 0.9;
+}
+
+.revoke-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .verify-modal-content {
   max-width: 550px;
 }

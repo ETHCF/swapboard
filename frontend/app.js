@@ -2732,6 +2732,91 @@
     $("#wallet-menu").classList.add("hidden");
   }
 
+  async function loadUserApprovals() {
+    const revokeList = $("#revoke-list");
+    revokeList.innerHTML = '<div class="revoke-loading">Checking approvals...</div>';
+
+    const query = `{
+      orders(
+        where: { maker: "${userAddress.toLowerCase()}" }
+        first: 1000
+      ) {
+        tokenA { address symbol decimals }
+        tokenB { address symbol decimals }
+      }
+    }`;
+    const data = await querySubgraph(query, {}, true);
+    if (!data || !data.orders) {
+      revokeList.innerHTML = '<div class="revoke-empty">Failed to load orders</div>';
+      return;
+    }
+
+    const tokenMap = new Map();
+    for (const order of data.orders) {
+      if (!tokenMap.has(order.tokenA.address)) {
+        tokenMap.set(order.tokenA.address, order.tokenA);
+      }
+      if (!tokenMap.has(order.tokenB.address)) {
+        tokenMap.set(order.tokenB.address, order.tokenB);
+      }
+    }
+
+    const approvals = [];
+    for (const [address, token] of tokenMap) {
+      try {
+        const tokenContract = new ethers.Contract(address, ERC20_ABI, provider);
+        const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+        if (allowance > 0n) {
+          approvals.push({ address, symbol: token.symbol, decimals: token.decimals, allowance });
+        }
+      } catch (err) {
+        console.error("Failed to check allowance for", address, err);
+      }
+    }
+
+    if (approvals.length === 0) {
+      revokeList.innerHTML = '<div class="revoke-empty">No active approvals</div>';
+      return;
+    }
+
+    revokeList.innerHTML = approvals.map(t => {
+      const amt = t.allowance === ethers.MaxUint256
+        ? "Unlimited"
+        : formatAmount(t.allowance, t.decimals);
+      return `<div class="revoke-row" data-address="${t.address}">
+        <div>
+          <span class="revoke-token">${escapeHtml(t.symbol)}</span>
+          <span class="revoke-allowance">${amt}</span>
+        </div>
+        <button class="revoke-btn" data-address="${t.address}" data-symbol="${escapeHtml(t.symbol)}">Revoke</button>
+      </div>`;
+    }).join("");
+  }
+
+  async function revokeApproval(tokenAddress, tokenSymbol) {
+    try {
+      showToast("Revoking approval for " + tokenSymbol + "...", "info", true);
+      const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
+      const tx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, 0);
+      showToast("Waiting for confirmation...", "info", true);
+      await tx.wait();
+      showToast("Revoked approval for " + tokenSymbol, "success");
+      const row = $(`.revoke-row[data-address="${tokenAddress}"]`);
+      if (row) row.remove();
+      const remaining = $$(".revoke-row").length;
+      if (remaining === 0) {
+        $("#revoke-list").innerHTML = '<div class="revoke-empty">No active approvals</div>';
+      }
+    } catch (err) {
+      console.error("Revoke failed:", err);
+      if (err.code === 4001 || err.code === "ACTION_REJECTED") {
+        showToast("Revoke cancelled", "error");
+      } else {
+        showToast("Failed to revoke approval", "error");
+      }
+    }
+  }
+
   async function exportMyOrders() {
     const query = `{
       orders(
@@ -3170,6 +3255,34 @@
       e.stopPropagation();
       exportMyOrders();
       $("#wallet-menu").classList.add("hidden");
+    });
+
+    $("#wallet-revoke").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      $("#wallet-menu").classList.add("hidden");
+      $("#revoke-modal").classList.remove("hidden");
+      loadUserApprovals();
+    });
+
+    $("#revoke-modal-close").addEventListener("click", () => {
+      $("#revoke-modal").classList.add("hidden");
+    });
+
+    $("#revoke-modal").addEventListener("click", (e) => {
+      if (e.target === $("#revoke-modal")) {
+        $("#revoke-modal").classList.add("hidden");
+      }
+    });
+
+    $("#revoke-list").addEventListener("click", (e) => {
+      if (e.target.classList.contains("revoke-btn")) {
+        const address = e.target.dataset.address;
+        const symbol = e.target.dataset.symbol;
+        e.target.disabled = true;
+        e.target.textContent = "...";
+        revokeApproval(address, symbol);
+      }
     });
 
     $("#wallet-switch").addEventListener("click", (e) => {
