@@ -105,15 +105,18 @@ h1 {
 }
 
 #theme-btn {
-  font-family: inherit;
-  font-size: 14px;
+  display: flex;
+  align-items: center;
   color: var(--fg);
-  text-decoration: none;
   cursor: pointer;
 }
 
 #theme-btn:hover {
-  text-decoration: underline;
+  opacity: 0.7;
+}
+
+#theme-btn svg.hidden {
+  display: none;
 }
 
 .header-right {

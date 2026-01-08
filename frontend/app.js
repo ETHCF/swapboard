@@ -53,19 +53,31 @@
   // Theme (Dark Mode)
   // ============================================================================
 
+  function updateThemeIcons(isDark) {
+    const sunIcon = $("#theme-icon-sun");
+    const moonIcon = $("#theme-icon-moon");
+    if (isDark) {
+      sunIcon.classList.add("hidden");
+      moonIcon.classList.remove("hidden");
+    } else {
+      sunIcon.classList.remove("hidden");
+      moonIcon.classList.add("hidden");
+    }
+  }
+
   function initTheme() {
     const stored = localStorage.getItem("swapboard-theme");
     if (stored === "dark") {
       document.body.classList.add("dark-mode");
-      $("#theme-btn").textContent = "[Light]";
+      updateThemeIcons(true);
     } else if (stored === "light") {
       document.body.classList.remove("dark-mode");
-      $("#theme-btn").textContent = "[Dark]";
+      updateThemeIcons(false);
     } else {
       // No preference stored, check system preference
       if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
         document.body.classList.add("dark-mode");
-        $("#theme-btn").textContent = "[Light]";
+        updateThemeIcons(true);
       }
     }
   }
@@ -73,7 +85,7 @@
   function toggleTheme() {
     const isDark = document.body.classList.toggle("dark-mode");
     localStorage.setItem("swapboard-theme", isDark ? "dark" : "light");
-    $("#theme-btn").textContent = isDark ? "[Light]" : "[Dark]";
+    updateThemeIcons(isDark);
   }
 
   // Validate configuration - fail fast on placeholder values
