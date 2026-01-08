@@ -2626,8 +2626,8 @@
       loadOrders();
     } catch (e) {
       console.error("Connect error:", e);
-      // User rejected - no error message needed
       if (e.code === 4001 || e.code === "ACTION_REJECTED") {
+        showToast("Wallet connection cancelled", "info");
         return;
       }
       showToast("Connection failed", "error");
