@@ -3098,7 +3098,17 @@
 
     $("#hash-toggle").addEventListener("click", (e) => {
       e.preventDefault();
-      $("#file-hashes").classList.toggle("hidden");
+      $("#verify-modal").classList.remove("hidden");
+    });
+
+    $("#verify-modal-close").addEventListener("click", () => {
+      $("#verify-modal").classList.add("hidden");
+    });
+
+    $("#verify-modal").addEventListener("click", (e) => {
+      if (e.target === $("#verify-modal")) {
+        $("#verify-modal").classList.add("hidden");
+      }
     });
 
     $("#connect-btn").addEventListener("click", (e) => {
