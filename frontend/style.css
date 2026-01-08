@@ -119,21 +119,6 @@ h1 {
   display: none;
 }
 
-#notify-btn {
-  display: flex;
-  align-items: center;
-  color: var(--fg);
-  cursor: pointer;
-}
-
-#notify-btn:hover {
-  opacity: 0.7;
-}
-
-#notify-btn svg.hidden {
-  display: none;
-}
-
 .header-right {
   display: flex;
   gap: 15px;
@@ -142,8 +127,7 @@ h1 {
 }
 
 #connect-btn,
-#sell-btn,
-#notify-btn {
+#sell-btn {
   font-family: inherit;
   font-size: 14px;
   color: var(--fg);
@@ -152,14 +136,12 @@ h1 {
 }
 
 #connect-btn:hover,
-#sell-btn:hover,
-#notify-btn:hover {
+#sell-btn:hover {
   text-decoration: underline;
 }
 
 #sell-btn.hidden,
-#network-indicator.hidden,
-#notify-btn.hidden {
+#network-indicator.hidden {
   display: none;
 }
 

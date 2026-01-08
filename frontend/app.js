@@ -88,14 +88,8 @@
     updateThemeIcons(isDark);
   }
 
-  function updateNotifyIcon() {
-    if (notificationsEnabled) {
-      $("#notify-icon-on").classList.remove("hidden");
-      $("#notify-icon-off").classList.add("hidden");
-    } else {
-      $("#notify-icon-on").classList.add("hidden");
-      $("#notify-icon-off").classList.remove("hidden");
-    }
+  function updateNotifyText() {
+    $("#wallet-notifications").textContent = notificationsEnabled ? "Disable Notifications" : "Enable Notifications";
   }
 
   // Validate configuration - fail fast on placeholder values
@@ -2638,9 +2632,9 @@
 
       $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
       $("#sell-btn").classList.remove("hidden");
-      $("#notify-btn").classList.remove("hidden");
       $("#my-orders-label").classList.remove("hidden");
       updateWalletMenu();
+      updateNotifyText();
 
       // Subscribe to contract events for real-time updates
       contract.on("OrderFilled", (orderId, taker) => {
@@ -2689,7 +2683,6 @@
     contract = null;
     $("#connect-btn").textContent = "[Connect Wallet]";
     $("#sell-btn").classList.add("hidden");
-    $("#notify-btn").classList.add("hidden");
     $("#network-indicator").classList.add("hidden");
     $("#my-orders-label").classList.add("hidden");
     $("#filter-my-orders").checked = false;
@@ -3158,7 +3151,6 @@
     // Load notification preference from localStorage
     if (localStorage.getItem("swapboard_notifications") === "true" && Notification.permission === "granted") {
       notificationsEnabled = true;
-      updateNotifyIcon();
     }
 
     $("#theme-btn").addEventListener("click", (e) => {
@@ -3278,10 +3270,11 @@
       $("#wallet-menu").classList.add("hidden");
     });
 
-    $("#notify-btn").addEventListener("click", async (e) => {
+    $("#wallet-notifications").addEventListener("click", async (e) => {
       e.preventDefault();
       await toggleNotifications();
-      updateNotifyIcon();
+      updateNotifyText();
+      $("#wallet-menu").classList.add("hidden");
     });
 
     $("#sell-btn").addEventListener("click", (e) => {
@@ -3482,8 +3475,8 @@
           contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
           $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
           $("#sell-btn").classList.remove("hidden");
-          $("#notify-btn").classList.remove("hidden");
           $("#my-orders-label").classList.remove("hidden");
+          updateNotifyText();
 
           // Subscribe to contract events for real-time updates
           contract.on("OrderFilled", (orderId, taker) => {
