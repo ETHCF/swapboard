@@ -2626,7 +2626,11 @@
       loadOrders();
     } catch (e) {
       console.error("Connect error:", e);
-      showToast("Connection failed: " + e.message, "error");
+      // User rejected - no error message needed
+      if (e.code === 4001 || e.code === "ACTION_REJECTED") {
+        return;
+      }
+      showToast("Connection failed", "error");
     }
   }
 
