@@ -3057,8 +3057,7 @@
     // Initialize dark mode from localStorage or system preference
     initTheme();
 
-    // Populate contract info
-    $("#contract-addr").textContent = CONFIG.CONTRACT_ADDRESS;
+    // Populate contract link
     $("#contract-link").href = EXPECTED_CHAIN.blockExplorerUrls[0] + "/address/" + CONFIG.CONTRACT_ADDRESS;
 
     // Load saved preferences
