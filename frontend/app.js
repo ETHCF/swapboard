@@ -2686,7 +2686,7 @@
         return;
       }
       const msg = (e.message || "").toLowerCase();
-      if (msg.includes("not connected")) {
+      if (msg.includes("not connected") || (e.error && e.error.message && e.error.message.toLowerCase().includes("not connected"))) {
         showToast("Wallet not connected. Please unlock your wallet and try again.", "error");
         return;
       }
