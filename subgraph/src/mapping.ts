@@ -2,8 +2,8 @@
  * @fileoverview Swapboard Subgraph Event Handlers
  * @description AssemblyScript handlers for indexing Swapboard contract events.
  *              Creates and updates Order, Token, GlobalStats, and PairStats entities.
- * @author Swapboard Contributors
- * @license MIT
+ * @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
+ * @license AGPL-3.0-only
  *
  * Event handlers:
  * - handleOrderCreated: Creates Order entity, updates token counters

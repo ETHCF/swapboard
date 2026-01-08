@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "End-to-end tests for Swapboard (full stack)",
+  "author": "Zak Cole <zak@numbergroup.xyz> (https://numbergroup.xyz)",
   "type": "module",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "engines": {
     "node": ">=20.0.0"
   },

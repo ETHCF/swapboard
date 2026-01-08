@@ -2,8 +2,8 @@
  * @fileoverview Swapboard Frontend Application
  * @description Client-side application for interacting with the Swapboard smart contract.
  *              Handles wallet connection, order display, and transaction submission.
- * @author Swapboard Contributors
- * @license MIT
+ * @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
+ * @license AGPL-3.0-only
  *
  * Dependencies:
  * - ethers.js v6 (loaded dynamically from CDN)
@@ -16,6 +16,10 @@
 
 (function () {
   "use strict";
+
+  // Import shared utilities from lib.js (loaded before app.js)
+  const { escapeHtml, isValidAddress, truncateAddress, formatUsd, formatAmount } =
+    window.SwapboardLib || {};
 
   // ============================================================================
   // Configuration
@@ -328,66 +332,12 @@
     return { deviation, label };
   }
 
-  /**
-   * Formats USD value for display.
-   * @param {number|null} usdValue
-   * @returns {string}
-   */
-  function formatUsd(usdValue) {
-    if (usdValue === null || usdValue === undefined) return "$ --";
-    if (usdValue >= 1000000) {
-      return "$ " + (usdValue / 1000000).toFixed(2) + "M";
-    }
-    if (usdValue >= 1000) {
-      return "$ " + usdValue.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    }
-    if (usdValue >= 1) {
-      return "$ " + usdValue.toFixed(2);
-    }
-    if (usdValue >= 0.01) {
-      return "$ " + usdValue.toFixed(4);
-    }
-    return "$ " + usdValue.toExponential(2);
-  }
-
   // ============================================================================
   // Utility Functions
   // ============================================================================
 
   /** @param {string} sel - CSS selector */
   const $ = (sel) => document.querySelector(sel);
-
-  /**
-   * Escapes HTML special characters to prevent XSS.
-   * @param {string|null|undefined} str - String to escape
-   * @returns {string} HTML-safe string
-   */
-  function escapeHtml(str) {
-    if (str === null || str === undefined) return "";
-    const div = document.createElement("div");
-    div.textContent = String(str);
-    return div.innerHTML;
-  }
-
-  /**
-   * Validates an Ethereum address format.
-   * @param {*} addr - Value to validate
-   * @returns {boolean} True if valid 0x-prefixed 40-character hex string
-   */
-  function isValidAddress(addr) {
-    if (typeof addr !== "string") return false;
-    return /^0x[a-fA-F0-9]{40}$/.test(addr);
-  }
-
-  /**
-   * Returns address for display.
-   * @param {string} addr - Full Ethereum address
-   * @returns {string} Full address or empty string if invalid
-   */
-  function truncateAddress(addr) {
-    if (!addr || !isValidAddress(addr)) return "";
-    return addr;
-  }
 
   /**
    * Resolves an address to its ENS name if available.
@@ -1089,22 +1039,6 @@
       }
     });
     return btn;
-  }
-
-  /**
-   * Formats a token amount for display with proper decimal handling.
-   * @param {string|bigint} amount - Amount in base units
-   * @param {number} decimals - Token decimals
-   * @returns {string} Human-readable amount with thousands separators
-   */
-  function formatAmount(amount, decimals) {
-    if (!amount) return "0";
-    const str = amount.toString().padStart(decimals + 1, "0");
-    const intPart = str.slice(0, -decimals) || "0";
-    const decPart = str.slice(-decimals);
-    const trimmed = decPart.replace(/0+$/, "");
-    if (trimmed === "") return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + "." + trimmed;
   }
 
   function formatNumber(num) {

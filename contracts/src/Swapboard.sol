@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
 /**
  * @title Swapboard
- * @author Swapboard Contributors
+ * @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
  * @notice Trustless OTC bulletin board for ERC20 token swaps on Ethereum
  * @dev This contract implements a simple orderbook for peer-to-peer token swaps.
  *
@@ -27,7 +27,7 @@ import {ISwapboard} from "./interfaces/ISwapboard.sol";
 /// @title Swapboard
 /// @notice Trustless OTC bulletin board for ERC20 token swaps
 /// @dev No admin, no fees, no upgrades. Orders are filled atomically or not at all.
-/// @custom:security-contact security@swapboard.eth
+/// @custom:security-contact zak@numbergroup.xyz
 contract Swapboard is ISwapboard, ReentrancyGuard {
     using SafeERC20 for IERC20;
 

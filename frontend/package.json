@@ -2,13 +2,26 @@
   "name": "swapboard-frontend",
   "version": "1.0.0",
   "description": "Swapboard frontend - static HTML/CSS/JS",
+  "author": "Zak Cole <zak@numbergroup.xyz> (https://numbergroup.xyz)",
+  "license": "AGPL-3.0-only",
   "private": true,
   "scripts": {
     "serve": "npx serve . -p 3000",
-    "test": "node test.js",
-    "test:local": "npx serve . -p 3456 & sleep 2 && node test.js http://localhost:3456; kill %1 2>/dev/null || true"
+    "test": "pnpm run test:unit && pnpm run test:e2e",
+    "test:unit": "jest",
+    "test:e2e": "node test.js",
+    "test:local": "npx serve . -p 3456 & sleep 2 && node test.js http://localhost:3456; kill %1 2>/dev/null || true",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint *.js --ignore-pattern 'coverage/**'",
+    "lint:fix": "eslint *.js --fix --ignore-pattern 'coverage/**'",
+    "format": "prettier --write '*.js' '*.json' '*.css'",
+    "format:check": "prettier --check '*.js' '*.json' '*.css'"
   },
   "devDependencies": {
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "prettier": "^3.2.0",
     "puppeteer": "^24.0.0",
     "serve": "^14.2.0"
   },

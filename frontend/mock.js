@@ -4,8 +4,8 @@
  *              subgraph or blockchain connection. Intercepts fetch calls to the
  *              subgraph URL and returns generated mock data.
  *
- * @author Swapboard Contributors
- * @license MIT
+ * @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
+ * @license AGPL-3.0-only
  *
  * Activation:
  *   Mock mode activates automatically based on the following precedence:

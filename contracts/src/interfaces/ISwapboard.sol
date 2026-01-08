@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
 /**
  * @title ISwapboard
- * @author Swapboard Contributors
+ * @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
  * @notice Interface for the Swapboard OTC trading contract
  * @dev Implement this interface for composability with the Swapboard protocol.
  *      All amounts are in base units (wei-equivalent for 18 decimal tokens).

@@ -35,10 +35,10 @@ cd contracts && forge build
 cd subgraph && pnpm install && pnpm build
 
 # Frontend
-cd frontend && npm install puppeteer
+cd frontend && pnpm install
 
 # E2E (optional)
-cd e2e && npm install
+cd e2e && pnpm install
 ```
 
 ### Test
@@ -139,6 +139,10 @@ All operations are atomic. No partial fills. No admin functions.
 - SafeERC20 for all transfers
 - No proxy, no upgrades, no owner
 
+## Author
+
+Built by [Zak Cole](https://x.com/0xzak) at [Number Group](https://numbergroup.xyz) for the [Ethereum Community Foundation](https://ethcf.org).
+
 ## License
 
-MIT
+AGPL-3.0-only

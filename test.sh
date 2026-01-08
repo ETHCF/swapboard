@@ -9,10 +9,10 @@ show_help() {
   echo "Options:"
   echo "  --all       Run all tests including full e2e (requires Docker)"
   echo "  --e2e       Run only full e2e tests (requires Docker)"
-  echo "  --fast      Run unit tests only (no Docker required)"
+  echo "  --fast      Run contract + frontend unit tests only (no Docker)"
   echo "  --help      Show this help"
   echo ""
-  echo "Default: Run contract, subgraph, and frontend tests"
+  echo "Default: Run contract, subgraph, frontend unit, and frontend e2e tests"
 }
 
 run_contract_tests() {
@@ -39,16 +39,26 @@ run_subgraph_tests() {
   echo ""
 }
 
-run_frontend_tests() {
-  echo "3. Frontend Tests (Puppeteer)"
+run_frontend_unit_tests() {
+  echo "3. Frontend Unit Tests (Jest)"
+  echo "-----------------------------------------"
+  cd "$ROOT_DIR/frontend"
+  pnpm install --silent
+  pnpm run test:unit
+  cd "$ROOT_DIR"
+  echo ""
+}
+
+run_frontend_e2e_tests() {
+  echo "4. Frontend E2E Tests (Puppeteer)"
   echo "-----------------------------------------"
   cd "$ROOT_DIR/frontend" && node test.js
   cd "$ROOT_DIR"
   echo ""
 }
 
-run_e2e_tests() {
-  echo "4. Full E2E Tests (Docker Stack)"
+run_full_e2e_tests() {
+  echo "5. Full E2E Tests (Docker Stack)"
   echo "-----------------------------------------"
   cd "$ROOT_DIR/e2e"
 
@@ -57,8 +67,8 @@ run_e2e_tests() {
     exit 1
   fi
 
-  npm install --silent
-  npm run e2e
+  pnpm install --silent
+  pnpm run e2e
   cd "$ROOT_DIR"
   echo ""
 }
@@ -74,7 +84,7 @@ case "${1:-}" in
     echo "SWAPBOARD E2E TESTS"
     echo "========================================="
     echo ""
-    run_e2e_tests
+    run_full_e2e_tests
     ;;
   --fast)
     echo "========================================="
@@ -82,6 +92,7 @@ case "${1:-}" in
     echo "========================================="
     echo ""
     run_contract_tests
+    run_frontend_unit_tests
     ;;
   --all)
     echo "========================================="
@@ -90,8 +101,9 @@ case "${1:-}" in
     echo ""
     run_contract_tests
     run_subgraph_tests
-    run_frontend_tests
-    run_e2e_tests
+    run_frontend_unit_tests
+    run_frontend_e2e_tests
+    run_full_e2e_tests
     ;;
   *)
     echo "========================================="
@@ -100,7 +112,8 @@ case "${1:-}" in
     echo ""
     run_contract_tests
     run_subgraph_tests
-    run_frontend_tests
+    run_frontend_unit_tests
+    run_frontend_e2e_tests
     ;;
 esac
 

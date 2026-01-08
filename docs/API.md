@@ -4,8 +4,8 @@ For market makers and trading bots.
 
 ## Contract
 
-**Network:** Ethereum Mainnet
-**Address:** `0x0000000000000000000000000000000000000000` (update after deployment)
+**Network:** Sepolia Testnet
+**Address:** `0xBe3D7A555aa633263110d10d37AB40Ef3a2b8BBa`
 
 ### ABI
 
@@ -119,7 +119,7 @@ For market makers and trading bots.
 
 ## Subgraph
 
-**Endpoint:** `https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest`
+**Endpoint:** `https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/1.0.0/gn`
 
 ### Query: Open Orders
 
@@ -316,7 +316,7 @@ async function monitorOrders(provider) {
 ```python
 import requests
 
-SUBGRAPH_URL = "https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest"
+SUBGRAPH_URL = "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/1.0.0/gn"
 
 def get_open_orders(token_a=None, token_b=None, limit=100):
     where = "active: true"
@@ -401,12 +401,12 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 |-------|----------|-------------|
 | `ZeroAddress()` | `0xd92e233d` | Token address is zero |
 | `ZeroAmount()` | `0x1f2a2005` | Amount is zero |
-| `SameToken()` | `0x5c122a85` | tokenA and tokenB are identical |
-| `NotAContract(address)` | `0x09ee12d5` | Address has no code |
-| `BalanceMismatch(uint256,uint256)` | `0x2c5211c6` | FOT token detected |
-| `OrderNotFound(uint256)` | `0x97d80e3a` | Order doesn't exist |
-| `OrderNotActive(uint256)` | `0x9bd8c2b6` | Order already filled/cancelled |
-| `NotMaker(uint256,address,address)` | `0x3d693ada` | Caller is not order maker |
+| `SameToken()` | `0x201b580a` | tokenA and tokenB are identical |
+| `NotAContract(address)` | `0x8a8b41ec` | Address has no code |
+| `BalanceMismatch(uint256,uint256)` | `0x6e65ed84` | FOT token detected |
+| `OrderNotFound(uint256)` | `0x4e90badc` | Order doesn't exist |
+| `OrderNotActive(uint256)` | `0xd2c02610` | Order already filled/cancelled |
+| `NotMaker(uint256,address,address)` | `0x98cd7222` | Caller is not order maker |
 
 ## Notes
 

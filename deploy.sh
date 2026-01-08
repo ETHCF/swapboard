@@ -191,15 +191,42 @@ rm -f "$FRONTEND_JS.bak"
 log "Updated app.js with subgraph URL"
 
 # ============================================================
-# STEP 5: Deploy Frontend to IPFS
+# STEP 5: Generate Build Hashes and Deploy Frontend to IPFS
 # ============================================================
 
 if [[ "$SKIP_FRONTEND" != "true" ]]; then
     log "Step 5: Deploying frontend to IPFS..."
 
-    if command -v ipfs &> /dev/null; then
-        cd "$SCRIPT_DIR/frontend"
+    cd "$SCRIPT_DIR/frontend"
 
+    # Generate file hashes for verification
+    log "Generating build hashes..."
+    HASH_APPJS=$(sha256sum app.js | cut -d' ' -f1)
+    HASH_LIBJS=$(sha256sum lib.js | cut -d' ' -f1)
+    HASH_CSS=$(sha256sum style.css | cut -d' ' -f1)
+    HASH_MOCK=$(sha256sum mock.js | cut -d' ' -f1)
+
+    # Get git commit info
+    COMMIT_FULL=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+    COMMIT_HASH=$(echo "$COMMIT_FULL" | cut -c1-7)
+
+    # Replace placeholders in index.html
+    log "Injecting hashes into index.html..."
+    sed -i.bak \
+        -e "s/__HASH_APPJS__/${HASH_APPJS:0:16}.../" \
+        -e "s/__HASH_LIBJS__/${HASH_LIBJS:0:16}.../" \
+        -e "s/__HASH_CSS__/${HASH_CSS:0:16}.../" \
+        -e "s/__HASH_MOCK__/${HASH_MOCK:0:16}.../" \
+        -e "s/__COMMIT_FULL__/$COMMIT_FULL/" \
+        -e "s/__COMMIT_HASH__/$COMMIT_HASH/" \
+        index.html
+
+    # Calculate index.html hash after other replacements
+    HASH_HTML=$(sha256sum index.html | cut -d' ' -f1)
+    sed -i.bak "s/__HASH_HTML__/${HASH_HTML:0:16}.../" index.html
+    rm -f index.html.bak
+
+    if command -v ipfs &> /dev/null; then
         # Add to IPFS
         IPFS_OUTPUT=$(ipfs add -r -Q .)
         IPFS_CID="$IPFS_OUTPUT"
@@ -214,13 +241,13 @@ if [[ "$SKIP_FRONTEND" != "true" ]]; then
         fi
 
         echo "IPFS_CID=$IPFS_CID" >> "$SCRIPT_DIR/.deploy.env"
-
-        cd "$SCRIPT_DIR"
     else
-        warn "IPFS not installed. Skipping frontend deployment."
+        warn "IPFS not installed. Skipping IPFS upload."
         warn "Install IPFS and run: cd frontend && ipfs add -r ."
         IPFS_CID="(not deployed)"
     fi
+
+    cd "$SCRIPT_DIR"
 else
     log "Step 5: Skipping frontend deployment (SKIP_FRONTEND=true)"
     IPFS_CID="${IPFS_CID:-(skipped)}"
