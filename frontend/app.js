@@ -2695,22 +2695,23 @@
       const amtB = o.tokenB.decimals ? (parseFloat(o.amountB) / Math.pow(10, o.tokenB.decimals)).toString() : o.amountB;
       return [o.orderId, status, o.tokenA.symbol, amtA, o.tokenB.symbol, amtB, o.createdAt, o.taker || ""];
     });
-    const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
-    downloadCSV(csv, `swapboard-orders-${userAddress.slice(0,8)}.csv`);
-    showToast("Orders exported", "success");
+    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `swapboard-my-orders-${userAddress.slice(0,8)}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    showToast("Exported " + data.orders.length + " orders", "success");
   }
 
   async function switchWallet() {
-    console.log("switchWallet called");
     try {
-      console.log("Requesting wallet_requestPermissions");
       await window.ethereum.request({
         method: "wallet_requestPermissions",
         params: [{ eth_accounts: {} }]
       });
-      console.log("wallet_requestPermissions completed");
     } catch (err) {
-      console.log("switchWallet error:", err);
       if (err.code !== 4001) {
         showToast("Failed to switch wallet", "error");
       }
