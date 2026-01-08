@@ -88,6 +88,16 @@
     updateThemeIcons(isDark);
   }
 
+  function updateNotifyIcon() {
+    if (notificationsEnabled) {
+      $("#notify-icon-on").classList.remove("hidden");
+      $("#notify-icon-off").classList.add("hidden");
+    } else {
+      $("#notify-icon-on").classList.add("hidden");
+      $("#notify-icon-off").classList.remove("hidden");
+    }
+  }
+
   // Validate configuration - fail fast on placeholder values
   // Skips validation on localhost/file:// for development/testing
   function validateConfig() {
@@ -3148,7 +3158,7 @@
     // Load notification preference from localStorage
     if (localStorage.getItem("swapboard_notifications") === "true" && Notification.permission === "granted") {
       notificationsEnabled = true;
-      $("#notify-btn").textContent = "[Notify: On]";
+      updateNotifyIcon();
     }
 
     $("#theme-btn").addEventListener("click", (e) => {
@@ -3271,7 +3281,7 @@
     $("#notify-btn").addEventListener("click", async (e) => {
       e.preventDefault();
       await toggleNotifications();
-      $("#notify-btn").textContent = notificationsEnabled ? "[Notify: On]" : "[Notify: Off]";
+      updateNotifyIcon();
     });
 
     $("#sell-btn").addEventListener("click", (e) => {
