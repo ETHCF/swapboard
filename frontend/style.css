@@ -4,12 +4,78 @@
   box-sizing: border-box;
 }
 
+:root {
+  --bg: #fff;
+  --fg: #000;
+  --bg-secondary: #f8f8f8;
+  --bg-hover: #f0f0f0;
+  --bg-input: #fff;
+  --border: #000;
+  --border-light: #ccc;
+  --link: #0000EE;
+  --stat-bg: #d9d9d9;
+  --th-bg: #ecf0f1;
+  --th-hover: #dde4e6;
+  --row-hover: #f5f5f5;
+  --own-order: #fffde7;
+  --own-order-hover: #fff9c4;
+  --highlight: #e3f2fd;
+  --highlight-hover: #bbdefb;
+  --highlight-pulse: #90caf9;
+  --warning-bg: #fff3cd;
+  --muted: #666;
+  --skeleton-a: #e8e8e8;
+  --skeleton-b: #f5f5f5;
+  --modal-overlay: rgba(0, 0, 0, 0.5);
+  --status-open-bg: #e8f5e9;
+  --status-open-fg: #2e7d32;
+  --status-filled-bg: #e3f2fd;
+  --status-filled-fg: #1565c0;
+  --status-cancelled-bg: #ffebee;
+  --status-cancelled-fg: #c62828;
+  --good-deal: #080;
+  --bad-deal: #c00;
+}
+
+body.dark-mode {
+  --bg: #111;
+  --fg: #eee;
+  --bg-secondary: #222;
+  --bg-hover: #333;
+  --bg-input: #222;
+  --border: #555;
+  --border-light: #444;
+  --link: #6cf;
+  --stat-bg: #333;
+  --th-bg: #2a2a2a;
+  --th-hover: #3a3a3a;
+  --row-hover: #252525;
+  --own-order: #3d3a20;
+  --own-order-hover: #4d4a30;
+  --highlight: #1a3a5c;
+  --highlight-hover: #2a4a6c;
+  --highlight-pulse: #3a5a7c;
+  --warning-bg: #4a3a10;
+  --muted: #aaa;
+  --skeleton-a: #333;
+  --skeleton-b: #444;
+  --modal-overlay: rgba(0, 0, 0, 0.7);
+  --status-open-bg: #1a3a1a;
+  --status-open-fg: #6c6;
+  --status-filled-bg: #1a2a3a;
+  --status-filled-fg: #6cf;
+  --status-cancelled-bg: #3a1a1a;
+  --status-cancelled-fg: #f66;
+  --good-deal: #6c6;
+  --bad-deal: #f66;
+}
+
 body {
   font-family: "Courier New", Courier, monospace;
   font-size: 14px;
   line-height: 1.5;
-  background: #fff;
-  color: #000;
+  background: var(--bg);
+  color: var(--fg);
   padding: 20px;
   max-width: 1400px;
   margin: 0 auto;
@@ -23,7 +89,7 @@ header {
   gap: 10px;
   margin-bottom: 15px;
   padding-bottom: 15px;
-  border-bottom: 1px solid #000;
+  border-bottom: 1px solid var(--border);
 }
 
 h1 {
@@ -38,6 +104,18 @@ h1 {
   display: inline-block;
 }
 
+#theme-btn {
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+#theme-btn:hover {
+  text-decoration: underline;
+}
+
 .header-right {
   display: flex;
   gap: 15px;
@@ -46,16 +124,18 @@ h1 {
 }
 
 #connect-btn,
-#sell-btn {
+#sell-btn,
+#notify-btn {
   font-family: inherit;
   font-size: 14px;
-  color: #000;
+  color: var(--fg);
   text-decoration: none;
   cursor: pointer;
 }
 
 #connect-btn:hover,
-#sell-btn:hover {
+#sell-btn:hover,
+#notify-btn:hover {
   text-decoration: underline;
 }
 
@@ -73,8 +153,8 @@ h1 {
   position: absolute;
   top: 100%;
   right: 0;
-  background: #fff;
-  border: 1px solid #000;
+  background: var(--bg);
+  border: 1px solid var(--border);
   min-width: 180px;
   z-index: 1000;
   margin-top: 4px;
@@ -87,25 +167,25 @@ h1 {
 .wallet-menu a {
   display: block;
   padding: 8px 12px;
-  color: #000;
+  color: var(--fg);
   text-decoration: none;
   font-size: 13px;
 }
 
 .wallet-menu a:hover {
-  background: #f0f0f0;
+  background: var(--bg-hover);
 }
 
 .wallet-menu-header {
   padding: 8px 12px;
   font-weight: bold;
-  border-bottom: 1px solid #ccc;
-  background: #f8f8f8;
+  border-bottom: 1px solid var(--border-light);
+  background: var(--bg-secondary);
   font-size: 13px;
 }
 
 .wallet-menu-divider {
-  border-top: 1px solid #ccc;
+  border-top: 1px solid var(--border-light);
   margin: 4px 0;
 }
 
@@ -118,19 +198,20 @@ h2 {
 button {
   font-family: inherit;
   font-size: 14px;
-  background: #000;
-  color: #fff;
+  background: var(--fg);
+  color: var(--bg);
   border: none;
   padding: 8px 16px;
   cursor: pointer;
 }
 
 button:hover {
-  background: #333;
+  background: var(--muted);
 }
 
 button:disabled {
-  background: #999;
+  background: var(--muted);
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
@@ -154,7 +235,7 @@ button:disabled {
 }
 
 a {
-  color: #0000EE;
+  color: var(--link);
 }
 
 .tagline {
@@ -177,7 +258,7 @@ a {
 }
 
 .stat-label {
-  background: #d9d9d9;
+  background: var(--stat-bg);
   padding: 2px 6px;
 }
 
@@ -228,8 +309,9 @@ a {
   font-family: inherit;
   font-size: 13px;
   padding: 2px 5px;
-  border: 1px solid #000;
-  background: #fff;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--fg);
   cursor: pointer;
 }
 
@@ -258,11 +340,11 @@ table {
 th, td {
   text-align: center;
   padding: 6px 8px;
-  border: 1px solid #000;
+  border: 1px solid var(--border);
 }
 
 th {
-  background: #ecf0f1;
+  background: var(--th-bg);
   font-weight: bold;
 }
 
@@ -272,7 +354,7 @@ th.sortable {
 }
 
 th.sortable:hover {
-  background: #dde4e6;
+  background: var(--th-hover);
 }
 
 .sort-indicator {
@@ -302,43 +384,43 @@ th.sortable:hover {
 
 .market-deviation {
   font-size: 11px;
-  color: #666;
+  color: var(--muted);
   margin-left: 4px;
 }
 
 .market-deviation.good-deal {
-  color: #080;
+  color: var(--good-deal);
   font-weight: bold;
 }
 
 .market-deviation.bad-deal {
-  color: #c00;
+  color: var(--bad-deal);
 }
 
 tbody tr:hover {
-  background: #f5f5f5;
+  background: var(--row-hover);
 }
 
 tbody tr.own-order {
-  background: #fffde7;
+  background: var(--own-order);
 }
 
 tbody tr.own-order:hover {
-  background: #fff9c4;
+  background: var(--own-order-hover);
 }
 
 tbody tr.highlighted-order {
-  background: #e3f2fd;
+  background: var(--highlight);
   animation: highlight-pulse 2s ease-out;
 }
 
 tbody tr.highlighted-order:hover {
-  background: #bbdefb;
+  background: var(--highlight-hover);
 }
 
 @keyframes highlight-pulse {
-  0% { background: #90caf9; }
-  100% { background: #e3f2fd; }
+  0% { background: var(--highlight-pulse); }
+  100% { background: var(--highlight); }
 }
 
 #pagination {
@@ -349,8 +431,8 @@ tbody tr.highlighted-order:hover {
 }
 
 .warning {
-  background: #fff3cd;
-  border: 1px solid #000;
+  background: var(--warning-bg);
+  border: 1px solid var(--border);
   padding: 10px;
   margin-bottom: 20px;
   hyphens: none;
@@ -374,7 +456,9 @@ tbody tr.highlighted-order:hover {
   font-family: inherit;
   font-size: 14px;
   padding: 6px;
-  border: 1px solid #000;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--fg);
   width: 46ch;
 }
 
@@ -388,11 +472,11 @@ tbody tr.highlighted-order:hover {
 }
 
 .buy-btn {
-  color: #000;
+  color: var(--fg);
 }
 
 .cancel-btn {
-  color: #c00;
+  color: var(--bad-deal);
 }
 
 .buy-btn:hover,
@@ -401,11 +485,11 @@ tbody tr.highlighted-order:hover {
 }
 
 .status-filled-label {
-  color: #080;
+  color: var(--good-deal);
 }
 
 .status-canceled-label {
-  color: #c00;
+  color: var(--bad-deal);
 }
 
 .copy-btn {
@@ -417,7 +501,7 @@ tbody tr.highlighted-order:hover {
   cursor: pointer;
   padding: 2px;
   margin-left: 4px;
-  color: #555;
+  color: var(--muted);
   vertical-align: middle;
   -webkit-appearance: none;
   appearance: none;
@@ -425,14 +509,14 @@ tbody tr.highlighted-order:hover {
 }
 
 .copy-btn:hover {
-  color: #000;
+  color: var(--fg);
   background: none;
 }
 
 
 .order-age {
   font-size: 10px;
-  color: #888;
+  color: var(--muted);
   display: block;
   margin-top: 2px;
 }
@@ -444,7 +528,7 @@ tbody tr.highlighted-order:hover {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--modal-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -456,9 +540,9 @@ tbody tr.highlighted-order:hover {
 }
 
 .modal-content {
-  background: #fff;
+  background: var(--bg);
   padding: 20px;
-  border: 2px solid #000;
+  border: 2px solid var(--border);
   max-width: 500px;
   width: 90%;
   overflow: visible;
@@ -478,13 +562,13 @@ tbody tr.highlighted-order:hover {
 }
 
 .sell-modal-content .form-row input.input-error {
-  border-color: #c00;
-  background-color: #fff0f0;
+  border-color: var(--bad-deal);
+  background-color: var(--status-cancelled-bg);
 }
 
 .amount-error {
   display: block;
-  color: #c00;
+  color: var(--bad-deal);
   font-size: 12px;
   margin-top: 2px;
 }
@@ -505,7 +589,7 @@ tbody tr.highlighted-order:hover {
   display: flex;
   justify-content: space-between;
   padding: 8px 0;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .order-modal-row:last-child {
@@ -514,11 +598,11 @@ tbody tr.highlighted-order:hover {
 
 .order-modal-label {
   font-weight: bold;
-  color: #666;
+  color: var(--muted);
 }
 
 .order-modal-row a {
-  color: #0000EE;
+  color: var(--link);
 }
 
 .order-modal-status {
@@ -528,31 +612,32 @@ tbody tr.highlighted-order:hover {
 }
 
 .order-modal-status.status-open {
-  background: #e8f5e9;
-  color: #2e7d32;
+  background: var(--status-open-bg);
+  color: var(--status-open-fg);
 }
 
 .order-modal-status.status-filled {
-  background: #e3f2fd;
-  color: #1565c0;
+  background: var(--status-filled-bg);
+  color: var(--status-filled-fg);
 }
 
 .order-modal-status.status-cancelled {
-  background: #ffebee;
-  color: #c62828;
+  background: var(--status-cancelled-bg);
+  color: var(--status-cancelled-fg);
 }
 
 .order-modal-link-input {
   font-family: inherit;
   font-size: 12px;
   padding: 4px 8px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--border-light);
   width: 200px;
-  background: #f5f5f5;
+  background: var(--bg-secondary);
+  color: var(--fg);
 }
 
 .trade-id-link {
-  color: #000;
+  color: var(--fg);
   text-decoration: underline;
   cursor: pointer;
 }
@@ -560,25 +645,25 @@ tbody tr.highlighted-order:hover {
 .token-balance {
   display: block;
   font-size: 12px;
-  color: #666;
+  color: var(--muted);
   margin-top: 4px;
 }
 
 .price-info {
   display: block;
   font-size: 11px;
-  color: #666;
+  color: var(--muted);
   margin-top: 4px;
 }
 
 .verify-link {
   font-size: 11px;
-  color: #080;
+  color: var(--good-deal);
 }
 
 .token-warning {
   font-size: 11px;
-  color: #c00;
+  color: var(--bad-deal);
   cursor: help;
 }
 
@@ -592,14 +677,14 @@ tbody tr.highlighted-order:hover {
   font-family: inherit;
   font-size: 11px;
   padding: 2px 6px;
-  background: #000;
-  color: #fff;
+  background: var(--fg);
+  color: var(--bg);
   border: none;
   cursor: pointer;
 }
 
 .quick-amt-btn:hover {
-  background: #333;
+  background: var(--muted);
 }
 
 .token-selector-wrapper {
@@ -612,13 +697,13 @@ tbody tr.highlighted-order:hover {
   top: 100%;
   left: 0;
   right: 0;
-  background: #fff;
-  border: 1px solid #ccc;
+  background: var(--bg);
+  border: 1px solid var(--border-light);
   border-top: none;
   z-index: 100;
   max-height: 250px;
   overflow-y: auto;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 6px var(--modal-overlay);
 }
 
 .token-selector-dropdown.hidden {
@@ -628,8 +713,8 @@ tbody tr.highlighted-order:hover {
 .token-selector-title {
   padding: 6px 10px;
   font-size: 11px;
-  color: #666;
-  background: #f5f5f5;
+  color: var(--muted);
+  background: var(--bg-secondary);
   font-weight: bold;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -645,12 +730,12 @@ tbody tr.highlighted-order:hover {
 
 .token-selector-item:hover,
 .token-selector-item.selected {
-  background: #e8e8e8;
+  background: var(--bg-hover);
 }
 
 .token-selector-empty {
   padding: 12px 10px;
-  color: #888;
+  color: var(--muted);
   font-size: 12px;
   text-align: center;
 }
@@ -674,7 +759,7 @@ tbody tr.highlighted-order:hover {
 
 .token-name {
   font-size: 11px;
-  color: #666;
+  color: var(--muted);
 }
 
 .modal-content h3 {
@@ -689,7 +774,7 @@ tbody tr.highlighted-order:hover {
 
 .gas-estimate {
   font-size: 12px;
-  color: #666;
+  color: var(--muted);
   margin-top: 10px;
 }
 
@@ -704,14 +789,14 @@ tbody tr.highlighted-order:hover {
 
 #modal-cancel,
 #sell-modal-cancel {
-  background: #fff;
-  color: #000;
-  border: 1px solid #000;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
 }
 
 #modal-cancel:hover,
 #sell-modal-cancel:hover {
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
 
 /* Toast */
@@ -719,8 +804,8 @@ tbody tr.highlighted-order:hover {
   position: fixed;
   bottom: 20px;
   right: 20px;
-  background: #000;
-  color: #fff;
+  background: var(--fg);
+  color: var(--bg);
   padding: 10px 20px;
   max-width: 400px;
   z-index: 1001;
@@ -731,11 +816,13 @@ tbody tr.highlighted-order:hover {
 }
 
 .toast.error {
-  background: #c00;
+  background: var(--bad-deal);
+  color: #fff;
 }
 
 .toast.success {
-  background: #080;
+  background: var(--good-deal);
+  color: #fff;
 }
 
 footer {
@@ -748,7 +835,7 @@ footer {
 }
 
 footer a {
-  color: #0000EE;
+  color: var(--link);
   text-decoration: none;
 }
 
@@ -758,7 +845,7 @@ footer a:hover {
 
 /* Loading Skeleton */
 .skeleton {
-  background: linear-gradient(90deg, #e8e8e8 25%, #f5f5f5 50%, #e8e8e8 75%);
+  background: linear-gradient(90deg, var(--skeleton-a) 25%, var(--skeleton-b) 50%, var(--skeleton-a) 75%);
   background-size: 200% 100%;
   animation: skeleton-loading 1.5s infinite;
   border-radius: 2px;
@@ -853,21 +940,21 @@ footer a:hover {
   #orders tbody tr {
     display: flex;
     flex-direction: column;
-    border: 1px solid #000;
+    border: 1px solid var(--border);
     padding: 12px;
-    background: #fff;
+    background: var(--bg);
   }
 
   #orders tbody tr:hover {
-    background: #f9f9f9;
+    background: var(--row-hover);
   }
 
   #orders tbody tr.own-order {
-    background: #fffde7;
+    background: var(--own-order);
   }
 
   #orders tbody tr.highlighted-order {
-    background: #e3f2fd;
+    background: var(--highlight);
   }
 
   #orders tbody td {
@@ -882,7 +969,7 @@ footer a:hover {
   #orders tbody td::before {
     content: attr(data-label);
     font-weight: bold;
-    color: #666;
+    color: var(--muted);
     flex-shrink: 0;
     margin-right: 10px;
   }
@@ -895,7 +982,7 @@ footer a:hover {
   #orders tbody td:first-child {
     justify-content: flex-start;
     padding-bottom: 8px;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border-light);
     margin-bottom: 4px;
   }
 

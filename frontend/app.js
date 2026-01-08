@@ -49,6 +49,33 @@
     blockExplorerUrls: ["https://sepolia.etherscan.io"]
   };
 
+  // ============================================================================
+  // Theme (Dark Mode)
+  // ============================================================================
+
+  function initTheme() {
+    const stored = localStorage.getItem("swapboard-theme");
+    if (stored === "dark") {
+      document.body.classList.add("dark-mode");
+      $("#theme-btn").textContent = "[Light]";
+    } else if (stored === "light") {
+      document.body.classList.remove("dark-mode");
+      $("#theme-btn").textContent = "[Dark]";
+    } else {
+      // No preference stored, check system preference
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        document.body.classList.add("dark-mode");
+        $("#theme-btn").textContent = "[Light]";
+      }
+    }
+  }
+
+  function toggleTheme() {
+    const isDark = document.body.classList.toggle("dark-mode");
+    localStorage.setItem("swapboard-theme", isDark ? "dark" : "light");
+    $("#theme-btn").textContent = isDark ? "[Light]" : "[Dark]";
+  }
+
   // Validate configuration - fail fast on placeholder values
   // Skips validation on localhost/file:// for development/testing
   function validateConfig() {
@@ -2646,7 +2673,16 @@
         showToast("Wallet connection cancelled", "info");
         return;
       }
-      showToast("Connection failed", "error");
+      const msg = (e.message || "").toLowerCase();
+      if (msg.includes("not connected")) {
+        showToast("Wallet not connected. Please unlock your wallet and try again.", "error");
+        return;
+      }
+      if (msg.includes("user rejected") || msg.includes("user denied")) {
+        showToast("Wallet connection cancelled", "info");
+        return;
+      }
+      showToast("Connection failed. Please try again.", "error");
     }
   }
 
@@ -2921,6 +2957,9 @@
     console.log("initApp started");
     validateConfig();
 
+    // Initialize dark mode from localStorage or system preference
+    initTheme();
+
     // Load saved preferences
     loadFilterPreferences();
     loadSortPreferences();
@@ -3039,6 +3078,11 @@
       notificationsEnabled = true;
       $("#notify-btn").textContent = "[Notify: On]";
     }
+
+    $("#theme-btn").addEventListener("click", (e) => {
+      e.preventDefault();
+      toggleTheme();
+    });
 
     $("#connect-btn").addEventListener("click", (e) => {
       e.preventDefault();
