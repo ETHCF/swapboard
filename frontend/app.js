@@ -2705,17 +2705,9 @@
     showToast("Exported " + data.orders.length + " orders", "success");
   }
 
-  async function switchWallet() {
-    try {
-      await window.ethereum.request({
-        method: "wallet_requestPermissions",
-        params: [{ eth_accounts: {} }]
-      });
-    } catch (err) {
-      if (err.code !== 4001) {
-        showToast("Failed to switch wallet", "error");
-      }
-    }
+  function switchWallet() {
+    disconnectWallet();
+    showToast("Disconnected. Click Connect to switch wallet.", "info");
   }
 
   function setupTokenInfoFetch(inputId, infoId, balanceId, quickAmountsId) {
