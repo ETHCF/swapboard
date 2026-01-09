@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
-/**
- * @title ISwapboard
- * @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
- * @notice Interface for the Swapboard OTC trading contract
- * @dev Implement this interface for composability with the Swapboard protocol.
- *      All amounts are in base units (wei-equivalent for 18 decimal tokens).
- */
-
 /// @title ISwapboard
-/// @notice Interface for the Swapboard contract
-/// @dev All external functions are defined here for composability
+/// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
+/// @notice Interface for the Swapboard OTC trading contract
+/// @dev Implement this interface for composability with the Swapboard protocol.
+///      All amounts are in base units (wei-equivalent for 18 decimal tokens).
 interface ISwapboard {
     /// @notice Represents a single OTC order
     /// @param maker Address that created the order and deposited tokenA

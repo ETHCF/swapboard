@@ -21,11 +21,17 @@ The following are in scope:
 - Frontend vulnerabilities that could lead to fund loss
 - Subgraph data integrity issues
 
-The following are out of scope:
-- Known behaviors documented below
-- Third-party dependencies (report to upstream)
-- Theoretical attacks without proof of concept
-- Social engineering attacks
+The following are explicitly out of scope:
+- Known behaviors documented in "Trust Assumptions" and "Known Limitations" sections
+- Third-party dependencies (OpenZeppelin, ethers.js) - report to upstream maintainers
+- Theoretical attacks without proof of concept or economic viability analysis
+- Social engineering, phishing, or UI spoofing attacks
+- Issues requiring compromised private keys
+- Network-level attacks (eclipse attacks, BGP hijacking)
+- Vulnerabilities in the testnet deployment or test tokens (TestToken.sol)
+- Frontend issues that do not lead to fund loss (cosmetic bugs, UX issues)
+- Subgraph indexing delays or temporary data inconsistencies
+- Gas optimization suggestions (unless they enable griefing attacks)
 
 ## Response Timeline
 
@@ -45,19 +51,37 @@ The following are out of scope:
 | Medium | Data integrity issues | State inconsistency, UI manipulation |
 | Low | Minor issues | Gas inefficiencies, cosmetic bugs |
 
+## Trust Assumptions
+
+The contract operates under these assumptions:
+
+1. **Token contracts are benign**: The contract trusts that ERC20 tokens behave correctly. Malicious tokens (e.g., tokens with transfer hooks, blacklists, or admin functions) can cause unexpected behavior or fund loss.
+
+2. **Users verify tokens**: Users are responsible for verifying token contract addresses and implementations before trading.
+
+3. **Block timestamps are accurate**: Order creation time relies on block timestamps, which miners can manipulate within ~15 seconds.
+
+4. **No oracle dependency**: The contract has no price feeds. Users set their own prices and are responsible for fair pricing.
+
+5. **Immutable deployment**: The contract cannot be upgraded or paused. Critical bugs require migration to a new contract.
+
 ## Known Limitations
 
 The following are documented design decisions, not vulnerabilities:
 
-1. **Front-running**: Inherent to on-chain orderbooks. Orders can be front-run by MEV bots.
+1. **Front-running**: Inherent to on-chain orderbooks. Orders can be front-run by MEV bots. Users should consider using private mempools for large orders.
 
-2. **Rebasing tokens**: May cause unexpected behavior. Users should not use rebasing tokens.
+2. **Rebasing tokens**: May cause unexpected behavior. If tokenA rebases down after order creation, the contract may not have enough to fulfill the order. Users should not use rebasing tokens.
 
-3. **Fee-on-transfer tokens**: Blocked for tokenA (selling token). Allowed for tokenB at maker's risk.
+3. **Fee-on-transfer tokens**: Blocked for tokenA (selling token) via balance checks. Allowed for tokenB at maker's risk (maker receives less than amountB).
 
-4. **Malicious tokens**: The contract cannot detect malicious token implementations. Users must verify token contracts before trading.
+4. **Malicious tokens**: The contract cannot detect malicious token implementations. Tokens with blacklists, pausability, or admin mint functions can disrupt trades.
 
-5. **No partial fills**: Orders must be filled entirely or not at all. This is by design.
+5. **No partial fills**: Orders must be filled entirely or not at all. This is by design for simplicity and gas efficiency.
+
+6. **No expiration**: Orders remain active until filled or cancelled. There is no automatic expiration mechanism.
+
+7. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
 
 ## Bug Bounty
 

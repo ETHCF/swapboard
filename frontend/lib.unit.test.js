@@ -328,8 +328,8 @@ describe("formatUsd", () => {
   // MUTATION: Use toFixed(0) instead of toFixed(2)
   // BREAKS: Returns "$ 6" instead of "$ 5.50"
   test("formats values >= 1 with 2 decimal places", () => {
-    expect(formatUsd(5.50)).toBe("$ 5.50");
-    expect(formatUsd(1.00)).toBe("$ 1.00");
+    expect(formatUsd(5.5)).toBe("$ 5.50");
+    expect(formatUsd(1.0)).toBe("$ 1.00");
     expect(formatUsd(999.99)).toBe("$ 999.99");
   });
 
@@ -980,7 +980,7 @@ describe("searchTokens", () => {
   // BREAKS: Same token appears twice
   test("returns unique results (no duplicates)", () => {
     const results = searchTokens("WETH", tokenList);
-    const symbols = results.map(t => t.symbol);
+    const symbols = results.map((t) => t.symbol);
     expect(new Set(symbols).size).toBe(symbols.length);
   });
 
@@ -1018,15 +1018,15 @@ describe("searchTokens", () => {
     // "BI" doesn't exact-match anything, so falls to startsWith
     const results = searchTokens("BI", tokens, 10);
     expect(results.length).toBe(2);
-    expect(results.some(t => t.symbol === "BIT")).toBe(true);
+    expect(results.some((t) => t.symbol === "BIT")).toBe(true);
   });
 
   // MUTATION: Change startsWith to endsWith
   // BREAKS: "WE" wouldn't match "WETH"
   test("startsWith matches prefix not suffix", () => {
     const results = searchTokens("WE", tokenList, 10);
-    expect(results.some(t => t.symbol === "WETH")).toBe(true);
-    expect(results.some(t => t.symbol === "WETHABC")).toBe(true);
+    expect(results.some((t) => t.symbol === "WETH")).toBe(true);
+    expect(results.some((t) => t.symbol === "WETHABC")).toBe(true);
   });
 
   // MUTATION: Use toUpperCase instead of toLowerCase in any loop
@@ -1034,8 +1034,8 @@ describe("searchTokens", () => {
   test("all loops use lowercase comparison", () => {
     // Test all three loops with lowercase query
     expect(searchTokens("weth", tokenList, 10)[0].symbol).toBe("WETH"); // exact
-    expect(searchTokens("wet", tokenList, 10).some(t => t.symbol === "WETH")).toBe(true); // startsWith
-    expect(searchTokens("eth", tokenList, 10).some(t => t.symbol === "WETH")).toBe(true); // includes
+    expect(searchTokens("wet", tokenList, 10).some((t) => t.symbol === "WETH")).toBe(true); // startsWith
+    expect(searchTokens("eth", tokenList, 10).some((t) => t.symbol === "WETH")).toBe(true); // includes
   });
 
   // MUTATION: Change query.length < 1 to false
@@ -1043,7 +1043,7 @@ describe("searchTokens", () => {
   test("accepts single character query (length >= 1)", () => {
     const results = searchTokens("W", tokenList, 10);
     expect(results.length).toBeGreaterThan(0);
-    expect(results.some(t => t.symbol.startsWith("W"))).toBe(true);
+    expect(results.some((t) => t.symbol.startsWith("W"))).toBe(true);
   });
 
   // MUTATION: Remove startsWith loop (for loop at line 328)
@@ -1062,8 +1062,8 @@ describe("searchTokens", () => {
   // BREAKS: Prefix search wouldn't work
   test("second loop uses startsWith not endsWith", () => {
     const tokens = [
-      { symbol: "ENDING", name: "Token" },  // ends with ING
-      { symbol: "INGEST", name: "Token" },  // starts with ING
+      { symbol: "ENDING", name: "Token" }, // ends with ING
+      { symbol: "INGEST", name: "Token" }, // starts with ING
     ];
     // "ING" with startsWith finds INGEST first
     const results = searchTokens("ING", tokens, 10);
@@ -1080,7 +1080,7 @@ describe("searchTokens", () => {
     ];
     const results = searchTokens("PRE", tokens, 10);
     expect(results.length).toBe(2);
-    expect(results.every(t => t.symbol.startsWith("PRE"))).toBe(true);
+    expect(results.every((t) => t.symbol.startsWith("PRE"))).toBe(true);
   });
 
   // MUTATION: Change >= limit to > limit in includes loop (line 339)
@@ -1126,9 +1126,7 @@ describe("searchTokens", () => {
   // MUTATION: Change toLowerCase to toUpperCase in name.includes check
   // BREAKS: Lowercase query wouldn't match name
   test("includes loop matches name case-insensitively", () => {
-    const tokens = [
-      { symbol: "NOTSEARCH", name: "Contains FINDME Here" },
-    ];
+    const tokens = [{ symbol: "NOTSEARCH", name: "Contains FINDME Here" }];
     // "findme" (lowercase) should match "FINDME" in name via includes
     const results = searchTokens("findme", tokens, 10);
     expect(results.length).toBe(1);
@@ -1165,9 +1163,7 @@ describe("getRecentTokens / addRecentToken", () => {
   // MUTATION: Append instead of prepend
   // BREAKS: New token at end instead of front
   test("addRecentToken adds to front of list", () => {
-    localStorage.setItem(RECENT_TOKENS_KEY, JSON.stringify([
-      { address: "0xold", symbol: "OLD" }
-    ]));
+    localStorage.setItem(RECENT_TOKENS_KEY, JSON.stringify([{ address: "0xold", symbol: "OLD" }]));
     addRecentToken("0xnew", "NEW", localStorage);
     expect(getRecentTokens(localStorage)[0].symbol).toBe("NEW");
   });
@@ -1175,9 +1171,7 @@ describe("getRecentTokens / addRecentToken", () => {
   // MUTATION: Don't remove duplicates
   // BREAKS: Same address appears twice
   test("addRecentToken removes existing entry before adding", () => {
-    localStorage.setItem(RECENT_TOKENS_KEY, JSON.stringify([
-      { address: "0x123", symbol: "OLD" }
-    ]));
+    localStorage.setItem(RECENT_TOKENS_KEY, JSON.stringify([{ address: "0x123", symbol: "OLD" }]));
     addRecentToken("0x123", "UPDATED", localStorage);
     const result = getRecentTokens(localStorage);
     expect(result.length).toBe(1);
@@ -1187,9 +1181,7 @@ describe("getRecentTokens / addRecentToken", () => {
   // MUTATION: Case-sensitive address comparison
   // BREAKS: 0xABC and 0xabc both in list
   test("addRecentToken deduplicates case-insensitively", () => {
-    localStorage.setItem(RECENT_TOKENS_KEY, JSON.stringify([
-      { address: "0xABC", symbol: "OLD" }
-    ]));
+    localStorage.setItem(RECENT_TOKENS_KEY, JSON.stringify([{ address: "0xABC", symbol: "OLD" }]));
     addRecentToken("0xabc", "NEW", localStorage);
     expect(getRecentTokens(localStorage).length).toBe(1);
   });
@@ -1198,7 +1190,8 @@ describe("getRecentTokens / addRecentToken", () => {
   // BREAKS: List grows forever
   test("addRecentToken limits to MAX_RECENT_TOKENS", () => {
     const tokens = Array.from({ length: 10 }, (_, i) => ({
-      address: `0x${i}`, symbol: `T${i}`
+      address: `0x${i}`,
+      symbol: `T${i}`,
     }));
     localStorage.setItem(RECENT_TOKENS_KEY, JSON.stringify(tokens));
     addRecentToken("0xnew", "NEW", localStorage);
@@ -1228,30 +1221,63 @@ describe("watchOrder / unwatchOrder / isOrderWatched", () => {
   // MUTATION: Hardcode status as "Open"
   // BREAKS: Filled orders show status "Open"
   test("watchOrder stores correct status based on order state", () => {
-    watchOrder({ orderId: "1", active: true, taker: null, tokenA: { symbol: "A" }, tokenB: { symbol: "B" } }, localStorage);
+    watchOrder(
+      { orderId: "1", active: true, taker: null, tokenA: { symbol: "A" }, tokenB: { symbol: "B" } },
+      localStorage
+    );
     expect(getWatchedOrders(localStorage)["1"].status).toBe("Open");
 
-    watchOrder({ orderId: "2", active: false, taker: "0x123", tokenA: { symbol: "A" }, tokenB: { symbol: "B" } }, localStorage);
+    watchOrder(
+      {
+        orderId: "2",
+        active: false,
+        taker: "0x123",
+        tokenA: { symbol: "A" },
+        tokenB: { symbol: "B" },
+      },
+      localStorage
+    );
     expect(getWatchedOrders(localStorage)["2"].status).toBe("Filled");
 
-    watchOrder({ orderId: "3", active: false, taker: null, tokenA: { symbol: "A" }, tokenB: { symbol: "B" } }, localStorage);
+    watchOrder(
+      {
+        orderId: "3",
+        active: false,
+        taker: null,
+        tokenA: { symbol: "A" },
+        tokenB: { symbol: "B" },
+      },
+      localStorage
+    );
     expect(getWatchedOrders(localStorage)["3"].status).toBe("Cancelled");
   });
 
   // MUTATION: Store only tokenA symbol
   // BREAKS: symbol is "A" instead of "A/B"
   test("watchOrder stores symbol pair", () => {
-    watchOrder({ orderId: "1", active: true, taker: null, tokenA: { symbol: "WETH" }, tokenB: { symbol: "USDC" } }, localStorage);
+    watchOrder(
+      {
+        orderId: "1",
+        active: true,
+        taker: null,
+        tokenA: { symbol: "WETH" },
+        tokenB: { symbol: "USDC" },
+      },
+      localStorage
+    );
     expect(getWatchedOrders(localStorage)["1"].symbol).toBe("WETH/USDC");
   });
 
   // MUTATION: Clear entire storage on unwatch
   // BREAKS: All watched orders deleted
   test("unwatchOrder removes only specified order", () => {
-    localStorage.setItem(WATCHED_ORDERS_KEY, JSON.stringify({
-      "1": { status: "Open", symbol: "A/B" },
-      "2": { status: "Filled", symbol: "C/D" }
-    }));
+    localStorage.setItem(
+      WATCHED_ORDERS_KEY,
+      JSON.stringify({
+        1: { status: "Open", symbol: "A/B" },
+        2: { status: "Filled", symbol: "C/D" },
+      })
+    );
     unwatchOrder("1", localStorage);
     const watched = getWatchedOrders(localStorage);
     expect(watched["1"]).toBeUndefined();
@@ -1261,9 +1287,12 @@ describe("watchOrder / unwatchOrder / isOrderWatched", () => {
   // MUTATION: Return truthy object instead of boolean
   // BREAKS: Returns { status: "Open" } instead of true
   test("isOrderWatched returns boolean", () => {
-    localStorage.setItem(WATCHED_ORDERS_KEY, JSON.stringify({
-      "1": { status: "Open", symbol: "A/B" }
-    }));
+    localStorage.setItem(
+      WATCHED_ORDERS_KEY,
+      JSON.stringify({
+        1: { status: "Open", symbol: "A/B" },
+      })
+    );
     expect(isOrderWatched("1", localStorage)).toBe(true);
     expect(isOrderWatched("999", localStorage)).toBe(false);
   });
@@ -1325,17 +1354,56 @@ describe("filter/sort preferences", () => {
 
 describe("sortOrders", () => {
   const orders = [
-    { orderId: "2", maker: "0xbbb", tokenA: { symbol: "USDC" }, tokenB: { symbol: "WETH" }, amountA: "2000000000", amountB: "1000000000000000000", _usdValue: 2000, _price: 0.0005 },
-    { orderId: "1", maker: "0xaaa", tokenA: { symbol: "WETH" }, tokenB: { symbol: "USDC" }, amountA: "1000000000000000000", amountB: "3500000000", _usdValue: 3500, _price: 3500 },
-    { orderId: "3", maker: "0xccc", tokenA: { symbol: "DAI" }, tokenB: { symbol: "USDT" }, amountA: "5000000000000000000", amountB: "5000000", _usdValue: 5000, _price: 1 },
+    {
+      orderId: "2",
+      maker: "0xbbb",
+      tokenA: { symbol: "USDC" },
+      tokenB: { symbol: "WETH" },
+      amountA: "2000000000",
+      amountB: "1000000000000000000",
+      _usdValue: 2000,
+      _price: 0.0005,
+    },
+    {
+      orderId: "1",
+      maker: "0xaaa",
+      tokenA: { symbol: "WETH" },
+      tokenB: { symbol: "USDC" },
+      amountA: "1000000000000000000",
+      amountB: "3500000000",
+      _usdValue: 3500,
+      _price: 3500,
+    },
+    {
+      orderId: "3",
+      maker: "0xccc",
+      tokenA: { symbol: "DAI" },
+      tokenB: { symbol: "USDT" },
+      amountA: "5000000000000000000",
+      amountB: "5000000",
+      _usdValue: 5000,
+      _price: 1,
+    },
   ];
 
   // MUTATION: Use string comparison for orderId
   // BREAKS: "10" sorts before "2"
   test("sorts orderId numerically", () => {
-    const withTen = [...orders, { orderId: "10", maker: "", tokenA: { symbol: "" }, tokenB: { symbol: "" }, amountA: "1", amountB: "1", _usdValue: 0, _price: 0 }];
+    const withTen = [
+      ...orders,
+      {
+        orderId: "10",
+        maker: "",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        amountA: "1",
+        amountB: "1",
+        _usdValue: 0,
+        _price: 0,
+      },
+    ];
     const sorted = sortOrders(withTen, "orderId", "asc");
-    expect(sorted.map(o => o.orderId)).toEqual(["1", "2", "3", "10"]);
+    expect(sorted.map((o) => o.orderId)).toEqual(["1", "2", "3", "10"]);
   });
 
   // MUTATION: Invert asc/desc comparison
@@ -1350,8 +1418,26 @@ describe("sortOrders", () => {
   // BREAKS: Large amounts overflow and sort wrong
   test("sorts amountA as BigInt (handles large values)", () => {
     const bigOrders = [
-      { orderId: "1", amountA: "999999999999999999999999999", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
-      { orderId: "2", amountA: "1", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      {
+        orderId: "1",
+        amountA: "999999999999999999999999999",
+        amountB: "1",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
+      {
+        orderId: "2",
+        amountA: "1",
+        amountB: "1",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
     ];
     const sorted = sortOrders(bigOrders, "amountA", "asc");
     expect(sorted[0].orderId).toBe("2"); // Smaller first
@@ -1360,9 +1446,9 @@ describe("sortOrders", () => {
   // MUTATION: Sort in place instead of copying
   // BREAKS: Original array is mutated
   test("does not mutate original array", () => {
-    const original = orders.map(o => o.orderId);
+    const original = orders.map((o) => o.orderId);
     sortOrders(orders, "orderId", "asc");
-    expect(orders.map(o => o.orderId)).toEqual(original);
+    expect(orders.map((o) => o.orderId)).toEqual(original);
   });
 
   // MUTATION: Throw for unknown column
@@ -1401,8 +1487,26 @@ describe("sortOrders", () => {
   // BREAKS: Large amountB values overflow and sort incorrectly
   test("sorts amountB as BigInt (handles large values)", () => {
     const bigOrders = [
-      { orderId: "1", amountA: "1", amountB: "999999999999999999999999999", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
-      { orderId: "2", amountA: "1", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      {
+        orderId: "1",
+        amountA: "1",
+        amountB: "999999999999999999999999999",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
+      {
+        orderId: "2",
+        amountA: "1",
+        amountB: "1",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
     ];
     const sorted = sortOrders(bigOrders, "amountB", "asc");
     expect(sorted[0].orderId).toBe("2"); // Smaller first
@@ -1412,8 +1516,26 @@ describe("sortOrders", () => {
   // BREAKS: desc order returns wrong sequence
   test("sorts amountA descending correctly", () => {
     const bigOrders = [
-      { orderId: "1", amountA: "1", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
-      { orderId: "2", amountA: "999999999999999999999999999", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      {
+        orderId: "1",
+        amountA: "1",
+        amountB: "1",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
+      {
+        orderId: "2",
+        amountA: "999999999999999999999999999",
+        amountB: "1",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
     ];
     const sorted = sortOrders(bigOrders, "amountA", "desc");
     expect(sorted[0].orderId).toBe("2"); // Larger first in desc
@@ -1424,8 +1546,26 @@ describe("sortOrders", () => {
   // BREAKS: desc order returns wrong sequence
   test("sorts amountB descending correctly", () => {
     const bigOrders = [
-      { orderId: "1", amountA: "1", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
-      { orderId: "2", amountA: "1", amountB: "999999999999999999999999999", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      {
+        orderId: "1",
+        amountA: "1",
+        amountB: "1",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
+      {
+        orderId: "2",
+        amountA: "1",
+        amountB: "999999999999999999999999999",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
     ];
     const sorted = sortOrders(bigOrders, "amountB", "desc");
     expect(sorted[0].orderId).toBe("2"); // Larger first in desc
@@ -1454,8 +1594,26 @@ describe("sortOrders", () => {
   // BREAKS: Identical orders have unstable sort order
   test("returns 0 for equal values (stable sort)", () => {
     const equalOrders = [
-      { orderId: "1", maker: "0xaaa", tokenA: { symbol: "A" }, tokenB: { symbol: "B" }, amountA: "100", amountB: "100", _usdValue: 100, _price: 1 },
-      { orderId: "2", maker: "0xaaa", tokenA: { symbol: "A" }, tokenB: { symbol: "B" }, amountA: "100", amountB: "100", _usdValue: 100, _price: 1 },
+      {
+        orderId: "1",
+        maker: "0xaaa",
+        tokenA: { symbol: "A" },
+        tokenB: { symbol: "B" },
+        amountA: "100",
+        amountB: "100",
+        _usdValue: 100,
+        _price: 1,
+      },
+      {
+        orderId: "2",
+        maker: "0xaaa",
+        tokenA: { symbol: "A" },
+        tokenB: { symbol: "B" },
+        amountA: "100",
+        amountB: "100",
+        _usdValue: 100,
+        _price: 1,
+      },
     ];
     const sorted = sortOrders(equalOrders, "maker", "asc");
     // With stable sort (return 0), original order is preserved
@@ -1467,8 +1625,26 @@ describe("sortOrders", () => {
   // BREAKS: Equal amounts would incorrectly return -1 instead of falling through to return 0
   test("amountA boundary: equal values return 0 (< not <=)", () => {
     const equalAmounts = [
-      { orderId: "1", amountA: "1000000000000000000", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
-      { orderId: "2", amountA: "1000000000000000000", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      {
+        orderId: "1",
+        amountA: "1000000000000000000",
+        amountB: "1",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
+      {
+        orderId: "2",
+        amountA: "1000000000000000000",
+        amountB: "1",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
     ];
     const sorted = sortOrders(equalAmounts, "amountA", "asc");
     // Equal amounts should preserve original order (stable sort)
@@ -1480,8 +1656,26 @@ describe("sortOrders", () => {
   // BREAKS: Equal amounts would incorrectly return -1 instead of falling through to return 0
   test("amountB boundary: equal values return 0 (< not <=)", () => {
     const equalAmounts = [
-      { orderId: "1", amountA: "1", amountB: "1000000000000000000", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
-      { orderId: "2", amountA: "1", amountB: "1000000000000000000", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      {
+        orderId: "1",
+        amountA: "1",
+        amountB: "1000000000000000000",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
+      {
+        orderId: "2",
+        amountA: "1",
+        amountB: "1000000000000000000",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
     ];
     const sorted = sortOrders(equalAmounts, "amountB", "asc");
     // Equal amounts should preserve original order (stable sort)
@@ -1493,8 +1687,26 @@ describe("sortOrders", () => {
   // BREAKS: Equal amounts in desc would return 1 instead of falling through
   test("amountA boundary desc: equal values return 0 (> not >=)", () => {
     const equalAmounts = [
-      { orderId: "1", amountA: "5000", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
-      { orderId: "2", amountA: "5000", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      {
+        orderId: "1",
+        amountA: "5000",
+        amountB: "1",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
+      {
+        orderId: "2",
+        amountA: "5000",
+        amountB: "1",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
     ];
     const sorted = sortOrders(equalAmounts, "amountA", "desc");
     expect(sorted[0].orderId).toBe("1");
@@ -1505,8 +1717,26 @@ describe("sortOrders", () => {
   // BREAKS: Equal amounts in desc would return 1 instead of falling through
   test("amountB boundary desc: equal values return 0 (> not >=)", () => {
     const equalAmounts = [
-      { orderId: "1", amountA: "1", amountB: "5000", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
-      { orderId: "2", amountA: "1", amountB: "5000", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      {
+        orderId: "1",
+        amountA: "1",
+        amountB: "5000",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
+      {
+        orderId: "2",
+        amountA: "1",
+        amountB: "5000",
+        tokenA: { symbol: "" },
+        tokenB: { symbol: "" },
+        maker: "",
+        _usdValue: 0,
+        _price: 0,
+      },
     ];
     const sorted = sortOrders(equalAmounts, "amountB", "desc");
     expect(sorted[0].orderId).toBe("1");
@@ -1579,7 +1809,9 @@ describe("parseContractError", () => {
   // MUTATION: Don't check nested e.info.error.data
   // BREAKS: ethers.js v6 errors not decoded
   test("extracts error from e.info.error.data (ethers v6)", () => {
-    expect(parseContractError({ info: { error: { data: "0x1f2a2005" } } })).toBe("Amount cannot be zero");
+    expect(parseContractError({ info: { error: { data: "0x1f2a2005" } } })).toBe(
+      "Amount cannot be zero"
+    );
   });
 
   // MUTATION: Don't handle code 4001
@@ -1603,14 +1835,18 @@ describe("parseContractError", () => {
   // MUTATION: Don't parse reason from message
   // BREAKS: Shows full ugly revert message
   test("extracts reason from execution reverted message", () => {
-    expect(parseContractError({ message: 'execution reverted: reason="Custom error"' })).toBe("Custom error");
+    expect(parseContractError({ message: 'execution reverted: reason="Custom error"' })).toBe(
+      "Custom error"
+    );
   });
 
   // MUTATION: Return raw revert message instead of fallback
   // BREAKS: Shows "execution reverted" instead of "Transaction would fail"
   test("returns fallback for execution reverted without reason", () => {
     expect(parseContractError({ message: "execution reverted" })).toBe("Transaction would fail");
-    expect(parseContractError({ message: "call revert exception; execution reverted" })).toBe("Transaction would fail");
+    expect(parseContractError({ message: "call revert exception; execution reverted" })).toBe(
+      "Transaction would fail"
+    );
   });
 
   // MUTATION: Return undefined for empty error
@@ -1628,17 +1864,23 @@ describe("validateConfig", () => {
   // MUTATION: Validate even in local mode
   // BREAKS: Local development requires real config
   test("skips validation in local mode", () => {
-    const result = validateConfig({ CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000" }, true);
+    const result = validateConfig(
+      { CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000" },
+      true
+    );
     expect(result.valid).toBe(true);
   });
 
   // MUTATION: Accept zero address
   // BREAKS: Transactions would go to zero address
   test("rejects zero address for contract", () => {
-    const result = validateConfig({
-      CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000",
-      SUBGRAPH_URL: "https://valid.url"
-    }, false);
+    const result = validateConfig(
+      {
+        CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000",
+        SUBGRAPH_URL: "https://valid.url",
+      },
+      false
+    );
     expect(result.valid).toBe(false);
     expect(result.errors).toContain("CONTRACT_ADDRESS is not configured");
   });
@@ -1646,10 +1888,13 @@ describe("validateConfig", () => {
   // MUTATION: Accept YOUR_ID placeholder
   // BREAKS: Subgraph queries would 404
   test("rejects placeholder in subgraph URL", () => {
-    const result = validateConfig({
-      CONTRACT_ADDRESS: "0x1234567890123456789012345678901234567890",
-      SUBGRAPH_URL: "https://api.thegraph.com/YOUR_ID/subgraph"
-    }, false);
+    const result = validateConfig(
+      {
+        CONTRACT_ADDRESS: "0x1234567890123456789012345678901234567890",
+        SUBGRAPH_URL: "https://api.thegraph.com/YOUR_ID/subgraph",
+      },
+      false
+    );
     expect(result.valid).toBe(false);
     expect(result.errors).toContain("SUBGRAPH_URL is not configured");
   });
@@ -1657,20 +1902,26 @@ describe("validateConfig", () => {
   // MUTATION: Only report first error
   // BREAKS: User fixes one issue, still broken
   test("reports all errors at once", () => {
-    const result = validateConfig({
-      CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000",
-      SUBGRAPH_URL: "https://YOUR_ID/subgraph"
-    }, false);
+    const result = validateConfig(
+      {
+        CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000",
+        SUBGRAPH_URL: "https://YOUR_ID/subgraph",
+      },
+      false
+    );
     expect(result.errors.length).toBe(2);
   });
 
   // MUTATION: Return invalid for valid config
   // BREAKS: Production deployment blocked
   test("accepts valid configuration", () => {
-    const result = validateConfig({
-      CONTRACT_ADDRESS: "0x1234567890123456789012345678901234567890",
-      SUBGRAPH_URL: "https://api.goldsky.com/valid/subgraph"
-    }, false);
+    const result = validateConfig(
+      {
+        CONTRACT_ADDRESS: "0x1234567890123456789012345678901234567890",
+        SUBGRAPH_URL: "https://api.goldsky.com/valid/subgraph",
+      },
+      false
+    );
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
   });

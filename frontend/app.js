@@ -33,7 +33,8 @@
     // Contract address on Sepolia testnet
     CONTRACT_ADDRESS: "0xBe3D7A555aa633263110d10d37AB40Ef3a2b8BBa",
     // Goldsky subgraph endpoint (Sepolia)
-    SUBGRAPH_URL: "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/1.0.0/gn",
+    SUBGRAPH_URL:
+      "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/1.0.0/gn",
     // Number of orders per page
     PAGE_SIZE: 20,
     // Request timeout in milliseconds
@@ -50,7 +51,7 @@
     chainName: "Sepolia",
     nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
     rpcUrls: ["https://rpc.sepolia.org"],
-    blockExplorerUrls: ["https://sepolia.etherscan.io"]
+    blockExplorerUrls: ["https://sepolia.etherscan.io"],
   };
 
   // ============================================================================
@@ -93,15 +94,18 @@
   }
 
   function updateNotifyText() {
-    $("#wallet-notifications").textContent = notificationsEnabled ? "Disable Notifications" : "Enable Notifications";
+    $("#wallet-notifications").textContent = notificationsEnabled
+      ? "Disable Notifications"
+      : "Enable Notifications";
   }
 
   // Validate configuration - fail fast on placeholder values
   // Skips validation on localhost/file:// for development/testing
   function validateConfig() {
-    const isLocal = window.location.hostname === "localhost"
-      || window.location.hostname === "127.0.0.1"
-      || window.location.protocol === "file:";
+    const isLocal =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.protocol === "file:";
 
     if (isLocal) {
       console.warn("Development mode: skipping config validation");
@@ -116,9 +120,13 @@
       errors.push("SUBGRAPH_URL is not configured");
     }
     if (errors.length > 0) {
-      const msg = "Configuration error: " + errors.join(", ") + ". Update CONFIG in app.js before deployment.";
+      const msg =
+        "Configuration error: " +
+        errors.join(", ") +
+        ". Update CONFIG in app.js before deployment.";
       console.error(msg);
-      document.body.innerHTML = '<div style="color:red;padding:20px;font-family:monospace;">' + msg + '</div>';
+      document.body.innerHTML =
+        '<div style="color:red;padding:20px;font-family:monospace;">' + msg + "</div>";
       throw new Error(msg);
     }
   }
@@ -141,7 +149,7 @@
     "error BalanceMismatch(uint256 expected, uint256 received)",
     "error OrderNotFound(uint256 orderId)",
     "error OrderNotActive(uint256 orderId)",
-    "error NotMaker(uint256 orderId, address caller, address maker)"
+    "error NotMaker(uint256 orderId, address caller, address maker)",
   ];
 
   const ERC20_ABI = [
@@ -150,7 +158,7 @@
     "function decimals() view returns (uint8)",
     "function balanceOf(address) view returns (uint256)",
     "function allowance(address owner, address spender) view returns (uint256)",
-    "function approve(address spender, uint256 amount) returns (bool)"
+    "function approve(address spender, uint256 amount) returns (bool)",
   ];
 
   let provider = null;
@@ -161,7 +169,7 @@
   // Create form state for validation
   const createFormState = {
     tokenA: { info: null, balance: null },
-    tokenB: { info: null, balance: null }
+    tokenB: { info: null, balance: null },
   };
 
   const tokenCache = new Map();
@@ -246,8 +254,10 @@
 
     priceFetchInProgress = (async () => {
       try {
-        const url = "https://api.coingecko.com/api/v3/simple/price?ids=" +
-          idsToFetch.join(",") + "&vs_currencies=usd";
+        const url =
+          "https://api.coingecko.com/api/v3/simple/price?ids=" +
+          idsToFetch.join(",") +
+          "&vs_currencies=usd";
         const res = await fetch(url, { signal: controller.signal });
         clearTimeout(timeoutId);
 
@@ -371,14 +381,14 @@
   async function batchResolveEns(addresses) {
     if (!provider) return;
 
-    const uncached = addresses.filter(addr => !ensCache.has(addr.toLowerCase()));
+    const uncached = addresses.filter((addr) => !ensCache.has(addr.toLowerCase()));
     if (uncached.length === 0) return;
 
     // Resolve in parallel, limit to 10 concurrent lookups
     const batchSize = 10;
     for (let i = 0; i < uncached.length; i += batchSize) {
       const batch = uncached.slice(i, i + batchSize);
-      await Promise.all(batch.map(addr => resolveEns(addr)));
+      await Promise.all(batch.map((addr) => resolveEns(addr)));
     }
   }
 
@@ -471,7 +481,7 @@
     try {
       const notification = new Notification(title, {
         body: body,
-        tag: tag
+        tag: tag,
       });
 
       notification.onclick = () => {
@@ -496,7 +506,7 @@
     try {
       const [gasEstimate, feeData] = await Promise.all([
         provider.estimateGas(txParams),
-        provider.getFeeData()
+        provider.getFeeData(),
       ]);
 
       const gasPrice = feeData.gasPrice || feeData.maxFeePerGas;
@@ -512,7 +522,7 @@
       return {
         gas: gasEstimate.toString(),
         eth: gasCostEth < 0.0001 ? gasCostEth.toExponential(2) : gasCostEth.toFixed(6),
-        usd: gasCostUsd ? formatUsd(gasCostUsd) : "$ --"
+        usd: gasCostUsd ? formatUsd(gasCostUsd) : "$ --",
       };
     } catch (e) {
       console.error("Gas estimation error:", e);
@@ -553,13 +563,13 @@
       const data = await res.json();
       // Filter to Ethereum mainnet (chainId: 1)
       uniswapTokens = (data.tokens || [])
-        .filter(t => t.chainId === 1)
-        .map(t => ({
+        .filter((t) => t.chainId === 1)
+        .map((t) => ({
           address: t.address.toLowerCase(),
           symbol: t.symbol,
           name: t.name,
           decimals: t.decimals,
-          logoURI: t.logoURI
+          logoURI: t.logoURI,
         }));
     } catch (e) {
       console.error("Failed to fetch Uniswap token list:", e);
@@ -595,7 +605,10 @@
 
     // Symbol or name contains query
     for (const t of uniswapTokens) {
-      if ((t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)) && !results.includes(t)) {
+      if (
+        (t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)) &&
+        !results.includes(t)
+      ) {
         results.push(t);
         if (results.length >= limit) return results;
       }
@@ -669,7 +682,9 @@
         const img = document.createElement("img");
         img.src = token.logoURI;
         img.className = "token-logo";
-        img.onerror = () => { img.style.display = "none"; };
+        img.onerror = () => {
+          img.style.display = "none";
+        };
         item.appendChild(img);
       }
 
@@ -758,7 +773,9 @@
       } else if (e.key === "Enter" && selectedIndex >= 0) {
         e.preventDefault();
         const items = dropdown.querySelectorAll(".token-selector-item");
-        const selected = Array.from(items).find(item => parseInt(item.dataset.index) === selectedIndex);
+        const selected = Array.from(items).find(
+          (item) => parseInt(item.dataset.index) === selectedIndex
+        );
         if (selected) selected.click();
       } else if (e.key === "Escape") {
         dropdown.classList.add("hidden");
@@ -798,7 +815,7 @@
     const lowerAddr = address.toLowerCase();
 
     // Remove if already exists
-    const filtered = recent.filter(t => t.address.toLowerCase() !== lowerAddr);
+    const filtered = recent.filter((t) => t.address.toLowerCase() !== lowerAddr);
 
     // Add to front
     filtered.unshift({ address, symbol });
@@ -888,10 +905,10 @@
    */
   function watchOrder(order) {
     const watched = getWatchedOrders();
-    const status = order.active ? "Open" : (order.taker ? "Filled" : "Cancelled");
+    const status = order.active ? "Open" : order.taker ? "Filled" : "Cancelled";
     watched[order.orderId] = {
       status: status,
-      symbol: order.tokenA.symbol + "/" + order.tokenB.symbol
+      symbol: order.tokenA.symbol + "/" + order.tokenB.symbol,
     };
     try {
       localStorage.setItem(WATCHED_ORDERS_KEY, JSON.stringify(watched));
@@ -936,7 +953,7 @@
       const savedInfo = watched[order.orderId];
       if (!savedInfo) continue;
 
-      const currentStatus = order.active ? "Open" : (order.taker ? "Filled" : "Cancelled");
+      const currentStatus = order.active ? "Open" : order.taker ? "Filled" : "Cancelled";
       if (savedInfo.status !== currentStatus) {
         // Status changed, send notification
         if (currentStatus === "Filled") {
@@ -991,7 +1008,7 @@
       title.textContent = "Recent:";
       dropdown.appendChild(title);
 
-      recent.forEach(token => {
+      recent.forEach((token) => {
         const item = document.createElement("div");
         item.className = "recent-token-item";
         item.textContent = token.symbol;
@@ -1033,7 +1050,9 @@
       try {
         await navigator.clipboard.writeText(text);
         btn.innerHTML = "&#x2713;";
-        setTimeout(() => { btn.innerHTML = "&#x29C9;"; }, 1000);
+        setTimeout(() => {
+          btn.innerHTML = "&#x29C9;";
+        }, 1000);
       } catch (err) {
         console.error("Copy failed:", err);
       }
@@ -1186,8 +1205,12 @@
     if (msg.includes("user rejected") || msg.includes("user denied")) {
       return "Transaction cancelled";
     }
-    if (msg.includes("insufficient") || msg.includes("exceeds balance") ||
-        msg.includes("transfer amount exceeds") || msg.includes("erc20: transfer amount")) {
+    if (
+      msg.includes("insufficient") ||
+      msg.includes("exceeds balance") ||
+      msg.includes("transfer amount exceeds") ||
+      msg.includes("erc20: transfer amount")
+    ) {
       return "Insufficient token balance";
     }
     if (msg.includes("allowance") || msg.includes("erc20: insufficient allowance")) {
@@ -1271,8 +1294,16 @@
           const amtB1 = BigInt(a.amountB);
           const amtA2 = BigInt(b.amountA);
           const amtB2 = BigInt(b.amountB);
-          valA = amtA1 > 0n ? Number(amtB1) / Number(amtA1) * Math.pow(10, a.tokenA.decimals - a.tokenB.decimals) : 0;
-          valB = amtA2 > 0n ? Number(amtB2) / Number(amtA2) * Math.pow(10, b.tokenA.decimals - b.tokenB.decimals) : 0;
+          valA =
+            amtA1 > 0n
+              ? (Number(amtB1) / Number(amtA1)) *
+                Math.pow(10, a.tokenA.decimals - a.tokenB.decimals)
+              : 0;
+          valB =
+            amtA2 > 0n
+              ? (Number(amtB2) / Number(amtA2)) *
+                Math.pow(10, b.tokenA.decimals - b.tokenB.decimals)
+              : 0;
           break;
         default:
           return 0;
@@ -1305,7 +1336,7 @@
    * Updates sort indicators in table headers.
    */
   function updateSortIndicators() {
-    document.querySelectorAll("thead th[data-sort]").forEach(th => {
+    document.querySelectorAll("thead th[data-sort]").forEach((th) => {
       const col = th.dataset.sort;
       const indicator = th.querySelector(".sort-indicator");
       if (indicator) {
@@ -1413,8 +1444,14 @@
     if (gasEstimate) {
       const gasDiv = document.createElement("div");
       gasDiv.className = "gas-estimate";
-      gasDiv.innerHTML = "<br>Estimated gas: " + escapeHtml(gasEstimate.gas) +
-        " (~" + escapeHtml(gasEstimate.eth) + " ETH / " + escapeHtml(gasEstimate.usd) + ")";
+      gasDiv.innerHTML =
+        "<br>Estimated gas: " +
+        escapeHtml(gasEstimate.gas) +
+        " (~" +
+        escapeHtml(gasEstimate.eth) +
+        " ETH / " +
+        escapeHtml(gasEstimate.usd) +
+        ")";
       bodyEl.appendChild(gasDiv);
     }
 
@@ -1539,8 +1576,20 @@
       const humanB = Number(amountB) / Math.pow(10, tokenBDecimals);
       const priceAPerB = humanA / humanB;
       const priceBPerA = humanB / humanA;
-      priceEl.innerHTML = "1 " + escapeHtml(order.tokenB.symbol) + " = " + priceAPerB.toFixed(6) + " " + escapeHtml(order.tokenA.symbol) + "<br>" +
-                          "1 " + escapeHtml(order.tokenA.symbol) + " = " + priceBPerA.toFixed(6) + " " + escapeHtml(order.tokenB.symbol);
+      priceEl.innerHTML =
+        "1 " +
+        escapeHtml(order.tokenB.symbol) +
+        " = " +
+        priceAPerB.toFixed(6) +
+        " " +
+        escapeHtml(order.tokenA.symbol) +
+        "<br>" +
+        "1 " +
+        escapeHtml(order.tokenA.symbol) +
+        " = " +
+        priceBPerA.toFixed(6) +
+        " " +
+        escapeHtml(order.tokenB.symbol);
     } else {
       priceEl.textContent = "--";
     }
@@ -1635,7 +1684,9 @@
     const watchBtn = document.createElement("button");
     const isWatched = isOrderWatched(order.orderId);
     watchBtn.textContent = isWatched ? "Unwatch" : "Watch";
-    watchBtn.title = isWatched ? "Stop watching this order" : "Get notified when this order is filled or cancelled";
+    watchBtn.title = isWatched
+      ? "Stop watching this order"
+      : "Get notified when this order is filled or cancelled";
     watchBtn.style.background = isWatched ? "#666" : "#333";
     watchBtn.addEventListener("click", () => {
       if (isOrderWatched(order.orderId)) {
@@ -1694,7 +1745,7 @@
       const [symbol, name, decimals] = await Promise.all([
         tokenContract.symbol().catch(() => "???"),
         tokenContract.name().catch(() => "Unknown"),
-        tokenContract.decimals().catch(() => 18)
+        tokenContract.decimals().catch(() => 18),
       ]);
       const safeSymbol = String(symbol).slice(0, 20);
       const safeName = String(name).slice(0, 100);
@@ -1727,7 +1778,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query, variables }),
-        signal: controller.signal
+        signal: controller.signal,
       });
       clearTimeout(timeoutId);
       if (!res.ok) {
@@ -1764,17 +1815,21 @@
    */
   async function waitForOrderUpdate(orderId, expectedActive, maxAttempts = 10, interval = 1500) {
     for (let i = 0; i < maxAttempts; i++) {
-      const data = await querySubgraph(`
+      const data = await querySubgraph(
+        `
         query {
           order(id: "${orderId}") {
             active
           }
         }
-      `, {}, true); // silent mode - don't show error toasts during polling
+      `,
+        {},
+        true
+      ); // silent mode - don't show error toasts during polling
       if (data && data.order && data.order.active === expectedActive) {
         return true;
       }
-      await new Promise(resolve => setTimeout(resolve, interval));
+      await new Promise((resolve) => setTimeout(resolve, interval));
     }
     return false;
   }
@@ -1820,11 +1875,14 @@
     const pairsList = $("#pairs-list");
     if (data && data.pairStats_collection && data.pairStats_collection.length > 0) {
       pairsList.innerHTML = data.pairStats_collection
-        .map(p => `<a href="#" class="pair-link" data-token-a="${escapeHtml(p.tokenA.address)}" data-token-b="${escapeHtml(p.tokenB.address)}">[${escapeHtml(p.tokenA.symbol)}/${escapeHtml(p.tokenB.symbol)}]</a>`)
+        .map(
+          (p) =>
+            `<a href="#" class="pair-link" data-token-a="${escapeHtml(p.tokenA.address)}" data-token-b="${escapeHtml(p.tokenB.address)}">[${escapeHtml(p.tokenA.symbol)}/${escapeHtml(p.tokenB.symbol)}]</a>`
+        )
         .join(" ");
 
       // Attach click handlers to pair links
-      pairsList.querySelectorAll(".pair-link").forEach(link => {
+      pairsList.querySelectorAll(".pair-link").forEach((link) => {
         link.addEventListener("click", (e) => {
           e.preventDefault();
           const tokenA = link.dataset.tokenA;
@@ -1860,7 +1918,7 @@
       sellingSelect.innerHTML = '<option value="">All</option>';
       wantingSelect.innerHTML = '<option value="">All</option>';
 
-      data.tokens.forEach(token => {
+      data.tokens.forEach((token) => {
         const option1 = document.createElement("option");
         option1.value = token.address;
         option1.textContent = token.symbol;
@@ -1940,7 +1998,7 @@
     // Filter to only watched orders if that filter is active
     if (currentFilters.status === "watched") {
       const watched = getWatchedOrders();
-      cachedOrders = cachedOrders.filter(o => o.orderId in watched);
+      cachedOrders = cachedOrders.filter((o) => o.orderId in watched);
     }
 
     // Batch fetch prices for all tokenA and tokenB addresses
@@ -1948,9 +2006,7 @@
       const tokenAddressesA = cachedOrders.map((o) => o.tokenA.address.toLowerCase());
       const tokenAddressesB = cachedOrders.map((o) => o.tokenB.address.toLowerCase());
       const allTokenAddresses = [...new Set([...tokenAddressesA, ...tokenAddressesB])];
-      const coinGeckoIds = allTokenAddresses
-        .map((addr) => COINGECKO_ID_MAP[addr])
-        .filter(Boolean);
+      const coinGeckoIds = allTokenAddresses.map((addr) => COINGECKO_ID_MAP[addr]).filter(Boolean);
 
       if (coinGeckoIds.length > 0) {
         await fetchPrices(coinGeckoIds);
@@ -2020,10 +2076,22 @@
       let priceNormal = "N/A";
       let priceInverted = "N/A";
       if (amountA > 0n && amountB > 0n) {
-        const priceNum = Number(amountB) / Number(amountA) * Math.pow(10, tokenADecimals - tokenBDecimals);
-        const priceNumInv = Number(amountA) / Number(amountB) * Math.pow(10, tokenBDecimals - tokenADecimals);
-        priceNormal = formatRatio(priceNum) + " " + escapeHtml(order.tokenB.symbol) + "/" + escapeHtml(order.tokenA.symbol);
-        priceInverted = formatRatio(priceNumInv) + " " + escapeHtml(order.tokenA.symbol) + "/" + escapeHtml(order.tokenB.symbol);
+        const priceNum =
+          (Number(amountB) / Number(amountA)) * Math.pow(10, tokenADecimals - tokenBDecimals);
+        const priceNumInv =
+          (Number(amountA) / Number(amountB)) * Math.pow(10, tokenBDecimals - tokenADecimals);
+        priceNormal =
+          formatRatio(priceNum) +
+          " " +
+          escapeHtml(order.tokenB.symbol) +
+          "/" +
+          escapeHtml(order.tokenA.symbol);
+        priceInverted =
+          formatRatio(priceNumInv) +
+          " " +
+          escapeHtml(order.tokenA.symbol) +
+          "/" +
+          escapeHtml(order.tokenB.symbol);
       }
 
       // Calculate USD value of sell side
@@ -2212,7 +2280,7 @@
         tdPrice.dataset.showingNormal = "true";
         tdPrice.classList.add("price-cell");
         tdPrice.title = "Click to invert ratio";
-        tdPrice.addEventListener("click", function(e) {
+        tdPrice.addEventListener("click", function (e) {
           e.stopPropagation();
           const isNormal = this.dataset.showingNormal === "true";
           priceSpan.textContent = isNormal ? this.dataset.priceInverted : this.dataset.priceNormal;
@@ -2267,7 +2335,7 @@
       gasEstimate = await estimateGasCost({
         from: userAddress,
         to: CONFIG.CONTRACT_ADDRESS,
-        data: txData
+        data: txData,
       });
     } catch (e) {
       console.error("Gas estimation failed:", e);
@@ -2278,9 +2346,10 @@
       `You will send ${amountBStr} ${order.tokenB.symbol} and receive ${amountAStr} ${order.tokenA.symbol} in return.`,
       async () => {
         try {
-          const isLocal = window.location.hostname === "localhost"
-            || window.location.hostname === "127.0.0.1"
-            || window.location.protocol === "file:";
+          const isLocal =
+            window.location.hostname === "localhost" ||
+            window.location.hostname === "127.0.0.1" ||
+            window.location.protocol === "file:";
 
           if (!isLocal) {
             showToast("Checking allowance...", "info", true);
@@ -2331,7 +2400,7 @@
       gasEstimate = await estimateGasCost({
         from: userAddress,
         to: CONFIG.CONTRACT_ADDRESS,
-        data: txData
+        data: txData,
       });
     } catch (e) {
       console.error("Gas estimation failed:", e);
@@ -2451,14 +2520,20 @@
 
             // Get order ID from event and wait for subgraph to index
             const orderCreatedEvent = receipt.logs
-              .map(log => { try { return contract.interface.parseLog(log); } catch { return null; } })
-              .find(parsed => parsed && parsed.name === "OrderCreated");
+              .map((log) => {
+                try {
+                  return contract.interface.parseLog(log);
+                } catch {
+                  return null;
+                }
+              })
+              .find((parsed) => parsed && parsed.name === "OrderCreated");
             if (orderCreatedEvent) {
               const newOrderId = orderCreatedEvent.args.orderId.toString();
               await waitForOrderUpdate(newOrderId, true, 15, 2000);
             } else {
               // Fallback: wait a bit for indexing
-              await new Promise(resolve => setTimeout(resolve, 5000));
+              await new Promise((resolve) => setTimeout(resolve, 5000));
             }
             loadOrders();
             loadStats();
@@ -2504,7 +2579,7 @@
     try {
       await window.ethereum.request({
         method: "wallet_switchEthereumChain",
-        params: [{ chainId: EXPECTED_CHAIN.chainId }]
+        params: [{ chainId: EXPECTED_CHAIN.chainId }],
       });
       return true;
     } catch (switchError) {
@@ -2512,7 +2587,7 @@
         try {
           await window.ethereum.request({
             method: "wallet_addEthereumChain",
-            params: [EXPECTED_CHAIN]
+            params: [EXPECTED_CHAIN],
           });
           return true;
         } catch (addError) {
@@ -2573,7 +2648,11 @@
       // Subscribe to contract events for real-time updates
       contract.on("OrderFilled", (orderId, taker) => {
         if (taker.toLowerCase() !== userAddress.toLowerCase()) {
-          showNotification("Order Filled", `Your order #${orderId} has been filled!`, "order-" + orderId);
+          showNotification(
+            "Order Filled",
+            `Your order #${orderId} has been filled!`,
+            "order-" + orderId
+          );
         }
         loadOrders();
         loadStats();
@@ -2599,7 +2678,10 @@
         return;
       }
       const msg = (e.message || "").toLowerCase();
-      if (msg.includes("not connected") || (e.error && e.error.message && e.error.message.toLowerCase().includes("not connected"))) {
+      if (
+        msg.includes("not connected") ||
+        (e.error && e.error.message && e.error.message.toLowerCase().includes("not connected"))
+      ) {
         showToast("Wallet not connected. Please unlock your wallet and try again.", "error");
         return;
       }
@@ -2628,10 +2710,13 @@
     if (!userAddress) return;
     const etherscanBase = EXPECTED_CHAIN.blockExplorerUrls[0];
     $("#wallet-etherscan").href = etherscanBase + "/address/" + userAddress;
-    provider.getBalance(userAddress).then(bal => {
-      const eth = ethers.formatEther(bal);
-      $("#wallet-balance").textContent = parseFloat(eth).toFixed(4) + " ETH";
-    }).catch(() => {});
+    provider
+      .getBalance(userAddress)
+      .then((bal) => {
+        const eth = ethers.formatEther(bal);
+        $("#wallet-balance").textContent = parseFloat(eth).toFixed(4) + " ETH";
+      })
+      .catch(() => {});
   }
 
   function applyWalletFilter(status) {
@@ -2691,18 +2776,19 @@
       return;
     }
 
-    revokeList.innerHTML = approvals.map(t => {
-      const amt = t.allowance === ethers.MaxUint256
-        ? "Unlimited"
-        : formatAmount(t.allowance, t.decimals);
-      return `<div class="revoke-row" data-address="${t.address}">
+    revokeList.innerHTML = approvals
+      .map((t) => {
+        const amt =
+          t.allowance === ethers.MaxUint256 ? "Unlimited" : formatAmount(t.allowance, t.decimals);
+        return `<div class="revoke-row" data-address="${t.address}">
         <div>
           <span class="revoke-token">${escapeHtml(t.symbol)}</span>
           <span class="revoke-allowance">${amt}</span>
         </div>
         <button class="revoke-btn" data-address="${t.address}" data-symbol="${escapeHtml(t.symbol)}">Revoke</button>
       </div>`;
-    }).join("");
+      })
+      .join("");
   }
 
   async function revokeApproval(tokenAddress, tokenSymbol) {
@@ -2753,18 +2839,40 @@
       showToast("Failed to export orders", "error");
       return;
     }
-    const headers = ["Trade ID","Status","Offered Token","Offered Amount","Wanted Token","Wanted Amount","Created","Taker"];
-    const rows = data.orders.map(o => {
-      const status = o.active ? "Open" : (o.taker ? "Filled" : "Cancelled");
-      const amtA = o.tokenA.decimals ? (parseFloat(o.amountA) / Math.pow(10, o.tokenA.decimals)).toString() : o.amountA;
-      const amtB = o.tokenB.decimals ? (parseFloat(o.amountB) / Math.pow(10, o.tokenB.decimals)).toString() : o.amountB;
-      return [o.orderId, status, o.tokenA.symbol, amtA, o.tokenB.symbol, amtB, o.createdAt, o.taker || ""];
+    const headers = [
+      "Trade ID",
+      "Status",
+      "Offered Token",
+      "Offered Amount",
+      "Wanted Token",
+      "Wanted Amount",
+      "Created",
+      "Taker",
+    ];
+    const rows = data.orders.map((o) => {
+      const status = o.active ? "Open" : o.taker ? "Filled" : "Cancelled";
+      const amtA = o.tokenA.decimals
+        ? (parseFloat(o.amountA) / Math.pow(10, o.tokenA.decimals)).toString()
+        : o.amountA;
+      const amtB = o.tokenB.decimals
+        ? (parseFloat(o.amountB) / Math.pow(10, o.tokenB.decimals)).toString()
+        : o.amountB;
+      return [
+        o.orderId,
+        status,
+        o.tokenA.symbol,
+        amtA,
+        o.tokenB.symbol,
+        amtB,
+        o.createdAt,
+        o.taker || "",
+      ];
     });
-    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `swapboard-my-orders-${userAddress.slice(0,8)}.csv`;
+    link.download = `swapboard-my-orders-${userAddress.slice(0, 8)}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
     showToast("Exported " + data.orders.length + " orders", "success");
@@ -2775,7 +2883,7 @@
       // Revoke permissions to force account picker on reconnect
       await window.ethereum.request({
         method: "wallet_revokePermissions",
-        params: [{ eth_accounts: {} }]
+        params: [{ eth_accounts: {} }],
       });
     } catch (err) {
       // wallet_revokePermissions may not be supported in all wallets
@@ -2866,13 +2974,14 @@
             $(balanceId).textContent = "Balance: " + formatted;
 
             // Validate amount if already entered
-            const amountInputId = inputId === "#create-tokenA" ? "#create-amountA" : "#create-amountB";
+            const amountInputId =
+              inputId === "#create-tokenA" ? "#create-amountA" : "#create-amountB";
             validateAmountInput(amountInputId, stateKey);
 
             // Add quick amount buttons
             if (quickAmountsId && balance > 0n) {
               $(quickAmountsId).innerHTML = "";
-              [25, 50, 75, 100].forEach(pct => {
+              [25, 50, 75, 100].forEach((pct) => {
                 const btn = document.createElement("button");
                 btn.type = "button";
                 btn.textContent = pct + "%";
@@ -2943,7 +3052,9 @@
       return true;
     } catch (e) {
       input.classList.add("input-error");
-      errorSpan.textContent = e.message.includes("decimals") ? `Max ${state.info.decimals} decimals` : "Invalid amount";
+      errorSpan.textContent = e.message.includes("decimals")
+        ? `Max ${state.info.decimals} decimals`
+        : "Invalid amount";
       return false;
     }
   }
@@ -2952,10 +3063,12 @@
     if (typeof ethers === "undefined") {
       const script = document.createElement("script");
       script.src = "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js";
-      script.integrity = "sha512-UXYETj+vXKSURF1UlgVRLzWRS9ZiQTv3lcL4rbeLyqTXCPNZC6PTLF/Ik3uxm2Zo+E109cUpJPZfLxJsCgKSng==";
+      script.integrity =
+        "sha512-UXYETj+vXKSURF1UlgVRLzWRS9ZiQTv3lcL4rbeLyqTXCPNZC6PTLF/Ik3uxm2Zo+E109cUpJPZfLxJsCgKSng==";
       script.crossOrigin = "anonymous";
       script.onload = initApp;
-      script.onerror = () => showToast("Failed to load ethers.js - integrity check may have failed", "error");
+      script.onerror = () =>
+        showToast("Failed to load ethers.js - integrity check may have failed", "error");
       document.head.appendChild(script);
     } else {
       initApp();
@@ -2969,7 +3082,8 @@
     initTheme();
 
     // Populate contract link
-    $("#contract-link").href = EXPECTED_CHAIN.blockExplorerUrls[0] + "/address/" + CONFIG.CONTRACT_ADDRESS;
+    $("#contract-link").href =
+      EXPECTED_CHAIN.blockExplorerUrls[0] + "/address/" + CONFIG.CONTRACT_ADDRESS;
 
     // Load saved preferences
     loadFilterPreferences();
@@ -3037,7 +3151,11 @@
           $("#order-modal").classList.add("hidden");
           // Clear hash when closing via escape
           if (window.location.hash) {
-            history.pushState("", document.title, window.location.pathname + window.location.search);
+            history.pushState(
+              "",
+              document.title,
+              window.location.pathname + window.location.search
+            );
           }
           break;
 
@@ -3083,7 +3201,10 @@
     });
 
     // Load notification preference from localStorage
-    if (localStorage.getItem("swapboard_notifications") === "true" && Notification.permission === "granted") {
+    if (
+      localStorage.getItem("swapboard_notifications") === "true" &&
+      Notification.permission === "granted"
+    ) {
       notificationsEnabled = true;
     }
 
@@ -3288,8 +3409,19 @@
       }
 
       // Build CSV content
-      const headers = ["Trade ID", "Status", "Maker", "Offered Token", "Offered Symbol", "Offered Amount", "Wanted Token", "Wanted Symbol", "Wanted Amount", "Created At"];
-      const rows = cachedOrders.map(order => {
+      const headers = [
+        "Trade ID",
+        "Status",
+        "Maker",
+        "Offered Token",
+        "Offered Symbol",
+        "Offered Amount",
+        "Wanted Token",
+        "Wanted Symbol",
+        "Wanted Amount",
+        "Created At",
+      ];
+      const rows = cachedOrders.map((order) => {
         const tokenADecimals = parseInt(order.tokenA.decimals) || 18;
         const tokenBDecimals = parseInt(order.tokenB.decimals) || 18;
         const amountA = formatAmount(order.amountA, tokenADecimals);
@@ -3310,15 +3442,17 @@
           order.tokenB.address,
           order.tokenB.symbol,
           amountB,
-          createdDate
-        ].map(val => {
-          // Escape quotes and wrap in quotes if contains comma
-          const str = String(val);
-          if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-            return '"' + str.replace(/"/g, '""') + '"';
-          }
-          return str;
-        }).join(",");
+          createdDate,
+        ]
+          .map((val) => {
+            // Escape quotes and wrap in quotes if contains comma
+            const str = String(val);
+            if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+              return '"' + str.replace(/"/g, '""') + '"';
+            }
+            return str;
+          })
+          .join(",");
       });
 
       const csvContent = [headers.join(","), ...rows].join("\n");
@@ -3381,7 +3515,7 @@
     });
 
     // Sortable column headers
-    document.querySelectorAll("thead th.sortable").forEach(th => {
+    document.querySelectorAll("thead th.sortable").forEach((th) => {
       th.addEventListener("click", (e) => {
         // Don't sort if clicking the swap icon
         if (e.target.classList.contains("swap-icon")) return;
@@ -3396,45 +3530,52 @@
       provider = new ethers.BrowserProvider(window.ethereum);
 
       // Check for existing connection
-      provider.send("eth_accounts", []).then(async (accounts) => {
-        if (accounts && accounts.length > 0) {
-          signer = await provider.getSigner();
-          userAddress = await signer.getAddress();
+      provider
+        .send("eth_accounts", [])
+        .then(async (accounts) => {
+          if (accounts && accounts.length > 0) {
+            signer = await provider.getSigner();
+            userAddress = await signer.getAddress();
 
-          const validNetwork = await validateNetwork();
-          if (!validNetwork) return;
+            const validNetwork = await validateNetwork();
+            if (!validNetwork) return;
 
-          const network = await provider.getNetwork();
-          updateNetworkIndicator(Number(network.chainId));
-          contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-          $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
-          $("#sell-btn").classList.remove("hidden");
-          $("#my-orders-label").classList.remove("hidden");
-          updateNotifyText();
+            const network = await provider.getNetwork();
+            updateNetworkIndicator(Number(network.chainId));
+            contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+            $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
+            $("#sell-btn").classList.remove("hidden");
+            $("#my-orders-label").classList.remove("hidden");
+            updateNotifyText();
 
-          // Subscribe to contract events for real-time updates
-          contract.on("OrderFilled", (orderId, taker) => {
-            if (taker.toLowerCase() !== userAddress.toLowerCase()) {
-              showNotification("Order Filled", `Your order #${orderId} has been filled!`, "order-" + orderId);
-            }
+            // Subscribe to contract events for real-time updates
+            contract.on("OrderFilled", (orderId, taker) => {
+              if (taker.toLowerCase() !== userAddress.toLowerCase()) {
+                showNotification(
+                  "Order Filled",
+                  `Your order #${orderId} has been filled!`,
+                  "order-" + orderId
+                );
+              }
+              loadOrders();
+              loadStats();
+            });
+
+            contract.on("OrderCanceled", (orderId) => {
+              showToast(`Order #${orderId} canceled`, "info");
+              loadOrders();
+              loadStats();
+            });
+
+            contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
+              loadOrders();
+              loadStats();
+            });
+
             loadOrders();
-            loadStats();
-          });
-
-          contract.on("OrderCanceled", (orderId) => {
-            showToast(`Order #${orderId} canceled`, "info");
-            loadOrders();
-            loadStats();
-          });
-
-          contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
-            loadOrders();
-            loadStats();
-          });
-
-          loadOrders();
-        }
-      }).catch(() => {});
+          }
+        })
+        .catch(() => {});
 
       window.ethereum.on("accountsChanged", (accounts) => {
         if (accounts.length === 0) {

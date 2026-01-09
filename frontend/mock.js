@@ -85,13 +85,15 @@
   }
 
   // Show mock mode banner
-  document.addEventListener("DOMContentLoaded", function() {
+  document.addEventListener("DOMContentLoaded", function () {
     const banner = document.createElement("div");
     banner.id = "mock-banner";
-    banner.style.cssText = "position:fixed;top:0;left:0;right:0;background:#ff6600;color:#fff;padding:8px 15px;font-size:13px;font-weight:bold;z-index:9999;display:flex;justify-content:space-between;align-items:center;font-family:monospace;";
-    banner.innerHTML = 'MOCK MODE ACTIVE - Data is simulated <button id="mock-disable" style="background:#fff;color:#ff6600;border:none;padding:4px 10px;cursor:pointer;font-weight:bold;font-family:inherit;">Disable</button>';
+    banner.style.cssText =
+      "position:fixed;top:0;left:0;right:0;background:#ff6600;color:#fff;padding:8px 15px;font-size:13px;font-weight:bold;z-index:9999;display:flex;justify-content:space-between;align-items:center;font-family:monospace;";
+    banner.innerHTML =
+      'MOCK MODE ACTIVE - Data is simulated <button id="mock-disable" style="background:#fff;color:#ff6600;border:none;padding:4px 10px;cursor:pointer;font-weight:bold;font-family:inherit;">Disable</button>';
     document.body.prepend(banner);
-    document.getElementById("mock-disable").addEventListener("click", function() {
+    document.getElementById("mock-disable").addEventListener("click", function () {
       localStorage.removeItem("swapboard_mock");
       window.location.reload();
     });
@@ -173,18 +175,78 @@
    * Using actual addresses makes the mock data feel authentic.
    */
   const TOKEN_REGISTRY = [
-    { address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", symbol: "WETH", name: "Wrapped Ether", decimals: 18 },
-    { address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", name: "USD Coin", decimals: 6 },
-    { address: "0xdac17f958d2ee523a2206206994597c13d831ec7", symbol: "USDT", name: "Tether USD", decimals: 6 },
-    { address: "0x6b175474e89094c44da98b954eedeac495271d0f", symbol: "DAI", name: "Dai Stablecoin", decimals: 18 },
-    { address: "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", symbol: "WBTC", name: "Wrapped BTC", decimals: 8 },
-    { address: "0x514910771af9ca656af840dff83e8264ecf986ca", symbol: "LINK", name: "Chainlink", decimals: 18 },
-    { address: "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9", symbol: "AAVE", name: "Aave Token", decimals: 18 },
-    { address: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984", symbol: "UNI", name: "Uniswap", decimals: 18 },
-    { address: "0xae7ab96520de3a18e5e111b5eaab095312d7fe84", symbol: "stETH", name: "Lido Staked ETH", decimals: 18 },
-    { address: "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0", symbol: "MATIC", name: "Polygon", decimals: 18 },
-    { address: "0x6982508145454ce325ddbe47a25d4ec3d2311933", symbol: "PEPE", name: "Pepe", decimals: 18 },
-    { address: "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce", symbol: "SHIB", name: "Shiba Inu", decimals: 18 },
+    {
+      address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+      symbol: "WETH",
+      name: "Wrapped Ether",
+      decimals: 18,
+    },
+    {
+      address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      symbol: "USDC",
+      name: "USD Coin",
+      decimals: 6,
+    },
+    {
+      address: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+      symbol: "USDT",
+      name: "Tether USD",
+      decimals: 6,
+    },
+    {
+      address: "0x6b175474e89094c44da98b954eedeac495271d0f",
+      symbol: "DAI",
+      name: "Dai Stablecoin",
+      decimals: 18,
+    },
+    {
+      address: "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+      symbol: "WBTC",
+      name: "Wrapped BTC",
+      decimals: 8,
+    },
+    {
+      address: "0x514910771af9ca656af840dff83e8264ecf986ca",
+      symbol: "LINK",
+      name: "Chainlink",
+      decimals: 18,
+    },
+    {
+      address: "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9",
+      symbol: "AAVE",
+      name: "Aave Token",
+      decimals: 18,
+    },
+    {
+      address: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+      symbol: "UNI",
+      name: "Uniswap",
+      decimals: 18,
+    },
+    {
+      address: "0xae7ab96520de3a18e5e111b5eaab095312d7fe84",
+      symbol: "stETH",
+      name: "Lido Staked ETH",
+      decimals: 18,
+    },
+    {
+      address: "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0",
+      symbol: "MATIC",
+      name: "Polygon",
+      decimals: 18,
+    },
+    {
+      address: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+      symbol: "PEPE",
+      name: "Pepe",
+      decimals: 18,
+    },
+    {
+      address: "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce",
+      symbol: "SHIB",
+      name: "Shiba Inu",
+      decimals: 18,
+    },
   ];
 
   // ============================================================================
@@ -204,9 +266,8 @@
   /**
    * Pre-generate maker addresses for consistent distribution.
    */
-  const MAKER_ADDRESSES = Array.from(
-    { length: MOCK_CONFIG.makerCount },
-    (_, i) => generateAddress(0x1000 + i)
+  const MAKER_ADDRESSES = Array.from({ length: MOCK_CONFIG.makerCount }, (_, i) =>
+    generateAddress(0x1000 + i)
   );
 
   // ============================================================================
@@ -376,17 +437,17 @@
    * @constant {Object.<string, number>}
    */
   const MOCK_PRICES = {
-    "weth": 3500,
+    weth: 3500,
     "usd-coin": 1.0,
-    "tether": 1.0,
-    "dai": 1.0,
+    tether: 1.0,
+    dai: 1.0,
     "wrapped-bitcoin": 95000,
-    "chainlink": 22,
-    "aave": 180,
-    "uniswap": 12,
+    chainlink: 22,
+    aave: 180,
+    uniswap: 12,
     "staked-ether": 3480,
     "matic-network": 0.45,
-    "pepe": 0.000018,
+    pepe: 0.000018,
     "shiba-inu": 0.000022,
   };
 
@@ -612,7 +673,10 @@
             }
             if (params?.[0]?.data?.startsWith("0x95d89b41")) {
               // symbol() - encode "MOCK" as hex without Buffer (browser-compatible)
-              const symbolHex = "MOCK".split("").map(c => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+              const symbolHex = "MOCK"
+                .split("")
+                .map((c) => c.charCodeAt(0).toString(16).padStart(2, "0"))
+                .join("");
               return "0x" + symbolHex.padEnd(64, "0");
             }
             if (params?.[0]?.data?.startsWith("0x313ce567")) {
@@ -696,7 +760,9 @@
   const style = "color: #00ff00; font-weight: bold; font-size: 14px;";
   console.log("%c[Swapboard Mock Mode Enabled]", style);
   console.log("Reason:", getActivationReason());
-  console.log("To disable: add ?mock=false to URL or localStorage.setItem('swapboard_mock', 'false')");
+  console.log(
+    "To disable: add ?mock=false to URL or localStorage.setItem('swapboard_mock', 'false')"
+  );
   console.log("Configuration:", MOCK_CONFIG);
   console.log("Orders generated:", MOCK_ORDERS.length);
   console.log("Stats:", MOCK_STATS);

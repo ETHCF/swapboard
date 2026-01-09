@@ -1,62 +1,118 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Swapboard API Documentation</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: "Courier New", Courier, monospace;
-      font-size: 14px;
-      line-height: 1.6;
-      background: #fff;
-      color: #000;
-      padding: 40px;
-      max-width: 900px;
-      margin: 0 auto;
-    }
-    h1 { font-size: 24px; margin-bottom: 10px; }
-    h2 { font-size: 18px; margin: 30px 0 15px; border-bottom: 1px solid #000; padding-bottom: 5px; }
-    h3 { font-size: 16px; margin: 20px 0 10px; }
-    p { margin-bottom: 15px; }
-    a { color: #000; }
-    code { background: #f5f5f5; padding: 2px 6px; font-size: 13px; }
-    pre {
-      background: #1e1e1e;
-      color: #d4d4d4;
-      padding: 15px;
-      overflow-x: auto;
-      margin: 15px 0;
-      font-size: 12px;
-      line-height: 1.4;
-    }
-    pre code { background: none; padding: 0; color: inherit; }
-    table { border-collapse: collapse; width: 100%; margin: 15px 0; font-size: 13px; }
-    th, td { border: 1px solid #000; padding: 8px; text-align: left; }
-    th { background: #f5f5f5; }
-    ul, ol { margin: 15px 0 15px 25px; }
-    li { margin-bottom: 5px; }
-    .back-link { margin-bottom: 20px; }
-    .keyword { color: #569cd6; }
-    .string { color: #ce9178; }
-    .number { color: #b5cea8; }
-    .comment { color: #6a9955; }
-  </style>
-</head>
-<body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Swapboard API Documentation</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: "Courier New", Courier, monospace;
+        font-size: 14px;
+        line-height: 1.6;
+        background: #fff;
+        color: #000;
+        padding: 40px;
+        max-width: 900px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 24px;
+        margin-bottom: 10px;
+      }
+      h2 {
+        font-size: 18px;
+        margin: 30px 0 15px;
+        border-bottom: 1px solid #000;
+        padding-bottom: 5px;
+      }
+      h3 {
+        font-size: 16px;
+        margin: 20px 0 10px;
+      }
+      p {
+        margin-bottom: 15px;
+      }
+      a {
+        color: #000;
+      }
+      code {
+        background: #f5f5f5;
+        padding: 2px 6px;
+        font-size: 13px;
+      }
+      pre {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 15px;
+        overflow-x: auto;
+        margin: 15px 0;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      pre code {
+        background: none;
+        padding: 0;
+        color: inherit;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 15px 0;
+        font-size: 13px;
+      }
+      th,
+      td {
+        border: 1px solid #000;
+        padding: 8px;
+        text-align: left;
+      }
+      th {
+        background: #f5f5f5;
+      }
+      ul,
+      ol {
+        margin: 15px 0 15px 25px;
+      }
+      li {
+        margin-bottom: 5px;
+      }
+      .back-link {
+        margin-bottom: 20px;
+      }
+      .keyword {
+        color: #569cd6;
+      }
+      .string {
+        color: #ce9178;
+      }
+      .number {
+        color: #b5cea8;
+      }
+      .comment {
+        color: #6a9955;
+      }
+    </style>
+  </head>
+  <body>
+    <p class="back-link"><a href="index.html">&larr; Back to Swapboard</a></p>
 
-<p class="back-link"><a href="index.html">&larr; Back to Swapboard</a></p>
+    <h1>SWAPBOARD API Documentation</h1>
+    <p>For market makers and trading bots.</p>
 
-<h1>SWAPBOARD API Documentation</h1>
-<p>For market makers and trading bots.</p>
+    <h2>Contract</h2>
+    <p>
+      <strong>Network:</strong> Ethereum Mainnet<br />
+      <strong>Address:</strong> <code>0x0000000000000000000000000000000000000000</code> (update
+      after deployment)
+    </p>
 
-<h2>Contract</h2>
-<p><strong>Network:</strong> Ethereum Mainnet<br>
-<strong>Address:</strong> <code>0x0000000000000000000000000000000000000000</code> (update after deployment)</p>
-
-<h3>ABI</h3>
-<pre><code>[
+    <h3>ABI</h3>
+    <pre><code>[
   {
     "type": "function",
     "name": "createOrder",
@@ -151,11 +207,14 @@
   }
 ]</code></pre>
 
-<h2>Subgraph</h2>
-<p><strong>Endpoint:</strong> <code>https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest</code></p>
+    <h2>Subgraph</h2>
+    <p>
+      <strong>Endpoint:</strong>
+      <code>https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest</code>
+    </p>
 
-<h3>Query: Open Orders</h3>
-<pre><code>query OpenOrders($first: Int!, $skip: Int!) {
+    <h3>Query: Open Orders</h3>
+    <pre><code>query OpenOrders($first: Int!, $skip: Int!) {
   orders(
     first: $first
     skip: $skip
@@ -180,8 +239,8 @@
   }
 }</code></pre>
 
-<h3>Query: Orders by Token Pair</h3>
-<pre><code>query OrdersByPair($tokenA: String!, $tokenB: String!) {
+    <h3>Query: Orders by Token Pair</h3>
+    <pre><code>query OrdersByPair($tokenA: String!, $tokenB: String!) {
   orders(
     first: 100
     orderBy: orderId
@@ -199,8 +258,8 @@
   }
 }</code></pre>
 
-<h3>Query: Orders by Maker</h3>
-<pre><code>query OrdersByMaker($maker: Bytes!) {
+    <h3>Query: Orders by Maker</h3>
+    <pre><code>query OrdersByMaker($maker: Bytes!) {
   orders(
     first: 100
     orderBy: orderId
@@ -217,8 +276,8 @@
   }
 }</code></pre>
 
-<h3>Query: Global Stats</h3>
-<pre><code>query Stats {
+    <h3>Query: Global Stats</h3>
+    <pre><code>query Stats {
   globalStats(id: "global") {
     totalOrders
     filledOrders
@@ -227,8 +286,8 @@
   }
 }</code></pre>
 
-<h3>Query: Token Volume</h3>
-<pre><code>query TokenVolume {
+    <h3>Query: Token Volume</h3>
+    <pre><code>query TokenVolume {
   tokens(first: 20, orderBy: volumeSold, orderDirection: desc) {
     address
     symbol
@@ -240,10 +299,10 @@
   }
 }</code></pre>
 
-<h2>Examples</h2>
+    <h2>Examples</h2>
 
-<h3>JavaScript: Create Order</h3>
-<pre><code>const { ethers } = require("ethers");
+    <h3>JavaScript: Create Order</h3>
+    <pre><code>const { ethers } = require("ethers");
 
 const CONTRACT_ADDRESS = "0x...";
 const CONTRACT_ABI = [...]; // See above
@@ -272,8 +331,8 @@ async function createOrder(provider, signer, tokenA, amountA, tokenB, amountB) {
   return orderId;
 }</code></pre>
 
-<h3>JavaScript: Fill Order</h3>
-<pre><code>async function fillOrder(provider, signer, orderId) {
+    <h3>JavaScript: Fill Order</h3>
+    <pre><code>async function fillOrder(provider, signer, orderId) {
   const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
   // Get order details
@@ -292,8 +351,8 @@ async function createOrder(provider, signer, tokenA, amountA, tokenB, amountB) {
   await tx.wait();
 }</code></pre>
 
-<h3>JavaScript: Monitor New Orders</h3>
-<pre><code>async function monitorOrders(provider) {
+    <h3>JavaScript: Monitor New Orders</h3>
+    <pre><code>async function monitorOrders(provider) {
   const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
 
   contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
@@ -309,8 +368,8 @@ async function createOrder(provider, signer, tokenA, amountA, tokenB, amountB) {
   });
 }</code></pre>
 
-<h3>Python: Query Subgraph</h3>
-<pre><code>import requests
+    <h3>Python: Query Subgraph</h3>
+    <pre><code>import requests
 
 SUBGRAPH_URL = "https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest"
 
@@ -342,8 +401,8 @@ def get_open_orders(token_a=None, token_b=None, limit=100):
     response = requests.post(SUBGRAPH_URL, json={"query": query})
     return response.json()["data"]["orders"]</code></pre>
 
-<h3>Foundry: Create Order Script</h3>
-<pre><code>// script/CreateOrder.s.sol
+    <h3>Foundry: Create Order Script</h3>
+    <pre><code>// script/CreateOrder.s.sol
 pragma solidity ^0.8.33;
 
 import {Script} from "forge-std/Script.sol";
@@ -376,8 +435,8 @@ contract CreateOrder is Script {
     }
 }</code></pre>
 
-<p>Run with:</p>
-<pre><code>PRIVATE_KEY=0x... \
+    <p>Run with:</p>
+    <pre><code>PRIVATE_KEY=0x... \
 BOARD_ADDRESS=0x... \
 TOKEN_A=0x... \
 TOKEN_B=0x... \
@@ -385,30 +444,65 @@ AMOUNT_A=1000000000000000000 \
 AMOUNT_B=3000000000 \
 forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast</code></pre>
 
-<h2>Error Codes</h2>
-<table>
-  <tr><th>Error</th><th>Selector</th><th>Description</th></tr>
-  <tr><td><code>ZeroAddress()</code></td><td><code>0xd92e233d</code></td><td>Token address is zero</td></tr>
-  <tr><td><code>ZeroAmount()</code></td><td><code>0x1f2a2005</code></td><td>Amount is zero</td></tr>
-  <tr><td><code>SameToken()</code></td><td><code>0x5c122a85</code></td><td>tokenA and tokenB are identical</td></tr>
-  <tr><td><code>NotAContract(address)</code></td><td><code>0x09ee12d5</code></td><td>Address has no code</td></tr>
-  <tr><td><code>BalanceMismatch(uint256,uint256)</code></td><td><code>0x2c5211c6</code></td><td>FOT token detected</td></tr>
-  <tr><td><code>OrderNotFound(uint256)</code></td><td><code>0x97d80e3a</code></td><td>Order doesn't exist</td></tr>
-  <tr><td><code>OrderNotActive(uint256)</code></td><td><code>0x9bd8c2b6</code></td><td>Order already filled/cancelled</td></tr>
-  <tr><td><code>NotMaker(uint256,address,address)</code></td><td><code>0x3d693ada</code></td><td>Caller is not order maker</td></tr>
-</table>
+    <h2>Error Codes</h2>
+    <table>
+      <tr>
+        <th>Error</th>
+        <th>Selector</th>
+        <th>Description</th>
+      </tr>
+      <tr>
+        <td><code>ZeroAddress()</code></td>
+        <td><code>0xd92e233d</code></td>
+        <td>Token address is zero</td>
+      </tr>
+      <tr>
+        <td><code>ZeroAmount()</code></td>
+        <td><code>0x1f2a2005</code></td>
+        <td>Amount is zero</td>
+      </tr>
+      <tr>
+        <td><code>SameToken()</code></td>
+        <td><code>0x5c122a85</code></td>
+        <td>tokenA and tokenB are identical</td>
+      </tr>
+      <tr>
+        <td><code>NotAContract(address)</code></td>
+        <td><code>0x09ee12d5</code></td>
+        <td>Address has no code</td>
+      </tr>
+      <tr>
+        <td><code>BalanceMismatch(uint256,uint256)</code></td>
+        <td><code>0x2c5211c6</code></td>
+        <td>FOT token detected</td>
+      </tr>
+      <tr>
+        <td><code>OrderNotFound(uint256)</code></td>
+        <td><code>0x97d80e3a</code></td>
+        <td>Order doesn't exist</td>
+      </tr>
+      <tr>
+        <td><code>OrderNotActive(uint256)</code></td>
+        <td><code>0x9bd8c2b6</code></td>
+        <td>Order already filled/cancelled</td>
+      </tr>
+      <tr>
+        <td><code>NotMaker(uint256,address,address)</code></td>
+        <td><code>0x3d693ada</code></td>
+        <td>Caller is not order maker</td>
+      </tr>
+    </table>
 
-<h2>Notes</h2>
-<ul>
-  <li>All amounts are in base units (wei-style). Multiply by 10^decimals.</li>
-  <li>Orders can be front-run. Consider using Flashbots for fills.</li>
-  <li>Fee-on-transfer tokens for tokenA are rejected at creation.</li>
-  <li>Fee-on-transfer tokens for tokenB: maker receives less than amountB.</li>
-  <li>No partial fills. Orders are filled completely or not at all.</li>
-  <li>Self-fills are allowed (maker can fill own order).</li>
-  <li>No expiry. Orders remain active until filled or canceled.</li>
-  <li>Contract has no admin functions. No pause. No upgrades.</li>
-</ul>
-
-</body>
+    <h2>Notes</h2>
+    <ul>
+      <li>All amounts are in base units (wei-style). Multiply by 10^decimals.</li>
+      <li>Orders can be front-run. Consider using Flashbots for fills.</li>
+      <li>Fee-on-transfer tokens for tokenA are rejected at creation.</li>
+      <li>Fee-on-transfer tokens for tokenB: maker receives less than amountB.</li>
+      <li>No partial fills. Orders are filled completely or not at all.</li>
+      <li>Self-fills are allowed (maker can fill own order).</li>
+      <li>No expiry. Orders remain active until filled or canceled.</li>
+      <li>Contract has no admin functions. No pause. No upgrades.</li>
+    </ul>
+  </body>
 </html>

@@ -12,7 +12,7 @@
   --bg-input: #fff;
   --border: #000;
   --border-light: #ccc;
-  --link: #0000EE;
+  --link: #0000ee;
   --stat-bg: #d9d9d9;
   --th-bg: #ecf0f1;
   --th-hover: #dde4e6;
@@ -222,16 +222,26 @@ button:disabled {
 }
 
 .loading-dots::after {
-  content: '';
+  content: "";
   animation: dots 1.2s steps(4, end) infinite;
 }
 
 @keyframes dots {
-  0% { content: ''; }
-  25% { content: '.'; }
-  50% { content: '..'; }
-  75% { content: '...'; }
-  100% { content: ''; }
+  0% {
+    content: "";
+  }
+  25% {
+    content: ".";
+  }
+  50% {
+    content: "..";
+  }
+  75% {
+    content: "...";
+  }
+  100% {
+    content: "";
+  }
 }
 
 a {
@@ -337,7 +347,8 @@ table {
   font-size: 13px;
 }
 
-th, td {
+th,
+td {
   text-align: center;
   padding: 6px 8px;
   border: 1px solid var(--border);
@@ -370,8 +381,13 @@ th.sortable:hover {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .price-cell {
@@ -419,8 +435,12 @@ tbody tr.highlighted-order:hover {
 }
 
 @keyframes highlight-pulse {
-  0% { background: var(--highlight-pulse); }
-  100% { background: var(--highlight); }
+  0% {
+    background: var(--highlight-pulse);
+  }
+  100% {
+    background: var(--highlight);
+  }
 }
 
 #pagination {
@@ -512,7 +532,6 @@ tbody tr.highlighted-order:hover {
   color: var(--fg);
   background: none;
 }
-
 
 .order-age {
   font-size: 10px;
@@ -971,7 +990,12 @@ footer a:hover {
 
 /* Loading Skeleton */
 .skeleton {
-  background: linear-gradient(90deg, var(--skeleton-a) 25%, var(--skeleton-b) 50%, var(--skeleton-a) 75%);
+  background: linear-gradient(
+    90deg,
+    var(--skeleton-a) 25%,
+    var(--skeleton-b) 50%,
+    var(--skeleton-a) 75%
+  );
   background-size: 200% 100%;
   animation: skeleton-loading 1.5s infinite;
   border-radius: 2px;
@@ -995,8 +1019,12 @@ footer a:hover {
 }
 
 @keyframes skeleton-loading {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 /* Responsive */

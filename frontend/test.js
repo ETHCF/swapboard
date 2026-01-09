@@ -22,12 +22,12 @@ const EXPECTED = {
     total: "50",
     active: "20",
     filled: "15",
-    cancelled: "15"
+    cancelled: "15",
   },
   tokens: {
     weth: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-    usdt: "0xdac17f958d2ee523a2206206994597c13d831ec7"
-  }
+    usdt: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+  },
 };
 
 async function runTests() {
@@ -46,7 +46,7 @@ async function runTests() {
   const isCI = process.env.CI === "true";
   const browser = await puppeteer.launch({
     headless: "new",
-    args: isCI ? ["--no-sandbox", "--disable-setuid-sandbox"] : []
+    args: isCI ? ["--no-sandbox", "--disable-setuid-sandbox"] : [],
   });
   const page = await browser.newPage();
 
@@ -67,11 +67,13 @@ async function runTests() {
   }
 
   async function getOrderIds() {
-    return page.$$eval("#order-table tr", rows => {
-      return rows.map(row => {
-        const firstCell = row.querySelector("td:first-child");
-        return firstCell ? firstCell.textContent.trim() : null;
-      }).filter(id => id !== null && id !== "No orders found");
+    return page.$$eval("#order-table tr", (rows) => {
+      return rows
+        .map((row) => {
+          const firstCell = row.querySelector("td:first-child");
+          return firstCell ? firstCell.textContent.trim() : null;
+        })
+        .filter((id) => id !== null && id !== "No orders found");
     });
   }
 
@@ -97,7 +99,7 @@ async function runTests() {
       { timeout: 5000 }
     );
     // Extra delay to ensure data is fully rendered
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 400));
   }
 
   async function selectToken(selectId, tokenAddress) {
@@ -107,7 +109,7 @@ async function runTests() {
       { timeout: 3000 }
     );
     // Extra delay to ensure data is rendered
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 300));
   }
 
   try {
@@ -118,36 +120,35 @@ async function runTests() {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 10000 });
 
     // Wait for initial data load
-    await page.waitForFunction(
-      () => document.getElementById("stat-total")?.textContent !== "--",
-      { timeout: 5000 }
-    );
+    await page.waitForFunction(() => document.getElementById("stat-total")?.textContent !== "--", {
+      timeout: 5000,
+    });
 
     // ==================== STATS TESTS ====================
     console.log("--- Stats Rendering ---");
 
-    const statTotal = await page.$eval("#stat-total", el => el.textContent);
+    const statTotal = await page.$eval("#stat-total", (el) => el.textContent);
     test(
       "Total orders matches mock data",
       statTotal === EXPECTED.stats.total,
       `Expected "${EXPECTED.stats.total}", got "${statTotal}"`
     );
 
-    const statActive = await page.$eval("#stat-active", el => el.textContent);
+    const statActive = await page.$eval("#stat-active", (el) => el.textContent);
     test(
       "Active orders matches mock data",
       statActive === EXPECTED.stats.active,
       `Expected "${EXPECTED.stats.active}", got "${statActive}"`
     );
 
-    const statFilled = await page.$eval("#stat-filled", el => el.textContent);
+    const statFilled = await page.$eval("#stat-filled", (el) => el.textContent);
     test(
       "Filled orders matches mock data",
       statFilled === EXPECTED.stats.filled,
       `Expected "${EXPECTED.stats.filled}", got "${statFilled}"`
     );
 
-    const statCancelled = await page.$eval("#stat-cancelled", el => el.textContent);
+    const statCancelled = await page.$eval("#stat-cancelled", (el) => el.textContent);
     test(
       "Cancelled orders matches mock data",
       statCancelled === EXPECTED.stats.cancelled,
@@ -162,11 +163,15 @@ async function runTests() {
       () => {
         const rows = document.querySelectorAll("#order-table tr");
         const firstCell = rows[0]?.querySelector("td");
-        return rows.length > 0 && !firstCell?.textContent?.includes("Loading") && !firstCell?.textContent?.includes("No orders");
+        return (
+          rows.length > 0 &&
+          !firstCell?.textContent?.includes("Loading") &&
+          !firstCell?.textContent?.includes("No orders")
+        );
       },
       { timeout: 5000 }
     );
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 300));
 
     // Default should be "open" - expect 20 active orders (40% of 50)
     let orderIds = await getOrderIds();
@@ -214,8 +219,8 @@ async function runTests() {
     console.log("\n--- Token Filter Behavior ---");
 
     // Verify token dropdowns are populated
-    const sellingOptions = await page.$$eval("#filter-selling option", opts =>
-      opts.map(o => o.textContent)
+    const sellingOptions = await page.$$eval("#filter-selling option", (opts) =>
+      opts.map((o) => o.textContent)
     );
     test(
       "Offered filter has token options",
@@ -272,8 +277,8 @@ async function runTests() {
 
     // Verify first row has valid data structure
     // Column order: [0] Buy btn, [1] Trade ID, [2] Maker, [3] Offered Token, [4] Offered Size, [5] Wanted Token, [6] Wanted Size, [7] USD Val, [8] Price
-    const firstRow = await page.$$eval("#order-table tr:first-child td", cells =>
-      cells.map(c => c.textContent.trim())
+    const firstRow = await page.$$eval("#order-table tr:first-child td", (cells) =>
+      cells.map((c) => c.textContent.trim())
     );
 
     // Trade ID column now includes share button, extract just the number
@@ -312,7 +317,7 @@ async function runTests() {
       () => !document.querySelector("#sell-btn").classList.contains("hidden"),
       { timeout: 3000 }
     );
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 200));
 
     // Open sell modal
     await page.click("#sell-btn");
@@ -323,9 +328,9 @@ async function runTests() {
 
     // Enter invalid address
     await page.type("#create-tokenA", "0xinvalid");
-    await new Promise(r => setTimeout(r, 600)); // Wait for debounce
+    await new Promise((r) => setTimeout(r, 600)); // Wait for debounce
 
-    const tokenAInfo = await page.$eval("#tokenA-info", el => el.textContent);
+    const tokenAInfo = await page.$eval("#tokenA-info", (el) => el.textContent);
     test(
       "Invalid address shows error",
       tokenAInfo === "Invalid address",
@@ -333,11 +338,11 @@ async function runTests() {
     );
 
     // Clear and enter valid format (won't fetch real data but validates format)
-    await page.$eval("#create-tokenA", el => el.value = "");
+    await page.$eval("#create-tokenA", (el) => (el.value = ""));
     await page.type("#create-tokenA", "0x1234567890123456789012345678901234567890");
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 600));
 
-    const tokenAInfoValid = await page.$eval("#tokenA-info", el => el.textContent);
+    const tokenAInfoValid = await page.$eval("#tokenA-info", (el) => el.textContent);
     test(
       "Valid address format shows loading/result",
       tokenAInfoValid !== "Invalid address" && tokenAInfoValid !== "",
@@ -352,21 +357,19 @@ async function runTests() {
 
     const columnCount = await page.$$eval(
       "#order-table tr:first-child td",
-      cells => cells.length
+      (cells) => cells.length
     );
-    test(
-      "Order table has 9 columns",
-      columnCount === 9,
-      `Expected 9 columns, got ${columnCount}`
-    );
+    test("Order table has 9 columns", columnCount === 9, `Expected 9 columns, got ${columnCount}`);
 
-    const headers = await page.$$eval("thead th", ths => ths.map(t => t.textContent.trim()));
+    const headers = await page.$$eval("thead th", (ths) => ths.map((t) => t.textContent.trim()));
     test(
       "Table headers are correct",
-      headers.length === 9 && headers[1].includes("Trade ID") && headers[2].includes("Maker") && headers[3].includes("Offered"),
+      headers.length === 9 &&
+        headers[1].includes("Trade ID") &&
+        headers[2].includes("Maker") &&
+        headers[3].includes("Offered"),
       `Got headers: ${headers.join(", ")}`
     );
-
   } catch (e) {
     console.error("\nTest execution error:", e.message);
     failed++;

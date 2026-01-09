@@ -12,7 +12,8 @@
 
 const CONFIG = {
   CONTRACT_ADDRESS: "0xBe3D7A555aa633263110d10d37AB40Ef3a2b8BBa",
-  SUBGRAPH_URL: "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/1.0.0/gn",
+  SUBGRAPH_URL:
+    "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/1.0.0/gn",
   PAGE_SIZE: 20,
   REQUEST_TIMEOUT: 30000,
   DEBOUNCE_DELAY: 500,
@@ -148,7 +149,10 @@ function formatAmount(amount, decimals) {
   const whole = bn / divisor;
   const fraction = bn % divisor;
   const fractionStr = fraction.toString().padStart(decimals, "0").slice(0, 4);
-  return formatNumber(Number(whole)) + (fractionStr !== "0000" ? "." + fractionStr.replace(/0+$/, "") : "");
+  return (
+    formatNumber(Number(whole)) +
+    (fractionStr !== "0000" ? "." + fractionStr.replace(/0+$/, "") : "")
+  );
 }
 
 /**
@@ -334,7 +338,10 @@ function searchTokens(query, tokenList, limit = 10) {
 
   // Symbol or name contains query
   for (const t of tokenList) {
-    if ((t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)) && !results.includes(t)) {
+    if (
+      (t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)) &&
+      !results.includes(t)
+    ) {
       results.push(t);
       if (results.length >= limit) return results;
     }
@@ -379,7 +386,7 @@ function addRecentToken(address, symbol, storage) {
   const recent = getRecentTokens(storage);
   const lowerAddr = address.toLowerCase();
 
-  const filtered = recent.filter(t => t.address.toLowerCase() !== lowerAddr);
+  const filtered = recent.filter((t) => t.address.toLowerCase() !== lowerAddr);
   filtered.unshift({ address, symbol });
   const trimmed = filtered.slice(0, MAX_RECENT_TOKENS);
 
@@ -411,10 +418,10 @@ function getWatchedOrders(storage) {
  */
 function watchOrder(order, storage) {
   const watched = getWatchedOrders(storage);
-  const status = order.active ? "Open" : (order.taker ? "Filled" : "Cancelled");
+  const status = order.active ? "Open" : order.taker ? "Filled" : "Cancelled";
   watched[order.orderId] = {
     status: status,
-    symbol: order.tokenA.symbol + "/" + order.tokenB.symbol
+    symbol: order.tokenA.symbol + "/" + order.tokenB.symbol,
   };
   try {
     storage.setItem(WATCHED_ORDERS_KEY, JSON.stringify(watched));

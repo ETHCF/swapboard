@@ -1,321 +1,378 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Swapboard - Trustless peer-to-peer OTC trading for ERC20 tokens on Ethereum. No fees, no admin, no middleman.">
-  <meta name="keywords" content="ethereum, defi, otc, trading, erc20, swap, decentralized, trustless">
-  <meta name="author" content="Zak Cole (numbergroup.xyz) for Ethereum Community Foundation">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Swapboard - Trustless peer-to-peer OTC trading for ERC20 tokens on Ethereum. No fees, no admin, no middleman."
+    />
+    <meta
+      name="keywords"
+      content="ethereum, defi, otc, trading, erc20, swap, decentralized, trustless"
+    />
+    <meta name="author" content="Zak Cole (numbergroup.xyz) for Ethereum Community Foundation" />
 
-  <!-- Open Graph / Social -->
-  <meta property="og:title" content="Swapboard - Trustless OTC Trading">
-  <meta property="og:description" content="Peer-to-peer ERC20 token trading on Ethereum. No fees, no admin, no middleman.">
-  <meta property="og:type" content="website">
+    <!-- Open Graph / Social -->
+    <meta property="og:title" content="Swapboard - Trustless OTC Trading" />
+    <meta
+      property="og:description"
+      content="Peer-to-peer ERC20 token trading on Ethereum. No fees, no admin, no middleman."
+    />
+    <meta property="og:type" content="website" />
 
-  <!-- Twitter -->
-  <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Swapboard - Trustless OTC Trading">
-  <meta name="twitter:description" content="Peer-to-peer ERC20 token trading on Ethereum. No fees, no admin, no middleman.">
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Swapboard - Trustless OTC Trading" />
+    <meta
+      name="twitter:description"
+      content="Peer-to-peer ERC20 token trading on Ethereum. No fees, no admin, no middleman."
+    />
 
-  <!-- PWA -->
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#e03e2d">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Swapboard">
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#e03e2d" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Swapboard" />
 
-  <title>SWAPBOARD - Trustless OTC Trading</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-
-<header>
-  <h1><span class="header-box">Welcome to SWAPBOARD</span></h1>
-  <div class="header-right">
-    <a href="#" id="theme-btn" title="Toggle dark mode">
-      <svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="5"></circle>
-        <line x1="12" y1="1" x2="12" y2="3"></line>
-        <line x1="12" y1="21" x2="12" y2="23"></line>
-        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-        <line x1="1" y1="12" x2="3" y2="12"></line>
-        <line x1="21" y1="12" x2="23" y2="12"></line>
-        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-      </svg>
-      <svg id="theme-icon-moon" class="hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-      </svg>
-    </a>
-    <span id="network-indicator" class="hidden"></span>
-    <a href="#" id="sell-btn" class="hidden">[Sell Tokens]</a>
-    <div class="wallet-dropdown">
-      <a href="#" id="connect-btn">[Connect Wallet]</a>
-      <div id="wallet-menu" class="wallet-menu hidden">
-        <div class="wallet-menu-header">
-          <span id="wallet-balance">-- ETH</span>
+    <title>SWAPBOARD - Trustless OTC Trading</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1><span class="header-box">Welcome to SWAPBOARD</span></h1>
+      <div class="header-right">
+        <a href="#" id="theme-btn" title="Toggle dark mode">
+          <svg
+            id="theme-icon-sun"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+          <svg
+            id="theme-icon-moon"
+            class="hidden"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+        </a>
+        <span id="network-indicator" class="hidden"></span>
+        <a href="#" id="sell-btn" class="hidden">[Sell Tokens]</a>
+        <div class="wallet-dropdown">
+          <a href="#" id="connect-btn">[Connect Wallet]</a>
+          <div id="wallet-menu" class="wallet-menu hidden">
+            <div class="wallet-menu-header">
+              <span id="wallet-balance">-- ETH</span>
+            </div>
+            <a href="#" id="wallet-copy">Copy Address</a>
+            <a href="#" id="wallet-etherscan" target="_blank" rel="noopener">View on Etherscan</a>
+            <div class="wallet-menu-divider"></div>
+            <a href="#" id="wallet-open-orders">My Open Orders</a>
+            <a href="#" id="wallet-filled-orders">My Filled Orders</a>
+            <a href="#" id="wallet-cancelled-orders">My Cancelled Orders</a>
+            <a href="#" id="wallet-export">Export My Orders</a>
+            <a href="#" id="wallet-revoke">Revoke Approvals</a>
+            <a href="#" id="wallet-notifications">Enable Notifications</a>
+            <div class="wallet-menu-divider"></div>
+            <a href="#" id="wallet-switch">Switch Wallet</a>
+            <a href="#" id="wallet-disconnect">Disconnect</a>
+          </div>
         </div>
-        <a href="#" id="wallet-copy">Copy Address</a>
-        <a href="#" id="wallet-etherscan" target="_blank" rel="noopener">View on Etherscan</a>
-        <div class="wallet-menu-divider"></div>
-        <a href="#" id="wallet-open-orders">My Open Orders</a>
-        <a href="#" id="wallet-filled-orders">My Filled Orders</a>
-        <a href="#" id="wallet-cancelled-orders">My Cancelled Orders</a>
-        <a href="#" id="wallet-export">Export My Orders</a>
-        <a href="#" id="wallet-revoke">Revoke Approvals</a>
-        <a href="#" id="wallet-notifications">Enable Notifications</a>
-        <div class="wallet-menu-divider"></div>
-        <a href="#" id="wallet-switch">Switch Wallet</a>
-        <a href="#" id="wallet-disconnect">Disconnect</a>
+      </div>
+    </header>
+
+    <p class="tagline">
+      Swapboard is a no frills, 0% fee, peer-to-peer OTC bulletin board for trading any ERC20 token
+      on Ethereum.<br />
+      The
+      <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer"
+        >contract</a
+      >
+      is
+      <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer"
+        >audited</a
+      >
+      and immutable, with no admin rights. This is just a front end.
+    </p>
+
+    <p class="api-note">
+      Note to market makers: <a href="API.html">API docs</a> available for arbitrage / trading bots
+    </p>
+
+    <div class="stats-row">
+      <span class="stat-label">Total Trades:</span> <span id="stat-total">--</span>
+      &nbsp;&nbsp;&nbsp;
+      <span class="stat-label">Open:</span> <span id="stat-active">--</span>
+      &nbsp;&nbsp;&nbsp;
+      <span class="stat-label">Filled:</span> <span id="stat-filled">--</span>
+      &nbsp;&nbsp;&nbsp;
+      <span class="stat-label">Cancelled:</span> <span id="stat-cancelled">--</span>
+      &nbsp;&nbsp;&nbsp;
+      <span class="stat-label">Volume:</span> <span id="stat-volume">--</span>
+    </div>
+
+    <div class="zero-stats">
+      Fees: 0<br />
+      Employees: 0<br />
+      Revenue: 0<br />
+      VC Fundraising: 0<br />
+      Token ICO: 0
+    </div>
+
+    <div class="ticker">The ticker is $ETH, motherfucker</div>
+
+    <div id="popular-pairs">Popular Pairs: <span id="pairs-list"></span></div>
+
+    <div id="filters">
+      <span class="filter-left">
+        Filters: Offered Token:
+        <select id="filter-selling">
+          <option value="">All</option>
+        </select>
+        &nbsp;&nbsp; Wanted Token:
+        <select id="filter-wanting">
+          <option value="">ALL</option>
+        </select>
+      </span>
+      <span class="filter-right">
+        All Trades: <input type="radio" name="status" value="all" /> &nbsp;&nbsp; Open Trades:
+        <input type="radio" name="status" value="open" checked /> &nbsp;&nbsp; Filled Trades:
+        <input type="radio" name="status" value="filled" /> &nbsp;&nbsp; Cancelled Trades:
+        <input type="radio" name="status" value="cancelled" /> &nbsp;&nbsp; Watched:
+        <input type="radio" name="status" value="watched" />
+        &nbsp;&nbsp;
+        <span class="my-orders-filter hidden" id="my-orders-label"
+          >My Orders: <input type="checkbox" id="filter-my-orders"
+        /></span>
+      </span>
+    </div>
+
+    <section id="orders">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th class="sortable" data-sort="orderId">
+              Trade ID<span class="sort-indicator"> &#9660;</span>
+            </th>
+            <th class="sortable" data-sort="maker">Maker<span class="sort-indicator"></span></th>
+            <th class="sortable" data-sort="tokenA">
+              Offered Token<span class="sort-indicator"></span>
+            </th>
+            <th class="sortable" data-sort="amountA">
+              Offered Size<span class="sort-indicator"></span>
+            </th>
+            <th class="sortable" data-sort="tokenB">
+              Wanted Token<span class="sort-indicator"></span>
+            </th>
+            <th class="sortable" data-sort="amountB">
+              Wanted Size<span class="sort-indicator"></span>
+            </th>
+            <th class="sortable" data-sort="usdVal">USD Val<span class="sort-indicator"></span></th>
+            <th class="sortable" data-sort="price">
+              Price<span class="sort-indicator"></span>
+              <span class="swap-icon" title="Click to invert ratio">&#8644;</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody id="order-table">
+          <tr>
+            <td colspan="9">Loading orders...</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="pagination">
+      <button id="prev-page" disabled>&lt; Prev</button>
+      <span id="page-info">Page 1</span>
+      <button id="next-page">Next &gt;</button>
+      <button id="export-csv" title="Export visible orders to CSV">Export CSV</button>
+    </section>
+
+    <div id="sell-modal" class="modal hidden">
+      <div class="modal-content sell-modal-content">
+        <h3>Sell Tokens</h3>
+        <p class="warning">Verify token addresses. Fake tokens can steal funds.</p>
+        <div class="form-row">
+          <label>
+            Offered Token:
+            <input type="text" id="create-tokenA" placeholder="Search or paste address" />
+            <span id="tokenA-info"></span>
+            <span id="tokenA-balance" class="token-balance"></span>
+          </label>
+          <label>
+            Amount:
+            <input type="text" id="create-amountA" placeholder="0.0" />
+            <span class="quick-amounts" id="quick-amounts-A"></span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label>
+            Wanted Token:
+            <input type="text" id="create-tokenB" placeholder="Search or paste address" />
+            <span id="tokenB-info"></span>
+            <span id="tokenB-balance" class="token-balance"></span>
+          </label>
+          <label>
+            Amount:
+            <input type="text" id="create-amountB" placeholder="0.0" />
+            <span id="price-info" class="price-info"></span>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="create-btn">Create Order</button>
+          <button id="sell-modal-cancel">Cancel</button>
+        </div>
       </div>
     </div>
-  </div>
-</header>
 
-<p class="tagline">
-  Swapboard is a no frills, 0% fee, peer-to-peer OTC bulletin board for trading any ERC20 token on Ethereum.<br>
-  The <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">contract</a> is <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">audited</a> and immutable, with no admin rights. This is just a front end.
-</p>
-
-<p class="api-note">Note to market makers: <a href="API.html">API docs</a> available for arbitrage / trading bots</p>
-
-<div class="stats-row">
-  <span class="stat-label">Total Trades:</span> <span id="stat-total">--</span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="stat-label">Open:</span> <span id="stat-active">--</span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="stat-label">Filled:</span> <span id="stat-filled">--</span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="stat-label">Cancelled:</span> <span id="stat-cancelled">--</span>
-  &nbsp;&nbsp;&nbsp;
-  <span class="stat-label">Volume:</span> <span id="stat-volume">--</span>
-</div>
-
-<div class="zero-stats">
-  Fees: 0<br>
-  Employees: 0<br>
-  Revenue: 0<br>
-  VC Fundraising: 0<br>
-  Token ICO: 0
-</div>
-
-<div class="ticker">The ticker is $ETH, motherfucker</div>
-
-<div id="popular-pairs">
-  Popular Pairs: <span id="pairs-list"></span>
-</div>
-
-<div id="filters">
-  <span class="filter-left">
-    Filters: Offered Token:
-    <select id="filter-selling">
-      <option value="">All</option>
-    </select>
-    &nbsp;&nbsp;
-    Wanted Token:
-    <select id="filter-wanting">
-      <option value="">ALL</option>
-    </select>
-  </span>
-  <span class="filter-right">
-    All Trades: <input type="radio" name="status" value="all">
-    &nbsp;&nbsp;
-    Open Trades: <input type="radio" name="status" value="open" checked>
-    &nbsp;&nbsp;
-    Filled Trades: <input type="radio" name="status" value="filled">
-    &nbsp;&nbsp;
-    Cancelled Trades: <input type="radio" name="status" value="cancelled">
-    &nbsp;&nbsp;
-    Watched: <input type="radio" name="status" value="watched">
-&nbsp;&nbsp;
-    <span class="my-orders-filter hidden" id="my-orders-label">My Orders: <input type="checkbox" id="filter-my-orders"></span>
-  </span>
-</div>
-
-<section id="orders">
-  <table>
-    <thead>
-      <tr>
-        <th></th>
-        <th class="sortable" data-sort="orderId">Trade ID<span class="sort-indicator"> &#9660;</span></th>
-        <th class="sortable" data-sort="maker">Maker<span class="sort-indicator"></span></th>
-        <th class="sortable" data-sort="tokenA">Offered Token<span class="sort-indicator"></span></th>
-        <th class="sortable" data-sort="amountA">Offered Size<span class="sort-indicator"></span></th>
-        <th class="sortable" data-sort="tokenB">Wanted Token<span class="sort-indicator"></span></th>
-        <th class="sortable" data-sort="amountB">Wanted Size<span class="sort-indicator"></span></th>
-        <th class="sortable" data-sort="usdVal">USD Val<span class="sort-indicator"></span></th>
-        <th class="sortable" data-sort="price">Price<span class="sort-indicator"></span> <span class="swap-icon" title="Click to invert ratio">&#8644;</span></th>
-      </tr>
-    </thead>
-    <tbody id="order-table">
-      <tr><td colspan="9">Loading orders...</td></tr>
-    </tbody>
-  </table>
-</section>
-
-<section id="pagination">
-  <button id="prev-page" disabled>&lt; Prev</button>
-  <span id="page-info">Page 1</span>
-  <button id="next-page">Next &gt;</button>
-  <button id="export-csv" title="Export visible orders to CSV">Export CSV</button>
-</section>
-
-<div id="sell-modal" class="modal hidden">
-  <div class="modal-content sell-modal-content">
-    <h3>Sell Tokens</h3>
-    <p class="warning">Verify token addresses. Fake tokens can steal funds.</p>
-    <div class="form-row">
-      <label>
-        Offered Token:
-        <input type="text" id="create-tokenA" placeholder="Search or paste address">
-        <span id="tokenA-info"></span>
-        <span id="tokenA-balance" class="token-balance"></span>
-      </label>
-      <label>
-        Amount:
-        <input type="text" id="create-amountA" placeholder="0.0">
-        <span class="quick-amounts" id="quick-amounts-A"></span>
-      </label>
-    </div>
-    <div class="form-row">
-      <label>
-        Wanted Token:
-        <input type="text" id="create-tokenB" placeholder="Search or paste address">
-        <span id="tokenB-info"></span>
-        <span id="tokenB-balance" class="token-balance"></span>
-      </label>
-      <label>
-        Amount:
-        <input type="text" id="create-amountB" placeholder="0.0">
-        <span id="price-info" class="price-info"></span>
-      </label>
-    </div>
-    <div class="modal-actions">
-      <button id="create-btn">Create Order</button>
-      <button id="sell-modal-cancel">Cancel</button>
-    </div>
-  </div>
-</div>
-
-<div id="modal" class="modal hidden">
-  <div class="modal-content">
-    <h3 id="modal-title">Confirm Action</h3>
-    <p id="modal-body"></p>
-    <div class="modal-actions">
-      <button id="modal-confirm">Confirm</button>
-      <button id="modal-cancel">Cancel</button>
-    </div>
-  </div>
-</div>
-
-<div id="order-modal" class="modal hidden">
-  <div class="modal-content order-modal-content">
-    <h3>Trade #<span id="order-modal-id"></span></h3>
-    <div class="order-modal-grid">
-      <div class="order-modal-row">
-        <span class="order-modal-label">Status</span>
-        <span id="order-modal-status"></span>
-      </div>
-      <div class="order-modal-row">
-        <span class="order-modal-label">Created</span>
-        <span id="order-modal-date"></span>
-      </div>
-      <div class="order-modal-row">
-        <span class="order-modal-label">Maker</span>
-        <span id="order-modal-maker"></span>
-      </div>
-      <div class="order-modal-row">
-        <span class="order-modal-label">Offered</span>
-        <span id="order-modal-offered"></span>
-      </div>
-      <div class="order-modal-row">
-        <span class="order-modal-label">Wanted</span>
-        <span id="order-modal-wanted"></span>
-      </div>
-      <div class="order-modal-row">
-        <span class="order-modal-label">USD Value</span>
-        <span id="order-modal-usd"></span>
-      </div>
-      <div class="order-modal-row">
-        <span class="order-modal-label">Price</span>
-        <span id="order-modal-price"></span>
-      </div>
-      <div class="order-modal-row" id="order-modal-market-row">
-        <span class="order-modal-label">vs Market</span>
-        <span id="order-modal-market"></span>
-      </div>
-      <div class="order-modal-row" id="order-modal-taker-row">
-        <span class="order-modal-label">Taker</span>
-        <span id="order-modal-taker"></span>
-      </div>
-      <div class="order-modal-row">
-        <span class="order-modal-label">Share Link</span>
-        <span id="order-modal-link"></span>
+    <div id="modal" class="modal hidden">
+      <div class="modal-content">
+        <h3 id="modal-title">Confirm Action</h3>
+        <p id="modal-body"></p>
+        <div class="modal-actions">
+          <button id="modal-confirm">Confirm</button>
+          <button id="modal-cancel">Cancel</button>
+        </div>
       </div>
     </div>
-    <div class="modal-actions" id="order-modal-actions"></div>
-  </div>
-</div>
 
-<div id="toast" class="toast hidden"></div>
-
-<footer>
-  <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer">[GitHub]</a>
-  <a href="API.html">[API Docs]</a>
-  <a id="contract-link" href="#" target="_blank" rel="noopener noreferrer">[Contract]</a>
-  <a href="https://github.com/ethcf/swapboard/commit/__COMMIT_FULL__" target="_blank" rel="noopener noreferrer" title="View commit on GitHub">[Build: __COMMIT_HASH__]</a>
-  <a href="#" id="hash-toggle" title="Verify build integrity">[Verify Build]</a>
-</footer>
-
-<div id="revoke-modal" class="modal hidden">
-  <div class="modal-content revoke-modal-content">
-    <h3>Revoke Approvals</h3>
-    <p class="revoke-intro">Remove token approvals granted to the Swapboard contract.</p>
-    <div id="revoke-list" class="revoke-list">
-      <div class="revoke-loading">Checking approvals...</div>
-    </div>
-    <div class="modal-actions">
-      <button id="revoke-modal-close">Close</button>
-    </div>
-  </div>
-</div>
-
-<div id="verify-modal" class="modal hidden">
-  <div class="modal-content verify-modal-content">
-    <h3>Build Verification</h3>
-    <p class="verify-intro">Verify that deployed files match the source code on GitHub.</p>
-    <div class="verify-grid">
-      <div class="verify-row">
-        <span class="verify-file">index.html</span>
-        <code class="verify-hash">__HASH_HTML__</code>
-      </div>
-      <div class="verify-row">
-        <span class="verify-file">app.js</span>
-        <code class="verify-hash">__HASH_APPJS__</code>
-      </div>
-      <div class="verify-row">
-        <span class="verify-file">lib.js</span>
-        <code class="verify-hash">__HASH_LIBJS__</code>
-      </div>
-      <div class="verify-row">
-        <span class="verify-file">style.css</span>
-        <code class="verify-hash">__HASH_CSS__</code>
-      </div>
-      <div class="verify-row">
-        <span class="verify-file">mock.js</span>
-        <code class="verify-hash">__HASH_MOCK__</code>
+    <div id="order-modal" class="modal hidden">
+      <div class="modal-content order-modal-content">
+        <h3>Trade #<span id="order-modal-id"></span></h3>
+        <div class="order-modal-grid">
+          <div class="order-modal-row">
+            <span class="order-modal-label">Status</span>
+            <span id="order-modal-status"></span>
+          </div>
+          <div class="order-modal-row">
+            <span class="order-modal-label">Created</span>
+            <span id="order-modal-date"></span>
+          </div>
+          <div class="order-modal-row">
+            <span class="order-modal-label">Maker</span>
+            <span id="order-modal-maker"></span>
+          </div>
+          <div class="order-modal-row">
+            <span class="order-modal-label">Offered</span>
+            <span id="order-modal-offered"></span>
+          </div>
+          <div class="order-modal-row">
+            <span class="order-modal-label">Wanted</span>
+            <span id="order-modal-wanted"></span>
+          </div>
+          <div class="order-modal-row">
+            <span class="order-modal-label">USD Value</span>
+            <span id="order-modal-usd"></span>
+          </div>
+          <div class="order-modal-row">
+            <span class="order-modal-label">Price</span>
+            <span id="order-modal-price"></span>
+          </div>
+          <div class="order-modal-row" id="order-modal-market-row">
+            <span class="order-modal-label">vs Market</span>
+            <span id="order-modal-market"></span>
+          </div>
+          <div class="order-modal-row" id="order-modal-taker-row">
+            <span class="order-modal-label">Taker</span>
+            <span id="order-modal-taker"></span>
+          </div>
+          <div class="order-modal-row">
+            <span class="order-modal-label">Share Link</span>
+            <span id="order-modal-link"></span>
+          </div>
+        </div>
+        <div class="modal-actions" id="order-modal-actions"></div>
       </div>
     </div>
-    <p class="verify-help">To verify: <code>curl -s [URL] | sha256sum</code></p>
-    <div class="modal-actions">
-      <button id="verify-modal-close">Close</button>
-    </div>
-  </div>
-</div>
 
-<script src="lib.js"></script>
-<script src="mock.js"></script>
-<script src="app.js"></script>
-</body>
+    <div id="toast" class="toast hidden"></div>
+
+    <footer>
+      <a href="https://github.com/ethcf/swapboard" target="_blank" rel="noopener noreferrer"
+        >[GitHub]</a
+      >
+      <a href="API.html">[API Docs]</a>
+      <a id="contract-link" href="#" target="_blank" rel="noopener noreferrer">[Contract]</a>
+      <a
+        href="https://github.com/ethcf/swapboard/commit/__COMMIT_FULL__"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="View commit on GitHub"
+        >[Build: __COMMIT_HASH__]</a
+      >
+      <a href="#" id="hash-toggle" title="Verify build integrity">[Verify Build]</a>
+    </footer>
+
+    <div id="revoke-modal" class="modal hidden">
+      <div class="modal-content revoke-modal-content">
+        <h3>Revoke Approvals</h3>
+        <p class="revoke-intro">Remove token approvals granted to the Swapboard contract.</p>
+        <div id="revoke-list" class="revoke-list">
+          <div class="revoke-loading">Checking approvals...</div>
+        </div>
+        <div class="modal-actions">
+          <button id="revoke-modal-close">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="verify-modal" class="modal hidden">
+      <div class="modal-content verify-modal-content">
+        <h3>Build Verification</h3>
+        <p class="verify-intro">Verify that deployed files match the source code on GitHub.</p>
+        <div class="verify-grid">
+          <div class="verify-row">
+            <span class="verify-file">index.html</span>
+            <code class="verify-hash">__HASH_HTML__</code>
+          </div>
+          <div class="verify-row">
+            <span class="verify-file">app.js</span>
+            <code class="verify-hash">__HASH_APPJS__</code>
+          </div>
+          <div class="verify-row">
+            <span class="verify-file">lib.js</span>
+            <code class="verify-hash">__HASH_LIBJS__</code>
+          </div>
+          <div class="verify-row">
+            <span class="verify-file">style.css</span>
+            <code class="verify-hash">__HASH_CSS__</code>
+          </div>
+          <div class="verify-row">
+            <span class="verify-file">mock.js</span>
+            <code class="verify-hash">__HASH_MOCK__</code>
+          </div>
+        </div>
+        <p class="verify-help">To verify: <code>curl -s [URL] | sha256sum</code></p>
+        <div class="modal-actions">
+          <button id="verify-modal-close">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="lib.js"></script>
+    <script src="mock.js"></script>
+    <script src="app.js"></script>
+  </body>
 </html>
