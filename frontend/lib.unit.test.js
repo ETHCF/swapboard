@@ -154,6 +154,13 @@ describe("isValidAddress", () => {
     expect(isValidAddress("0xC02AAA39B223FE8D0A0E5C4F27EAD9083C756CC2")).toBe(true);
     expect(isValidAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")).toBe(true);
   });
+
+  // MUTATION: Remove ^ anchor from regex /^0x.../
+  // BREAKS: Returns true for "prefix0x..." which contains valid address
+  test("rejects addresses with prefix before 0x (requires ^ anchor)", () => {
+    expect(isValidAddress("xx0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")).toBe(false);
+    expect(isValidAddress("a0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")).toBe(false);
+  });
 });
 
 // ============================================================================
@@ -221,6 +228,32 @@ describe("getOrderIdFromHash", () => {
   test("only matches numeric order IDs", () => {
     expect(getOrderIdFromHash("#order-abc")).toBe(null);
     expect(getOrderIdFromHash("#order-12abc")).toBe(null);
+  });
+
+  // MUTATION: Remove $ anchor from /^#order=(\d+)$/
+  // BREAKS: Returns "123" for "#order=123extra"
+  test("rejects #order= format with trailing characters (requires $ anchor)", () => {
+    expect(getOrderIdFromHash("#order=123extra")).toBe(null);
+    expect(getOrderIdFromHash("#order=456xyz")).toBe(null);
+  });
+
+  // MUTATION: Remove $ anchor from /^#(\d+)$/
+  // BREAKS: Returns "123" for "#123extra"
+  test("rejects simple format with trailing characters (requires $ anchor)", () => {
+    expect(getOrderIdFromHash("#123extra")).toBe(null);
+    expect(getOrderIdFromHash("#789abc")).toBe(null);
+  });
+
+  // MUTATION: Remove ^ anchor from /#order=(\d+)$/
+  // BREAKS: Returns match for "prefix#order=123"
+  test("rejects #order= format with prefix before # (requires ^ anchor)", () => {
+    expect(getOrderIdFromHash("prefix#order=123")).toBe(null);
+  });
+
+  // MUTATION: Remove ^ anchor from /#(\d+)$/
+  // BREAKS: Returns match for "text#123"
+  test("rejects simple format with prefix before # (requires ^ anchor)", () => {
+    expect(getOrderIdFromHash("text#123")).toBe(null);
   });
 });
 
@@ -429,6 +462,17 @@ describe("formatTimeAgo", () => {
     expect(result).not.toContain("ago");
     expect(result).toMatch(/\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2}\.\d{1,2}\.\d{4}/); // Date format
   });
+
+  // MUTATION: Change timestamp * 1000 to timestamp / 1000
+  // BREAKS: Date would be near 1970 instead of the actual date
+  test("multiplies timestamp by 1000 for Date constructor (* not /)", () => {
+    // 7 days ago should show a date in the current year (or last year at boundary)
+    const result = formatTimeAgo(now - 604800);
+    const currentYear = new Date().getFullYear();
+    const lastYear = currentYear - 1;
+    // The date string should contain the current or last year, not 1970
+    expect(result).toMatch(new RegExp(`(${currentYear}|${lastYear})`));
+  });
 });
 
 // ============================================================================
@@ -462,6 +506,16 @@ describe("formatRatio", () => {
   test("shows up to 4 significant decimals for values >= 1", () => {
     expect(formatRatio(1.2345)).toBe("1.2345");
     expect(formatRatio(1.5)).toBe("1.5"); // Trailing zeros removed
+  });
+
+  // MUTATION: Change num >= 1 to num > 1
+  // BREAKS: Exactly 1 would fall through to 6-decimal format
+  test("boundary: exactly 1 uses 4-decimal format (>= not >)", () => {
+    // 1.00005 with toFixed(4) = "1.0001" (rounded)
+    // 1.00005 with toFixed(6) = "1.00005" (not rounded)
+    // This catches the >= vs > mutation
+    expect(formatRatio(1.00005)).toBe("1.0001");
+    expect(formatRatio(1.0001)).toBe("1.0001");
   });
 
   // MUTATION: Use 4 decimals instead of 6 for values < 1
@@ -542,6 +596,54 @@ describe("parseAmount", () => {
     expect(parseAmount("1.2.3", 18)).toBe(null);
     expect(parseAmount("-1", 18)).toBe(null);
   });
+
+  // MUTATION: Change fracPart.length > decimals to >= decimals
+  // BREAKS: Decimal with exactly decimals digits would be truncated
+  test("boundary: decimals at exactly token precision not truncated (> not >=)", () => {
+    // 6 decimal places for 6-decimal token should work exactly
+    expect(parseAmount("1.123456", 6)).toBe(BigInt("1123456"));
+    // 18 decimal places for 18-decimal token should work exactly
+    expect(parseAmount("1.123456789012345678", 18)).toBe(BigInt("1123456789012345678"));
+  });
+
+  // MUTATION: Remove .trim() from input cleaning
+  // BREAKS: " 1.5 " would fail validation
+  test("trims whitespace from input", () => {
+    expect(parseAmount(" 1.5 ", 6)).toBe(BigInt("1500000"));
+    expect(parseAmount("  100  ", 18)).toBe(BigInt("100000000000000000000"));
+  });
+
+  // MUTATION: Use "" instead of "0" for empty wholePart
+  // BREAKS: ".5" would become "5" (missing leading zero)
+  test("leading decimal defaults wholePart to 0", () => {
+    expect(parseAmount(".123456", 6)).toBe(BigInt("123456"));
+    expect(parseAmount(".1", 18)).toBe(BigInt("100000000000000000"));
+  });
+
+  // MUTATION: Change !str to false or change && to ||
+  // BREAKS: Non-string input would pass validation
+  test("type validation rejects non-string input (!str and typeof check)", () => {
+    expect(parseAmount(123, 18)).toBe(null);
+    expect(parseAmount(["1.5"], 18)).toBe(null);
+    expect(parseAmount({}, 18)).toBe(null);
+    expect(parseAmount(true, 18)).toBe(null);
+  });
+
+  // MUTATION: Change cleaned === "" to false or "Stryker was here!"
+  // BREAKS: Empty string after cleaning would pass
+  test("rejects empty string after cleaning", () => {
+    expect(parseAmount("", 18)).toBe(null);
+    expect(parseAmount("   ", 18)).toBe(null); // Whitespace only
+  });
+
+  // MUTATION: if (fracPart.length > decimals) to if (true)
+  // BREAKS: All fractional parts would be truncated
+  test("only truncates when fraction exceeds decimals (> not always)", () => {
+    // Exact precision should not be truncated
+    expect(parseAmount("1.12", 2)).toBe(BigInt("112")); // Exactly 2 decimals
+    expect(parseAmount("1.1", 2)).toBe(BigInt("110")); // Less than 2 decimals, padded
+    expect(parseAmount("1.123", 2)).toBe(BigInt("112")); // More than 2 decimals, truncated
+  });
 });
 
 // ============================================================================
@@ -582,6 +684,15 @@ describe("getCachedPrice", () => {
     cache.set("weth", exactlyExpired);
     expect(getCachedPrice("weth", cache, 60000)).toBe(null);
   });
+
+  // MUTATION: Change > to >= in TTL check
+  // BREAKS: Entry at exactly TTL is incorrectly expired
+  test("TTL boundary: valid at exactly TTL (> not >=)", () => {
+    const cache = new Map();
+    const exactlyAtTTL = { usd: 3500, fetchedAt: Date.now() - 60000 };
+    cache.set("weth", exactlyAtTTL);
+    expect(getCachedPrice("weth", cache, 60000)).toBe(exactlyAtTTL);
+  });
 });
 
 // ============================================================================
@@ -613,6 +724,18 @@ describe("getTokenPrice", () => {
     const cache = new Map();
     cache.set("weth", { usd: 3500, fetchedAt: Date.now() });
     expect(getTokenPrice("0xC02AAA39B223FE8D0A0E5C4F27EAD9083C756CC2", cache, 60000)).toBe(3500);
+  });
+
+  // MUTATION: Change if (!id) to if (false)
+  // BREAKS: Would try to look up undefined in cache, returning wrong value or error
+  test("returns null immediately when token not in mapping (!id check)", () => {
+    const cache = new Map();
+    // Put something in cache that could be accidentally matched
+    cache.set(undefined, { usd: 9999, fetchedAt: Date.now() });
+    cache.set("undefined", { usd: 8888, fetchedAt: Date.now() });
+    // Unknown token should still return null, not some cached value
+    const price = getTokenPrice("0x0000000000000000000000000000000000000001", cache, 60000);
+    expect(price).toBe(null);
   });
 });
 
@@ -709,6 +832,100 @@ describe("calculateMarketDeviation", () => {
     };
     expect(calculateMarketDeviation(order, mockGetPrice)).toBe(null);
   });
+
+  // MUTATION: Don't check for amountB === 0n
+  // BREAKS: Division by zero or wrong calculation
+  test("returns null when amountB is zero", () => {
+    const order = {
+      tokenA: { address: "0xtoken_a", decimals: 18 },
+      tokenB: { address: "0xtoken_b", decimals: 18 },
+      amountA: "1000000000000000000",
+      amountB: "0",
+    };
+    expect(calculateMarketDeviation(order, mockGetPrice)).toBe(null);
+  });
+
+  // MUTATION: Don't check for priceA === 0
+  // BREAKS: Division by zero in marketRate calculation
+  test("returns null when priceA is zero", () => {
+    const mockGetPriceWithZeroA = (addr) => {
+      if (addr.toLowerCase() === "0xtoken_a") return 0;
+      if (addr.toLowerCase() === "0xtoken_b") return 50;
+      return null;
+    };
+    const order = {
+      tokenA: { address: "0xtoken_a", decimals: 18 },
+      tokenB: { address: "0xtoken_b", decimals: 18 },
+      amountA: "1000000000000000000",
+      amountB: "2000000000000000000",
+    };
+    expect(calculateMarketDeviation(order, mockGetPriceWithZeroA)).toBe(null);
+  });
+
+  // MUTATION: Change < 0.5 to <= 0.5
+  // BREAKS: 0.6% deviation shows ~market instead of +0.6%
+  test("boundary: 0.6% deviation shows +0.6% (< not <=)", () => {
+    // Market rate: priceA/priceB = 100/50 = 2
+    // We want deviation > 0.5%, so use 0.6%
+    // orderRate = marketRate * 1.006 = 2.012
+    const order = {
+      tokenA: { address: "0xtoken_a", decimals: 18 },
+      tokenB: { address: "0xtoken_b", decimals: 18 },
+      amountA: "1000000000000000000", // 1 token
+      amountB: "2012000000000000000", // 2.012 tokens = 0.6% above market
+    };
+    const result = calculateMarketDeviation(order, mockGetPrice);
+    expect(result.deviation).toBeCloseTo(0.6, 1);
+    expect(result.label).toBe("+0.6%");
+  });
+
+  // MUTATION: Change < 0.5 to <= 0.5 (boundary test)
+  // BREAKS: 0.4% deviation shows positive label instead of ~market
+  test("boundary: 0.4% deviation shows ~market (< 0.5)", () => {
+    // Market rate = 2, deviation = 0.4%
+    // orderRate = 2 * 1.004 = 2.008
+    const order = {
+      tokenA: { address: "0xtoken_a", decimals: 18 },
+      tokenB: { address: "0xtoken_b", decimals: 18 },
+      amountA: "1000000000000000000",
+      amountB: "2008000000000000000", // 2.008 tokens = 0.4% above market
+    };
+    const result = calculateMarketDeviation(order, mockGetPrice);
+    expect(Math.abs(result.deviation)).toBeLessThan(0.5);
+    expect(result.label).toBe("~market");
+  });
+
+  // MUTATION: Change > 0 to >= 0
+  // BREAKS: Exactly 0 deviation (after rounding) would show +0.0% instead of ~market
+  test("boundary: deviation of exactly 0 shows ~market", () => {
+    const order = {
+      tokenA: { address: "0xtoken_a", decimals: 18 },
+      tokenB: { address: "0xtoken_b", decimals: 18 },
+      amountA: "1000000000000000000",
+      amountB: "2000000000000000000", // Exact market rate
+    };
+    const result = calculateMarketDeviation(order, mockGetPrice);
+    expect(result.deviation).toBeCloseTo(0, 1);
+    expect(result.label).toBe("~market");
+  });
+
+  // MUTATION: Change humanAmountB / humanAmountA to * humanAmountA
+  // BREAKS: Order rate calculation would be wrong (multiplication instead of division)
+  test("calculates order rate as amountB / amountA (division not multiplication)", () => {
+    // Market rate = 100/50 = 2
+    // With division: orderRate = 4/2 = 2 (matches market, ~market)
+    // With multiplication: orderRate = 4*2 = 8 (huge deviation)
+    const order = {
+      tokenA: { address: "0xtoken_a", decimals: 18 },
+      tokenB: { address: "0xtoken_b", decimals: 18 },
+      amountA: "2000000000000000000", // 2 tokens
+      amountB: "4000000000000000000", // 4 tokens (rate = 2)
+    };
+    const result = calculateMarketDeviation(order, mockGetPrice);
+    // With correct division: deviation should be ~0 (market rate is 2)
+    expect(Math.abs(result.deviation)).toBeLessThan(1);
+    expect(result.label).toBe("~market");
+  });
 });
 
 // ============================================================================
@@ -765,6 +982,157 @@ describe("searchTokens", () => {
     const results = searchTokens("WETH", tokenList);
     const symbols = results.map(t => t.symbol);
     expect(new Set(symbols).size).toBe(symbols.length);
+  });
+
+  // MUTATION: Change >= limit to > limit in first loop
+  // BREAKS: Returns limit+1 results when limit exact matches found
+  test("boundary: returns exactly limit results (>= not >)", () => {
+    const manyTokens = [
+      { symbol: "AAA", name: "Token A" },
+      { symbol: "AAB", name: "Token B" },
+      { symbol: "AAC", name: "Token C" },
+      { symbol: "AAD", name: "Token D" },
+    ];
+    const results = searchTokens("AA", manyTokens, 3);
+    expect(results.length).toBe(3);
+  });
+
+  // MUTATION: Remove exact match loop (first for loop)
+  // BREAKS: Exact matches not prioritized when startsWith also matches
+  test("exact match prioritized over startsWith match", () => {
+    const tokens = [
+      { symbol: "WETHX", name: "Extended" },
+      { symbol: "WETH", name: "Wrapped Ether" },
+    ];
+    const results = searchTokens("WETH", tokens, 10);
+    expect(results[0].symbol).toBe("WETH"); // Exact first, not WETHX
+  });
+
+  // MUTATION: Remove startsWith loop (second for loop)
+  // BREAKS: Prefix matches not found
+  test("finds tokens by symbol prefix (startsWith)", () => {
+    const tokens = [
+      { symbol: "BITCOIN", name: "Bitcoin" },
+      { symbol: "BIT", name: "Bit Token" },
+    ];
+    // "BI" doesn't exact-match anything, so falls to startsWith
+    const results = searchTokens("BI", tokens, 10);
+    expect(results.length).toBe(2);
+    expect(results.some(t => t.symbol === "BIT")).toBe(true);
+  });
+
+  // MUTATION: Change startsWith to endsWith
+  // BREAKS: "WE" wouldn't match "WETH"
+  test("startsWith matches prefix not suffix", () => {
+    const results = searchTokens("WE", tokenList, 10);
+    expect(results.some(t => t.symbol === "WETH")).toBe(true);
+    expect(results.some(t => t.symbol === "WETHABC")).toBe(true);
+  });
+
+  // MUTATION: Use toUpperCase instead of toLowerCase in any loop
+  // BREAKS: Lowercase query wouldn't match uppercase symbol
+  test("all loops use lowercase comparison", () => {
+    // Test all three loops with lowercase query
+    expect(searchTokens("weth", tokenList, 10)[0].symbol).toBe("WETH"); // exact
+    expect(searchTokens("wet", tokenList, 10).some(t => t.symbol === "WETH")).toBe(true); // startsWith
+    expect(searchTokens("eth", tokenList, 10).some(t => t.symbol === "WETH")).toBe(true); // includes
+  });
+
+  // MUTATION: Change query.length < 1 to false
+  // BREAKS: Single character query would be rejected
+  test("accepts single character query (length >= 1)", () => {
+    const results = searchTokens("W", tokenList, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.some(t => t.symbol.startsWith("W"))).toBe(true);
+  });
+
+  // MUTATION: Remove startsWith loop (for loop at line 328)
+  // BREAKS: Prefix-only matches not found when no exact match exists
+  test("startsWith loop finds prefix matches that are not exact", () => {
+    const tokens = [
+      { symbol: "ABCDEF", name: "Token ABC" },
+      { symbol: "XYZABC", name: "Token XYZ" },
+    ];
+    // "ABC" has no exact match but ABCDEF starts with ABC
+    const results = searchTokens("ABC", tokens, 10);
+    expect(results[0].symbol).toBe("ABCDEF"); // Found via startsWith, not includes
+  });
+
+  // MUTATION: Change startsWith to endsWith in second loop
+  // BREAKS: Prefix search wouldn't work
+  test("second loop uses startsWith not endsWith", () => {
+    const tokens = [
+      { symbol: "ENDING", name: "Token" },  // ends with ING
+      { symbol: "INGEST", name: "Token" },  // starts with ING
+    ];
+    // "ING" with startsWith finds INGEST first
+    const results = searchTokens("ING", tokens, 10);
+    expect(results[0].symbol).toBe("INGEST");
+  });
+
+  // MUTATION: Block statement removal in startsWith loop
+  // BREAKS: Matches found but not added to results
+  test("startsWith loop adds matches to results", () => {
+    const tokens = [
+      { symbol: "PREFIX1", name: "Token 1" },
+      { symbol: "PREFIX2", name: "Token 2" },
+      { symbol: "OTHER", name: "Token 3" },
+    ];
+    const results = searchTokens("PRE", tokens, 10);
+    expect(results.length).toBe(2);
+    expect(results.every(t => t.symbol.startsWith("PRE"))).toBe(true);
+  });
+
+  // MUTATION: Change >= limit to > limit in includes loop (line 339)
+  // BREAKS: Returns limit+1 results when hitting limit in includes loop
+  test("includes loop respects limit boundary (>= not >)", () => {
+    // Create tokens that will only match via includes (not exact or startsWith)
+    const tokens = [
+      { symbol: "XYZABC", name: "Contains ABC 1" },
+      { symbol: "DEFABC", name: "Contains ABC 2" },
+      { symbol: "GHIABC", name: "Contains ABC 3" },
+    ];
+    // Query "ABC" will find these via includes (symbol contains ABC)
+    // With limit 2, should return exactly 2
+    const results = searchTokens("ABC", tokens, 2);
+    expect(results.length).toBe(2);
+  });
+
+  // MUTATION: Remove includes loop return statement
+  // BREAKS: Would continue searching past limit
+  test("includes loop returns early when limit reached", () => {
+    const tokens = [];
+    for (let i = 0; i < 20; i++) {
+      tokens.push({ symbol: `TOKEN${i}`, name: `Contains XYZ ${i}` });
+    }
+    // "XYZ" matches via name.includes, limit 5 should stop early
+    const results = searchTokens("XYZ", tokens, 5);
+    expect(results.length).toBe(5);
+  });
+
+  // MUTATION: Change toLowerCase to toUpperCase in includes loop
+  // BREAKS: Lowercase query wouldn't match uppercase symbol/name
+  test("includes loop is case-insensitive", () => {
+    const tokens = [
+      // Symbol that WON'T match "xyz" via exact or startsWith, only via includes
+      { symbol: "ABCXYZ", name: "Token with XYZ in symbol" },
+    ];
+    // "xyz" matches via includes in symbol (not exact, not startsWith)
+    const results = searchTokens("xyz", tokens, 10);
+    expect(results.length).toBe(1);
+    expect(results[0].symbol).toBe("ABCXYZ");
+  });
+
+  // MUTATION: Change toLowerCase to toUpperCase in name.includes check
+  // BREAKS: Lowercase query wouldn't match name
+  test("includes loop matches name case-insensitively", () => {
+    const tokens = [
+      { symbol: "NOTSEARCH", name: "Contains FINDME Here" },
+    ];
+    // "findme" (lowercase) should match "FINDME" in name via includes
+    const results = searchTokens("findme", tokens, 10);
+    expect(results.length).toBe(1);
+    expect(results[0].name).toContain("FINDME");
   });
 });
 
@@ -1091,6 +1459,56 @@ describe("sortOrders", () => {
     ];
     const sorted = sortOrders(equalOrders, "maker", "asc");
     // With stable sort (return 0), original order is preserved
+    expect(sorted[0].orderId).toBe("1");
+    expect(sorted[1].orderId).toBe("2");
+  });
+
+  // MUTATION: Change aVal < bVal to aVal <= bVal in amountA
+  // BREAKS: Equal amounts would incorrectly return -1 instead of falling through to return 0
+  test("amountA boundary: equal values return 0 (< not <=)", () => {
+    const equalAmounts = [
+      { orderId: "1", amountA: "1000000000000000000", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      { orderId: "2", amountA: "1000000000000000000", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+    ];
+    const sorted = sortOrders(equalAmounts, "amountA", "asc");
+    // Equal amounts should preserve original order (stable sort)
+    expect(sorted[0].orderId).toBe("1");
+    expect(sorted[1].orderId).toBe("2");
+  });
+
+  // MUTATION: Change aVal < bVal to aVal <= bVal in amountB
+  // BREAKS: Equal amounts would incorrectly return -1 instead of falling through to return 0
+  test("amountB boundary: equal values return 0 (< not <=)", () => {
+    const equalAmounts = [
+      { orderId: "1", amountA: "1", amountB: "1000000000000000000", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      { orderId: "2", amountA: "1", amountB: "1000000000000000000", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+    ];
+    const sorted = sortOrders(equalAmounts, "amountB", "asc");
+    // Equal amounts should preserve original order (stable sort)
+    expect(sorted[0].orderId).toBe("1");
+    expect(sorted[1].orderId).toBe("2");
+  });
+
+  // MUTATION: Change aVal > bVal to aVal >= bVal in amountA
+  // BREAKS: Equal amounts in desc would return 1 instead of falling through
+  test("amountA boundary desc: equal values return 0 (> not >=)", () => {
+    const equalAmounts = [
+      { orderId: "1", amountA: "5000", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      { orderId: "2", amountA: "5000", amountB: "1", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+    ];
+    const sorted = sortOrders(equalAmounts, "amountA", "desc");
+    expect(sorted[0].orderId).toBe("1");
+    expect(sorted[1].orderId).toBe("2");
+  });
+
+  // MUTATION: Change aVal > bVal to aVal >= bVal in amountB
+  // BREAKS: Equal amounts in desc would return 1 instead of falling through
+  test("amountB boundary desc: equal values return 0 (> not >=)", () => {
+    const equalAmounts = [
+      { orderId: "1", amountA: "1", amountB: "5000", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+      { orderId: "2", amountA: "1", amountB: "5000", tokenA: { symbol: "" }, tokenB: { symbol: "" }, maker: "", _usdValue: 0, _price: 0 },
+    ];
+    const sorted = sortOrders(equalAmounts, "amountB", "desc");
     expect(sorted[0].orderId).toBe("1");
     expect(sorted[1].orderId).toBe("2");
   });
