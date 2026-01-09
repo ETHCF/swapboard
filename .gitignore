@@ -61,3 +61,10 @@ image.png
 .claude/
 spec.md
 CLAUDE.md
+
+# Foundry 
+keystore/
+*.pem
+*.key
+.gas-snapshot
+
