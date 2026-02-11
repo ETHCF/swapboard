@@ -5,9 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockWETH} from "./mocks/MockWETH.sol";
 
 contract SwapboardIntegrationTest is Test {
     Swapboard public board;
+    MockWETH public mockWeth;
     MockERC20 public weth;
     MockERC20 public usdc;
     MockERC20 public dai;
@@ -19,7 +21,8 @@ contract SwapboardIntegrationTest is Test {
     address public dave = address(0xDA7E);
 
     function setUp() public {
-        board = new Swapboard();
+        mockWeth = new MockWETH();
+        board = new Swapboard(address(mockWeth));
 
         weth = new MockERC20("Wrapped Ether", "WETH", 18);
         usdc = new MockERC20("USD Coin", "USDC", 6);

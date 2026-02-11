@@ -5,6 +5,7 @@ import {Test, console2} from "forge-std/Test.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
 import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {MockWETH} from "../mocks/MockWETH.sol";
 import {SwapboardHandler} from "./Handler.sol";
 
 /// @title SwapboardInvariantTest
@@ -14,10 +15,12 @@ contract SwapboardInvariantTest is Test {
     Swapboard public board;
     MockERC20 public tokenA;
     MockERC20 public tokenB;
+    MockWETH public mockWeth;
     SwapboardHandler public handler;
 
     function setUp() public {
-        board = new Swapboard();
+        mockWeth = new MockWETH();
+        board = new Swapboard(address(mockWeth));
         tokenA = new MockERC20("Token A", "TKA", 18);
         tokenB = new MockERC20("Token B", "TKB", 18);
         handler = new SwapboardHandler(board, tokenA, tokenB);
@@ -108,12 +111,14 @@ contract SwapboardStatelessInvariantTest is Test {
     Swapboard public board;
     MockERC20 public tokenA;
     MockERC20 public tokenB;
+    MockWETH public mockWeth;
 
     address public maker = makeAddr("maker");
     address public taker = makeAddr("taker");
 
     function setUp() public {
-        board = new Swapboard();
+        mockWeth = new MockWETH();
+        board = new Swapboard(address(mockWeth));
         tokenA = new MockERC20("Token A", "TKA", 18);
         tokenB = new MockERC20("Token B", "TKB", 18);
 

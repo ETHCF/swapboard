@@ -27,7 +27,7 @@ contract ReentrantAttacker {
         address _board,
         string memory _attackType
     ) {
-        board = Swapboard(_board);
+        board = Swapboard(payable(_board));
         attackType = _attackType;
     }
 

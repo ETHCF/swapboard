@@ -12,6 +12,7 @@ import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20, MockFOT} from "./mocks/MockERC20.sol";
+import {MockWETH} from "./mocks/MockWETH.sol";
 
 /// @notice Unit tests for Swapboard contract
 /// @dev Uses Foundry's Test framework with MockERC20 tokens
@@ -19,6 +20,7 @@ contract SwapboardTest is Test {
     Swapboard public board;
     MockERC20 public tokenA;
     MockERC20 public tokenB;
+    MockWETH public mockWeth;
 
     address public maker = address(0x1);
     address public taker = address(0x2);
@@ -29,7 +31,8 @@ contract SwapboardTest is Test {
     uint256 constant AMOUNT_B = 250_000e6;
 
     function setUp() public {
-        board = new Swapboard();
+        mockWeth = new MockWETH();
+        board = new Swapboard(address(mockWeth));
 
         tokenA = new MockERC20("Token A", "TKA", 18);
         tokenB = new MockERC20("Token B", "TKB", 6);

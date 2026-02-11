@@ -5,6 +5,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ISwapboard} from "./interfaces/ISwapboard.sol";
+import {IWETH} from "./interfaces/IWETH.sol";
 
 /// @title Swapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
@@ -26,6 +27,9 @@ import {ISwapboard} from "./interfaces/ISwapboard.sol";
 contract Swapboard is ISwapboard, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    /// @notice Canonical WETH address for this deployment
+    address public immutable weth;
+
     /// @notice Counter for generating unique order IDs
     /// @dev Starts at 0, increments by 1 for each new order
     uint256 public nextOrderId;
@@ -33,6 +37,19 @@ contract Swapboard is ISwapboard, ReentrancyGuard {
     /// @notice Mapping from order ID to Order struct
     /// @dev Non-existent orders return default struct with maker=address(0) and active=false
     mapping(uint256 => Order) public orders;
+
+    constructor(
+        address _weth
+    ) {
+        if (_weth == address(0)) revert ZeroAddress();
+        if (_weth.code.length == 0) revert NotAContract(_weth);
+        weth = _weth;
+    }
+
+    /// @notice Accept ETH only from WETH contract (for withdraw callbacks)
+    receive() external payable {
+        if (msg.sender != weth) revert NotWETH(weth, msg.sender);
+    }
 
     /// @inheritdoc ISwapboard
     function createOrder(
@@ -117,6 +134,100 @@ contract Swapboard is ISwapboard, ReentrancyGuard {
         IERC20(order.tokenA).safeTransfer(order.maker, order.amountA);
 
         emit OrderCanceled(orderId);
+    }
+
+    /// @inheritdoc ISwapboard
+    function createOrderWithEth(
+        address tokenB,
+        uint256 amountB
+    ) external payable nonReentrant returns (uint256 orderId) {
+        if (msg.value == 0) revert ZeroETH();
+        if (tokenB == address(0)) revert ZeroAddress();
+        if (amountB == 0) revert ZeroAmount();
+        if (tokenB == weth) revert SameToken();
+        if (tokenB.code.length == 0) revert NotAContract(tokenB);
+
+        IWETH(weth).deposit{value: msg.value}();
+
+        orderId = nextOrderId;
+        unchecked {
+            ++nextOrderId;
+        }
+
+        orders[orderId] = Order({
+            maker: msg.sender,
+            tokenA: weth,
+            amountA: msg.value,
+            tokenB: tokenB,
+            amountB: amountB,
+            active: true
+        });
+
+        emit OrderCreated(orderId, msg.sender, weth, msg.value, tokenB, amountB);
+    }
+
+    /// @inheritdoc ISwapboard
+    function fillOrderWithEth(
+        uint256 orderId
+    ) external payable nonReentrant {
+        Order storage order = orders[orderId];
+
+        if (order.maker == address(0)) revert OrderNotFound(orderId);
+        if (!order.active) revert OrderNotActive(orderId);
+        if (order.tokenB != weth) revert NotWETH(weth, order.tokenB);
+        if (msg.value != order.amountB) revert ETHAmountMismatch(order.amountB, msg.value);
+
+        order.active = false;
+
+        IWETH(weth).deposit{value: msg.value}();
+        IERC20(weth).safeTransfer(order.maker, order.amountB);
+
+        IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
+
+        emit OrderFilled(orderId, msg.sender);
+    }
+
+    /// @inheritdoc ISwapboard
+    function cancelOrderUnwrap(
+        uint256 orderId
+    ) external nonReentrant {
+        Order storage order = orders[orderId];
+
+        if (order.maker == address(0)) revert OrderNotFound(orderId);
+        if (!order.active) revert OrderNotActive(orderId);
+        if (msg.sender != order.maker) revert NotMaker(orderId, msg.sender, order.maker);
+        if (order.tokenA != weth) revert NotWETH(weth, order.tokenA);
+
+        order.active = false;
+
+        IWETH(weth).withdraw(order.amountA);
+
+        (bool success,) = payable(order.maker).call{value: order.amountA}("");
+        if (!success) revert ETHTransferFailed(order.maker);
+
+        emit OrderCanceled(orderId);
+    }
+
+    /// @inheritdoc ISwapboard
+    function fillOrderUnwrap(
+        uint256 orderId
+    ) external nonReentrant {
+        Order storage order = orders[orderId];
+
+        if (order.maker == address(0)) revert OrderNotFound(orderId);
+        if (!order.active) revert OrderNotActive(orderId);
+        if (order.tokenA != weth) revert NotWETH(weth, order.tokenA);
+
+        order.active = false;
+
+        IERC20(order.tokenB).safeTransferFrom(msg.sender, order.maker, order.amountB);
+
+        IWETH(weth).withdraw(order.amountA);
+
+        (bool success,) = payable(msg.sender).call{value: order.amountA}("");
+        if (!success) revert ETHTransferFailed(msg.sender);
+
+        emit OrderFilled(orderId, msg.sender);
     }
 
     /// @inheritdoc ISwapboard

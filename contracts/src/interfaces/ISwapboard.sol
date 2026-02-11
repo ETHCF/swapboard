@@ -81,6 +81,23 @@ interface ISwapboard {
     /// @param maker The actual maker of the order
     error NotMaker(uint256 orderId, address caller, address maker);
 
+    /// @notice Thrown when a function requiring WETH is called on a non-WETH token
+    /// @param expected The WETH address
+    /// @param actual The actual token address
+    error NotWETH(address expected, address actual);
+
+    /// @notice Thrown when msg.value does not match the required ETH amount
+    /// @param required The required ETH amount
+    /// @param sent The actual msg.value
+    error ETHAmountMismatch(uint256 required, uint256 sent);
+
+    /// @notice Thrown when an ETH transfer fails
+    /// @param recipient The intended recipient
+    error ETHTransferFailed(address recipient);
+
+    /// @notice Thrown when msg.value is zero for a payable function
+    error ZeroETH();
+
     /// @notice Creates a new OTC order by depositing tokenA
     /// @dev Transfers tokenA from caller to contract. Reverts if token is fee-on-transfer.
     /// @param tokenA Address of the ERC20 token to sell
@@ -131,4 +148,38 @@ interface ISwapboard {
     function canFill(
         uint256 orderId
     ) external view returns (bool);
+
+    /// @notice Returns the WETH address used by this contract
+    function weth() external view returns (address);
+
+    /// @notice Creates an order selling ETH (auto-wrapped to WETH)
+    /// @dev Wraps msg.value to WETH and stores order with tokenA = WETH
+    /// @param tokenB Address of the ERC20 token wanted in exchange
+    /// @param amountB Amount of tokenB required to fill the order (in base units)
+    /// @return orderId The unique identifier for the created order
+    function createOrderWithEth(
+        address tokenB,
+        uint256 amountB
+    ) external payable returns (uint256 orderId);
+
+    /// @notice Fills an order by sending ETH (auto-wrapped to WETH)
+    /// @dev Requires order.tokenB == WETH and msg.value == order.amountB
+    /// @param orderId The unique identifier of the order to fill
+    function fillOrderWithEth(
+        uint256 orderId
+    ) external payable;
+
+    /// @notice Cancels an order where tokenA is WETH, returning ETH to maker
+    /// @dev Only callable by the order's maker. Unwraps WETH to ETH.
+    /// @param orderId The unique identifier of the order to cancel
+    function cancelOrderUnwrap(
+        uint256 orderId
+    ) external;
+
+    /// @notice Fills an order where tokenA is WETH, receiving ETH instead
+    /// @dev Pays tokenB normally, receives ETH after WETH unwrap
+    /// @param orderId The unique identifier of the order to fill
+    function fillOrderUnwrap(
+        uint256 orderId
+    ) external;
 }

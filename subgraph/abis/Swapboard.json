@@ -1,5 +1,20 @@
 [
   {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "_weth",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "receive",
+    "stateMutability": "payable"
+  },
+  {
     "type": "function",
     "name": "canFill",
     "inputs": [
@@ -21,6 +36,19 @@
   {
     "type": "function",
     "name": "cancelOrder",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cancelOrderUnwrap",
     "inputs": [
       {
         "name": "orderId",
@@ -67,6 +95,30 @@
   },
   {
     "type": "function",
+    "name": "createOrderWithEth",
+    "inputs": [
+      {
+        "name": "tokenB",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amountB",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "fillOrder",
     "inputs": [
       {
@@ -77,6 +129,32 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "fillOrderUnwrap",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "fillOrderWithEth",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -238,6 +316,19 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "weth",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "OrderCanceled",
     "inputs": [
@@ -330,6 +421,33 @@
   },
   {
     "type": "error",
+    "name": "ETHAmountMismatch",
+    "inputs": [
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sent",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ETHTransferFailed",
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NotAContract",
     "inputs": [
       {
@@ -355,6 +473,22 @@
       },
       {
         "name": "maker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotWETH",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "actual",
         "type": "address",
         "internalType": "address"
       }
@@ -411,6 +545,11 @@
   {
     "type": "error",
     "name": "ZeroAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroETH",
     "inputs": []
   }
 ]
