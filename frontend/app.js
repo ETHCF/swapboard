@@ -31,10 +31,10 @@
    */
   const CONFIG = {
     // Contract address on Sepolia testnet
-    CONTRACT_ADDRESS: "0xBe3D7A555aa633263110d10d37AB40Ef3a2b8BBa",
+    CONTRACT_ADDRESS: "0x57FbEE5959DA886E6699afaE1113E9Fa20E21762",
     // Goldsky subgraph endpoint (Sepolia)
     SUBGRAPH_URL:
-      "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/1.0.0/gn",
+      "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/2.0.0/gn",
     // Number of orders per page
     PAGE_SIZE: 20,
     // Request timeout in milliseconds
@@ -133,19 +133,28 @@
 
   const CONTRACT_ABI = [
     "function createOrder(address tokenA, uint256 amountA, address tokenB, uint256 amountB) external returns (uint256 orderId)",
+    "function createOrderWithEth(address tokenB, uint256 amountB) external payable returns (uint256 orderId)",
     "function fillOrder(uint256 orderId) external",
+    "function fillOrderWithEth(uint256 orderId) external payable",
+    "function fillOrderUnwrap(uint256 orderId) external",
     "function cancelOrder(uint256 orderId) external",
+    "function cancelOrderUnwrap(uint256 orderId) external",
     "function getOrder(uint256 orderId) external view returns (tuple(address maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB, bool active))",
     "function getOrders(uint256[] orderIds) external view returns (tuple(address maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB, bool active)[])",
     "function canFill(uint256 orderId) external view returns (bool)",
     "function nextOrderId() external view returns (uint256)",
+    "function weth() external view returns (address)",
     "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB)",
     "event OrderFilled(uint256 indexed orderId, address indexed taker)",
     "event OrderCanceled(uint256 indexed orderId)",
     "error ZeroAddress()",
     "error ZeroAmount()",
+    "error ZeroETH()",
     "error SameToken()",
     "error NotAContract(address token)",
+    "error NotWETH(address expected, address actual)",
+    "error ETHAmountMismatch(uint256 required, uint256 sent)",
+    "error ETHTransferFailed(address recipient)",
     "error BalanceMismatch(uint256 expected, uint256 received)",
     "error OrderNotFound(uint256 orderId)",
     "error OrderNotActive(uint256 orderId)",
@@ -165,6 +174,12 @@
   let signer = null;
   let userAddress = null;
   let contract = null;
+  let cachedWethAddress = null;
+
+  function isWeth(addr) {
+    if (!cachedWethAddress || !addr) return false;
+    return addr.toLowerCase() === cachedWethAddress;
+  }
 
   // Create form state for validation
   const createFormState = {
@@ -1179,6 +1194,14 @@
           return "Token address is not a contract";
         case "BalanceMismatch":
           return "Token balance mismatch during transfer";
+        case "ZeroETH":
+          return "ETH amount cannot be zero";
+        case "NotWETH":
+          return "Token is not WETH";
+        case "ETHAmountMismatch":
+          return "ETH amount does not match required amount";
+        case "ETHTransferFailed":
+          return "ETH transfer to recipient failed";
         default:
           return "Transaction rejected by contract";
       }
@@ -1664,6 +1687,17 @@
           handleCancelOrder(order);
         });
         actionsEl.appendChild(cancelBtn);
+
+        if (isWeth(order.tokenA.address)) {
+          const cancelEthBtn = document.createElement("button");
+          cancelEthBtn.textContent = "Cancel (receive ETH)";
+          cancelEthBtn.style.background = "#c00";
+          cancelEthBtn.addEventListener("click", async () => {
+            modal.classList.add("hidden");
+            handleCancelOrderUnwrap(order);
+          });
+          actionsEl.appendChild(cancelEthBtn);
+        }
       } else {
         const fillBtn = document.createElement("button");
         fillBtn.textContent = "Fill Order";
@@ -1677,6 +1711,28 @@
           }
         });
         actionsEl.appendChild(fillBtn);
+
+        if (isWeth(order.tokenB.address)) {
+          const fillEthBtn = document.createElement("button");
+          fillEthBtn.textContent = "Fill with ETH";
+          fillEthBtn.addEventListener("click", async () => {
+            modal.classList.add("hidden");
+            if (!userAddress) await connectWallet();
+            if (userAddress) handleFillOrderWithEth(order);
+          });
+          actionsEl.appendChild(fillEthBtn);
+        }
+
+        if (isWeth(order.tokenA.address)) {
+          const fillUnwrapBtn = document.createElement("button");
+          fillUnwrapBtn.textContent = "Fill (receive ETH)";
+          fillUnwrapBtn.addEventListener("click", async () => {
+            modal.classList.add("hidden");
+            if (!userAddress) await connectWallet();
+            if (userAddress) handleFillOrderUnwrap(order);
+          });
+          actionsEl.appendChild(fillUnwrapBtn);
+        }
       }
     }
 
@@ -2118,6 +2174,20 @@
             handleCancelOrder(order);
           });
           tdAction.appendChild(cancelBtn);
+
+          if (isWeth(order.tokenA.address)) {
+            const cancelEthBtn = document.createElement("a");
+            cancelEthBtn.href = "#";
+            cancelEthBtn.textContent = "[Cancel ETH]";
+            cancelEthBtn.classList.add("cancel-btn");
+            cancelEthBtn.addEventListener("click", async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleCancelOrderUnwrap(order);
+            });
+            tdAction.appendChild(document.createTextNode(" "));
+            tdAction.appendChild(cancelEthBtn);
+          }
         } else {
           const fillBtn = document.createElement("a");
           fillBtn.href = "#";
@@ -2134,6 +2204,36 @@
             }
           });
           tdAction.appendChild(fillBtn);
+
+          if (isWeth(order.tokenB.address)) {
+            const fillEthBtn = document.createElement("a");
+            fillEthBtn.href = "#";
+            fillEthBtn.textContent = "[Fill ETH]";
+            fillEthBtn.classList.add("buy-btn");
+            fillEthBtn.addEventListener("click", async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!userAddress) await connectWallet();
+              if (userAddress) handleFillOrderWithEth(order);
+            });
+            tdAction.appendChild(document.createTextNode(" "));
+            tdAction.appendChild(fillEthBtn);
+          }
+
+          if (isWeth(order.tokenA.address)) {
+            const fillUnwrapBtn = document.createElement("a");
+            fillUnwrapBtn.href = "#";
+            fillUnwrapBtn.textContent = "[Fill Unwrap]";
+            fillUnwrapBtn.classList.add("buy-btn");
+            fillUnwrapBtn.addEventListener("click", async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!userAddress) await connectWallet();
+              if (userAddress) handleFillOrderUnwrap(order);
+            });
+            tdAction.appendChild(document.createTextNode(" "));
+            tdAction.appendChild(fillUnwrapBtn);
+          }
         }
       } else {
         const statusSpan = document.createElement("span");
@@ -2428,29 +2528,188 @@
     );
   }
 
+  async function handleFillOrderWithEth(order) {
+    if (!signer) {
+      showToast("Connect wallet first", "error");
+      return;
+    }
+
+    const amountBStr = formatAmount(order.amountB, 18);
+    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
+
+    showToast("Estimating gas...");
+    let gasEstimate = null;
+    try {
+      const txData = contract.interface.encodeFunctionData("fillOrderWithEth", [order.orderId]);
+      gasEstimate = await estimateGasCost({
+        from: userAddress,
+        to: CONFIG.CONTRACT_ADDRESS,
+        data: txData,
+        value: BigInt(order.amountB),
+      });
+    } catch (e) {
+      console.error("Gas estimation failed:", e);
+    }
+
+    showModal(
+      "Fill Order #" + order.orderId + " with ETH",
+      `You will send ${amountBStr} ETH and receive ${amountAStr} ${order.tokenA.symbol} in return.`,
+      async () => {
+        try {
+          showToast("Confirm fill in wallet...", "info", true);
+          const tx = await contract.fillOrderWithEth(order.orderId, {
+            value: BigInt(order.amountB),
+          });
+          showToast("Waiting for tx confirmation...", "info", true);
+          await tx.wait();
+          showToast("Order filled! Syncing...", "success", true);
+          await waitForOrderUpdate(order.orderId, false);
+          loadOrders();
+          loadStats();
+          showToast("Order filled!", "success");
+        } catch (e) {
+          console.error("Fill error:", e);
+          showToast("Fill failed: " + parseContractError(e), "error");
+        }
+      },
+      gasEstimate
+    );
+  }
+
+  async function handleFillOrderUnwrap(order) {
+    if (!signer) {
+      showToast("Connect wallet first", "error");
+      return;
+    }
+
+    const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
+    const amountAStr = formatAmount(order.amountA, 18);
+
+    showToast("Estimating gas...");
+    let gasEstimate = null;
+    try {
+      const txData = contract.interface.encodeFunctionData("fillOrderUnwrap", [order.orderId]);
+      gasEstimate = await estimateGasCost({
+        from: userAddress,
+        to: CONFIG.CONTRACT_ADDRESS,
+        data: txData,
+      });
+    } catch (e) {
+      console.error("Gas estimation failed:", e);
+    }
+
+    showModal(
+      "Fill Order #" + order.orderId + " (receive ETH)",
+      `You will send ${amountBStr} ${order.tokenB.symbol} and receive ${amountAStr} ETH in return.`,
+      async () => {
+        try {
+          const isLocal =
+            window.location.hostname === "localhost" ||
+            window.location.hostname === "127.0.0.1" ||
+            window.location.protocol === "file:";
+
+          if (!isLocal) {
+            showToast("Checking allowance...", "info", true);
+            const tokenContract = new ethers.Contract(order.tokenB.address, ERC20_ABI, signer);
+            const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+            const amountB = BigInt(order.amountB);
+
+            if (allowance < amountB) {
+              showToast("Approve tokens in wallet...", "info", true);
+              const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountB);
+              showToast("Waiting for approval tx...", "info", true);
+              await approveTx.wait();
+              showToast("Approval confirmed");
+            }
+          }
+
+          showToast("Confirm fill in wallet...", "info", true);
+          const tx = await contract.fillOrderUnwrap(order.orderId);
+          showToast("Waiting for tx confirmation...", "info", true);
+          await tx.wait();
+          showToast("Order filled! Syncing...", "success", true);
+          await waitForOrderUpdate(order.orderId, false);
+          loadOrders();
+          loadStats();
+          showToast("Order filled!", "success");
+        } catch (e) {
+          console.error("Fill error:", e);
+          showToast("Fill failed: " + parseContractError(e), "error");
+        }
+      },
+      gasEstimate
+    );
+  }
+
+  async function handleCancelOrderUnwrap(order) {
+    if (!signer) {
+      showToast("Connect wallet first", "error");
+      return;
+    }
+
+    const amountAStr = formatAmount(order.amountA, 18);
+
+    showToast("Estimating gas...");
+    let gasEstimate = null;
+    try {
+      const txData = contract.interface.encodeFunctionData("cancelOrderUnwrap", [order.orderId]);
+      gasEstimate = await estimateGasCost({
+        from: userAddress,
+        to: CONFIG.CONTRACT_ADDRESS,
+        data: txData,
+      });
+    } catch (e) {
+      console.error("Gas estimation failed:", e);
+    }
+
+    showModal(
+      "Cancel Order #" + order.orderId + " (receive ETH)",
+      `Your ${amountAStr} ETH will be returned to your wallet.`,
+      async () => {
+        try {
+          showToast("Cancelling order...");
+          const tx = await contract.cancelOrderUnwrap(order.orderId);
+          await tx.wait();
+          showToast("Order cancelled! Updating...", "success", true);
+          await waitForOrderUpdate(order.orderId, false);
+          loadOrders();
+          loadStats();
+          showToast("Order cancelled!", "success");
+        } catch (e) {
+          console.error("Cancel error:", e);
+          showToast("Cancel failed: " + parseContractError(e), "error");
+        }
+      },
+      gasEstimate
+    );
+  }
+
   async function handleCreateOrder() {
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
 
-    const tokenAAddr = $("#create-tokenA").value.trim();
+    const useEth = $("#use-eth-tokenA").checked;
+    const tokenAAddr = useEth ? cachedWethAddress : $("#create-tokenA").value.trim();
     const tokenBAddr = $("#create-tokenB").value.trim();
     const amountAStr = $("#create-amountA").value.trim();
     const amountBStr = $("#create-amountB").value.trim();
 
-    if (!tokenAAddr || !tokenBAddr || !amountAStr || !amountBStr) {
+    if ((!useEth && !tokenAAddr) || !tokenBAddr || !amountAStr || !amountBStr) {
       showToast("Fill in all fields", "error");
       return;
     }
 
-    if (!isValidAddress(tokenAAddr) || !isValidAddress(tokenBAddr)) {
+    if ((!useEth && !isValidAddress(tokenAAddr)) || !isValidAddress(tokenBAddr)) {
       showToast("Invalid token address format", "error");
       return;
     }
 
     try {
-      const tokenA = await fetchTokenInfo(tokenAAddr);
+      const tokenA = useEth
+        ? { symbol: "ETH", name: "Ether", decimals: 18, address: cachedWethAddress }
+        : await fetchTokenInfo(tokenAAddr);
       const tokenB = await fetchTokenInfo(tokenBAddr);
 
       let amountA, amountB;
@@ -2469,7 +2728,7 @@
 
       // Check balance for offered token
       if (createFormState.tokenA.balance !== null && amountA > createFormState.tokenA.balance) {
-        showToast("Insufficient balance for offered token", "error");
+        showToast(useEth ? "Insufficient ETH balance" : "Insufficient balance for offered token", "error");
         return;
       }
 
@@ -2483,28 +2742,40 @@
           createBtn.innerHTML = 'Processing<span class="loading-dots"></span>';
 
           try {
-            showToast("Checking allowance...", "info", true);
-            const tokenContract = new ethers.Contract(tokenAAddr, ERC20_ABI, signer);
-            const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+            let receipt;
 
-            if (allowance < amountA) {
-              createBtn.innerHTML = 'Approving<span class="loading-dots"></span>';
-              showToast("Approve tokens in wallet...", "info", true);
-              const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountA);
-              showToast("Waiting for approval tx...", "info", true);
-              await approveTx.wait();
-              showToast("Approval confirmed");
+            if (useEth) {
+              createBtn.innerHTML = 'Creating<span class="loading-dots"></span>';
+              showToast("Confirm order in wallet...", "info", true);
+              const tx = await contract.createOrderWithEth(tokenBAddr, amountB, {
+                value: amountA,
+              });
+              showToast("Waiting for tx confirmation...", "info", true);
+              receipt = await tx.wait();
+            } else {
+              showToast("Checking allowance...", "info", true);
+              const tokenContract = new ethers.Contract(tokenAAddr, ERC20_ABI, signer);
+              const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+
+              if (allowance < amountA) {
+                createBtn.innerHTML = 'Approving<span class="loading-dots"></span>';
+                showToast("Approve tokens in wallet...", "info", true);
+                const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountA);
+                showToast("Waiting for approval tx...", "info", true);
+                await approveTx.wait();
+                showToast("Approval confirmed");
+              }
+
+              createBtn.innerHTML = 'Creating<span class="loading-dots"></span>';
+              showToast("Confirm order in wallet...", "info", true);
+              const tx = await contract.createOrder(tokenAAddr, amountA, tokenBAddr, amountB);
+              showToast("Waiting for tx confirmation...", "info", true);
+              receipt = await tx.wait();
             }
-
-            createBtn.innerHTML = 'Creating<span class="loading-dots"></span>';
-            showToast("Confirm order in wallet...", "info", true);
-            const tx = await contract.createOrder(tokenAAddr, amountA, tokenBAddr, amountB);
-            showToast("Waiting for tx confirmation...", "info", true);
-            const receipt = await tx.wait();
             showToast("Order created! Updating...", "success", true);
 
             // Save tokens to recent list
-            addRecentToken(tokenAAddr, tokenA.symbol);
+            if (!useEth) addRecentToken(tokenAAddr, tokenA.symbol);
             addRecentToken(tokenBAddr, tokenB.symbol);
 
             $("#create-tokenA").value = "";
@@ -2516,6 +2787,8 @@
             $("#tokenA-balance").textContent = "";
             $("#tokenB-balance").textContent = "";
             $("#price-info").innerHTML = "";
+            $("#use-eth-tokenA").checked = false;
+            $("#create-tokenA").style.display = "";
             $("#sell-modal").classList.add("hidden");
 
             // Get order ID from event and wait for subgraph to index
@@ -2638,6 +2911,14 @@
       updateNetworkIndicator(Number(network.chainId));
 
       contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+      if (!cachedWethAddress) {
+        try {
+          cachedWethAddress = (await contract.weth()).toLowerCase();
+        } catch (e) {
+          cachedWethAddress = "0x7b79995e5f793a07bc00c21412e50ecae098e7f9";
+        }
+      }
 
       $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
       $("#sell-btn").classList.remove("hidden");
@@ -3467,6 +3748,61 @@
 
     $("#create-btn").addEventListener("click", handleCreateOrder);
 
+    $("#use-eth-tokenA").addEventListener("change", async () => {
+      const checked = $("#use-eth-tokenA").checked;
+      const tokenAInput = $("#create-tokenA");
+      const tokenAInfo = $("#tokenA-info");
+      const tokenABalance = $("#tokenA-balance");
+      const quickAmounts = $("#quick-amounts-A");
+
+      if (checked) {
+        tokenAInput.value = "";
+        tokenAInput.style.display = "none";
+        tokenAInfo.textContent = "ETH (18 decimals)";
+        quickAmounts.innerHTML = "";
+        createFormState.tokenA.info = {
+          address: cachedWethAddress,
+          symbol: "ETH",
+          name: "Ether",
+          decimals: 18,
+        };
+        createFormState.tokenA.balance = null;
+
+        if (userAddress && provider) {
+          try {
+            const bal = await provider.getBalance(userAddress);
+            createFormState.tokenA.balance = bal;
+            const eth = ethers.formatEther(bal);
+            tokenABalance.textContent = "Balance: " + parseFloat(eth).toFixed(4) + " ETH";
+
+            if (bal > 0n) {
+              [25, 50, 75, 100].forEach((pct) => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.textContent = pct + "%";
+                btn.classList.add("quick-amt-btn");
+                btn.addEventListener("click", () => {
+                  const amt = (bal * BigInt(pct)) / 100n;
+                  $("#create-amountA").value = ethers.formatEther(amt);
+                  $("#create-amountA").dispatchEvent(new Event("input"));
+                });
+                quickAmounts.appendChild(btn);
+              });
+            }
+          } catch (e) {
+            console.error("ETH balance fetch error:", e);
+          }
+        }
+      } else {
+        tokenAInput.style.display = "";
+        tokenAInfo.textContent = "";
+        tokenABalance.textContent = "";
+        quickAmounts.innerHTML = "";
+        createFormState.tokenA.info = null;
+        createFormState.tokenA.balance = null;
+      }
+    });
+
     setupTokenInfoFetch("#create-tokenA", "#tokenA-info", "#tokenA-balance", "#quick-amounts-A");
     setupTokenInfoFetch("#create-tokenB", "#tokenB-info", "#tokenB-balance", null);
 
@@ -3543,6 +3879,15 @@
             const network = await provider.getNetwork();
             updateNetworkIndicator(Number(network.chainId));
             contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+            if (!cachedWethAddress) {
+              try {
+                cachedWethAddress = (await contract.weth()).toLowerCase();
+              } catch (e) {
+                cachedWethAddress = "0x7b79995e5f793a07bc00c21412e50ecae098e7f9";
+              }
+            }
+
             $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
             $("#sell-btn").classList.remove("hidden");
             $("#my-orders-label").classList.remove("hidden");

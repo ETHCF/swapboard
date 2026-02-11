@@ -11,9 +11,9 @@
 // ============================================================================
 
 const CONFIG = {
-  CONTRACT_ADDRESS: "0xBe3D7A555aa633263110d10d37AB40Ef3a2b8BBa",
+  CONTRACT_ADDRESS: "0x57FbEE5959DA886E6699afaE1113E9Fa20E21762",
   SUBGRAPH_URL:
-    "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/1.0.0/gn",
+    "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/2.0.0/gn",
   PAGE_SIZE: 20,
   REQUEST_TIMEOUT: 30000,
   DEBOUNCE_DELAY: 500,
@@ -589,6 +589,10 @@ const ERROR_SIGNATURES = {
   "0x4e90badc": "OrderNotFound",
   "0xd2c02610": "OrderNotActive",
   "0x98cd7222": "NotMaker",
+  "0x6bdafcae": "ZeroETH",
+  "0xcfc02c6e": "NotWETH",
+  "0x8230dc8f": "ETHAmountMismatch",
+  "0x1c988062": "ETHTransferFailed",
 };
 
 const ERROR_MESSAGES = {
@@ -600,6 +604,10 @@ const ERROR_MESSAGES = {
   OrderNotFound: "Order does not exist",
   OrderNotActive: "Order is not active",
   NotMaker: "Only the order maker can cancel",
+  ZeroETH: "ETH amount cannot be zero",
+  NotWETH: "Token is not WETH",
+  ETHAmountMismatch: "ETH amount does not match required amount",
+  ETHTransferFailed: "ETH transfer to recipient failed",
 };
 
 /**

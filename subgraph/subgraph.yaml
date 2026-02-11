@@ -8,9 +8,9 @@ dataSources:
     name: Swapboard
     network: sepolia
     source:
-      address: "0xBe3D7A555aa633263110d10d37AB40Ef3a2b8BBa"
+      address: "0x57FbEE5959DA886E6699afaE1113E9Fa20E21762"
       abi: Swapboard
-      startBlock: 9990994
+      startBlock: 10240098
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7

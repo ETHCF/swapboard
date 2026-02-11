@@ -340,6 +340,19 @@ a {
   margin-top: -1px;
 }
 
+.eth-toggle {
+  display: inline;
+  font-size: 12px;
+  font-weight: normal;
+  margin-left: 8px;
+}
+
+.eth-toggle input[type="checkbox"] {
+  vertical-align: middle;
+  margin-top: -1px;
+  cursor: pointer;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
