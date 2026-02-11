@@ -1687,17 +1687,6 @@
           handleCancelOrder(order);
         });
         actionsEl.appendChild(cancelBtn);
-
-        if (isWeth(order.tokenA.address)) {
-          const cancelEthBtn = document.createElement("button");
-          cancelEthBtn.textContent = "Cancel (receive ETH)";
-          cancelEthBtn.style.background = "#c00";
-          cancelEthBtn.addEventListener("click", async () => {
-            modal.classList.add("hidden");
-            handleCancelOrderUnwrap(order);
-          });
-          actionsEl.appendChild(cancelEthBtn);
-        }
       } else {
         const fillBtn = document.createElement("button");
         fillBtn.textContent = "Fill Order";
@@ -1711,28 +1700,6 @@
           }
         });
         actionsEl.appendChild(fillBtn);
-
-        if (isWeth(order.tokenB.address)) {
-          const fillEthBtn = document.createElement("button");
-          fillEthBtn.textContent = "Fill with ETH";
-          fillEthBtn.addEventListener("click", async () => {
-            modal.classList.add("hidden");
-            if (!userAddress) await connectWallet();
-            if (userAddress) handleFillOrderWithEth(order);
-          });
-          actionsEl.appendChild(fillEthBtn);
-        }
-
-        if (isWeth(order.tokenA.address)) {
-          const fillUnwrapBtn = document.createElement("button");
-          fillUnwrapBtn.textContent = "Fill (receive ETH)";
-          fillUnwrapBtn.addEventListener("click", async () => {
-            modal.classList.add("hidden");
-            if (!userAddress) await connectWallet();
-            if (userAddress) handleFillOrderUnwrap(order);
-          });
-          actionsEl.appendChild(fillUnwrapBtn);
-        }
       }
     }
 
@@ -2046,6 +2013,11 @@
       cachedOrders = [];
     } else {
       cachedOrders = data.orders;
+      // Display WETH as ETH
+      for (const o of cachedOrders) {
+        if (isWeth(o.tokenA.address)) o.tokenA.symbol = "ETH";
+        if (isWeth(o.tokenB.address)) o.tokenB.symbol = "ETH";
+      }
     }
 
     // Check watched orders for status changes
@@ -2174,20 +2146,6 @@
             handleCancelOrder(order);
           });
           tdAction.appendChild(cancelBtn);
-
-          if (isWeth(order.tokenA.address)) {
-            const cancelEthBtn = document.createElement("a");
-            cancelEthBtn.href = "#";
-            cancelEthBtn.textContent = "[Cancel ETH]";
-            cancelEthBtn.classList.add("cancel-btn");
-            cancelEthBtn.addEventListener("click", async (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              handleCancelOrderUnwrap(order);
-            });
-            tdAction.appendChild(document.createTextNode(" "));
-            tdAction.appendChild(cancelEthBtn);
-          }
         } else {
           const fillBtn = document.createElement("a");
           fillBtn.href = "#";
@@ -2204,36 +2162,6 @@
             }
           });
           tdAction.appendChild(fillBtn);
-
-          if (isWeth(order.tokenB.address)) {
-            const fillEthBtn = document.createElement("a");
-            fillEthBtn.href = "#";
-            fillEthBtn.textContent = "[Fill ETH]";
-            fillEthBtn.classList.add("buy-btn");
-            fillEthBtn.addEventListener("click", async (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              if (!userAddress) await connectWallet();
-              if (userAddress) handleFillOrderWithEth(order);
-            });
-            tdAction.appendChild(document.createTextNode(" "));
-            tdAction.appendChild(fillEthBtn);
-          }
-
-          if (isWeth(order.tokenA.address)) {
-            const fillUnwrapBtn = document.createElement("a");
-            fillUnwrapBtn.href = "#";
-            fillUnwrapBtn.textContent = "[Fill Unwrap]";
-            fillUnwrapBtn.classList.add("buy-btn");
-            fillUnwrapBtn.addEventListener("click", async (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              if (!userAddress) await connectWallet();
-              if (userAddress) handleFillOrderUnwrap(order);
-            });
-            tdAction.appendChild(document.createTextNode(" "));
-            tdAction.appendChild(fillUnwrapBtn);
-          }
         }
       } else {
         const statusSpan = document.createElement("span");
@@ -2419,6 +2347,14 @@
    * @param {Object} order - Order object from subgraph
    */
   async function handleFillOrder(order) {
+    // Auto-route to ETH variants when WETH is involved
+    if (isWeth(order.tokenB.address)) {
+      return handleFillOrderWithEth(order);
+    }
+    if (isWeth(order.tokenA.address)) {
+      return handleFillOrderUnwrap(order);
+    }
+
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
@@ -2485,6 +2421,11 @@
   }
 
   async function handleCancelOrder(order) {
+    // Auto-route to ETH variant when tokenA is WETH
+    if (isWeth(order.tokenA.address)) {
+      return handleCancelOrderUnwrap(order);
+    }
+
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
@@ -2690,26 +2631,26 @@
       return;
     }
 
-    const useEth = $("#use-eth-tokenA").checked;
-    const tokenAAddr = useEth ? cachedWethAddress : $("#create-tokenA").value.trim();
+    const tokenAAddr = $("#create-tokenA").value.trim();
     const tokenBAddr = $("#create-tokenB").value.trim();
     const amountAStr = $("#create-amountA").value.trim();
     const amountBStr = $("#create-amountB").value.trim();
 
-    if ((!useEth && !tokenAAddr) || !tokenBAddr || !amountAStr || !amountBStr) {
+    if (!tokenAAddr || !tokenBAddr || !amountAStr || !amountBStr) {
       showToast("Fill in all fields", "error");
       return;
     }
 
-    if ((!useEth && !isValidAddress(tokenAAddr)) || !isValidAddress(tokenBAddr)) {
+    if (!isValidAddress(tokenAAddr) || !isValidAddress(tokenBAddr)) {
       showToast("Invalid token address format", "error");
       return;
     }
 
+    const useEth = isWeth(tokenAAddr);
+
     try {
-      const tokenA = useEth
-        ? { symbol: "ETH", name: "Ether", decimals: 18, address: cachedWethAddress }
-        : await fetchTokenInfo(tokenAAddr);
+      const tokenA = await fetchTokenInfo(tokenAAddr);
+      if (useEth) tokenA.symbol = "ETH";
       const tokenB = await fetchTokenInfo(tokenBAddr);
 
       let amountA, amountB;
@@ -2728,7 +2669,7 @@
 
       // Check balance for offered token
       if (createFormState.tokenA.balance !== null && amountA > createFormState.tokenA.balance) {
-        showToast(useEth ? "Insufficient ETH balance" : "Insufficient balance for offered token", "error");
+        showToast("Insufficient balance for offered token", "error");
         return;
       }
 
@@ -2775,7 +2716,7 @@
             showToast("Order created! Updating...", "success", true);
 
             // Save tokens to recent list
-            if (!useEth) addRecentToken(tokenAAddr, tokenA.symbol);
+            addRecentToken(tokenAAddr, tokenA.symbol);
             addRecentToken(tokenBAddr, tokenB.symbol);
 
             $("#create-tokenA").value = "";
@@ -2787,8 +2728,6 @@
             $("#tokenA-balance").textContent = "";
             $("#tokenB-balance").textContent = "";
             $("#price-info").innerHTML = "";
-            $("#use-eth-tokenA").checked = false;
-            $("#create-tokenA").style.display = "";
             $("#sell-modal").classList.add("hidden");
 
             // Get order ID from event and wait for subgraph to index
@@ -3202,6 +3141,11 @@
         if (quickAmountsId) $(quickAmountsId).innerHTML = "";
 
         const info = await fetchTokenInfo(addr);
+        const addrIsWeth = isWeth(addr);
+        if (addrIsWeth) {
+          info.symbol = "ETH";
+          info.name = "Ether";
+        }
         currentTokenInfo = info;
 
         // Show token info with CoinGecko verification link if available
@@ -3248,32 +3192,58 @@
         // Fetch balance if connected
         if (balanceId && userAddress && provider) {
           try {
-            const tokenContract = new ethers.Contract(addr, ERC20_ABI, provider);
-            const balance = await tokenContract.balanceOf(userAddress);
-            createFormState[stateKey].balance = balance;
-            const formatted = formatAmount(balance.toString(), info.decimals);
-            $(balanceId).textContent = "Balance: " + formatted;
-
-            // Validate amount if already entered
             const amountInputId =
               inputId === "#create-tokenA" ? "#create-amountA" : "#create-amountB";
-            validateAmountInput(amountInputId, stateKey);
 
-            // Add quick amount buttons
-            if (quickAmountsId && balance > 0n) {
-              $(quickAmountsId).innerHTML = "";
-              [25, 50, 75, 100].forEach((pct) => {
-                const btn = document.createElement("button");
-                btn.type = "button";
-                btn.textContent = pct + "%";
-                btn.classList.add("quick-amt-btn");
-                btn.addEventListener("click", () => {
-                  const amt = (balance * BigInt(pct)) / 100n;
-                  $(amountInputId).value = formatAmount(amt.toString(), info.decimals);
-                  $(amountInputId).dispatchEvent(new Event("input"));
+            if (addrIsWeth && stateKey === "tokenA") {
+              // Show native ETH balance for offered WETH (will use createOrderWithEth)
+              const balance = await provider.getBalance(userAddress);
+              createFormState[stateKey].balance = balance;
+              const eth = ethers.formatEther(balance);
+              $(balanceId).textContent = "Balance: " + parseFloat(eth).toFixed(4) + " ETH";
+
+              validateAmountInput(amountInputId, stateKey);
+
+              if (quickAmountsId && balance > 0n) {
+                $(quickAmountsId).innerHTML = "";
+                [25, 50, 75, 100].forEach((pct) => {
+                  const btn = document.createElement("button");
+                  btn.type = "button";
+                  btn.textContent = pct + "%";
+                  btn.classList.add("quick-amt-btn");
+                  btn.addEventListener("click", () => {
+                    const amt = (balance * BigInt(pct)) / 100n;
+                    $(amountInputId).value = ethers.formatEther(amt);
+                    $(amountInputId).dispatchEvent(new Event("input"));
+                  });
+                  $(quickAmountsId).appendChild(btn);
                 });
-                $(quickAmountsId).appendChild(btn);
-              });
+              }
+            } else {
+              const tokenContract = new ethers.Contract(addr, ERC20_ABI, provider);
+              const balance = await tokenContract.balanceOf(userAddress);
+              createFormState[stateKey].balance = balance;
+              const formatted = formatAmount(balance.toString(), info.decimals);
+              $(balanceId).textContent = "Balance: " + formatted;
+
+              validateAmountInput(amountInputId, stateKey);
+
+              // Add quick amount buttons
+              if (quickAmountsId && balance > 0n) {
+                $(quickAmountsId).innerHTML = "";
+                [25, 50, 75, 100].forEach((pct) => {
+                  const btn = document.createElement("button");
+                  btn.type = "button";
+                  btn.textContent = pct + "%";
+                  btn.classList.add("quick-amt-btn");
+                  btn.addEventListener("click", () => {
+                    const amt = (balance * BigInt(pct)) / 100n;
+                    $(amountInputId).value = formatAmount(amt.toString(), info.decimals);
+                    $(amountInputId).dispatchEvent(new Event("input"));
+                  });
+                  $(quickAmountsId).appendChild(btn);
+                });
+              }
             }
           } catch (e) {
             console.error("Balance fetch error:", e);
@@ -3747,61 +3717,6 @@
     });
 
     $("#create-btn").addEventListener("click", handleCreateOrder);
-
-    $("#use-eth-tokenA").addEventListener("change", async () => {
-      const checked = $("#use-eth-tokenA").checked;
-      const tokenAInput = $("#create-tokenA");
-      const tokenAInfo = $("#tokenA-info");
-      const tokenABalance = $("#tokenA-balance");
-      const quickAmounts = $("#quick-amounts-A");
-
-      if (checked) {
-        tokenAInput.value = "";
-        tokenAInput.style.display = "none";
-        tokenAInfo.textContent = "ETH (18 decimals)";
-        quickAmounts.innerHTML = "";
-        createFormState.tokenA.info = {
-          address: cachedWethAddress,
-          symbol: "ETH",
-          name: "Ether",
-          decimals: 18,
-        };
-        createFormState.tokenA.balance = null;
-
-        if (userAddress && provider) {
-          try {
-            const bal = await provider.getBalance(userAddress);
-            createFormState.tokenA.balance = bal;
-            const eth = ethers.formatEther(bal);
-            tokenABalance.textContent = "Balance: " + parseFloat(eth).toFixed(4) + " ETH";
-
-            if (bal > 0n) {
-              [25, 50, 75, 100].forEach((pct) => {
-                const btn = document.createElement("button");
-                btn.type = "button";
-                btn.textContent = pct + "%";
-                btn.classList.add("quick-amt-btn");
-                btn.addEventListener("click", () => {
-                  const amt = (bal * BigInt(pct)) / 100n;
-                  $("#create-amountA").value = ethers.formatEther(amt);
-                  $("#create-amountA").dispatchEvent(new Event("input"));
-                });
-                quickAmounts.appendChild(btn);
-              });
-            }
-          } catch (e) {
-            console.error("ETH balance fetch error:", e);
-          }
-        }
-      } else {
-        tokenAInput.style.display = "";
-        tokenAInfo.textContent = "";
-        tokenABalance.textContent = "";
-        quickAmounts.innerHTML = "";
-        createFormState.tokenA.info = null;
-        createFormState.tokenA.balance = null;
-      }
-    });
 
     setupTokenInfoFetch("#create-tokenA", "#tokenA-info", "#tokenA-balance", "#quick-amounts-A");
     setupTokenInfoFetch("#create-tokenB", "#tokenB-info", "#tokenB-balance", null);
