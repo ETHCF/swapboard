@@ -597,11 +597,28 @@
    * @param {number} limit - Max results
    * @returns {Array} Matching tokens
    */
+  function getEthToken() {
+    if (!cachedWethAddress) return null;
+    return {
+      address: cachedWethAddress,
+      symbol: "ETH",
+      name: "Ether",
+      decimals: 18,
+      logoURI: null,
+    };
+  }
+
   function searchTokens(query, limit = 10) {
     if (!query || query.length < 1) return [];
 
     const q = query.toLowerCase();
     const results = [];
+
+    // Inject native ETH when query matches
+    const eth = getEthToken();
+    if (eth && "eth".startsWith(q)) {
+      results.push(eth);
+    }
 
     // Exact symbol matches first
     for (const t of uniswapTokens) {
@@ -751,6 +768,10 @@
         renderDropdown(results, []);
       } else {
         const recent = getRecentTokens();
+        const eth = getEthToken();
+        if (eth && !recent.some((t) => t.address === eth.address)) {
+          recent.unshift(eth);
+        }
         renderDropdown([], recent);
       }
     });
@@ -769,6 +790,10 @@
         renderDropdown(results, []);
       } else {
         const recent = getRecentTokens();
+        const eth = getEthToken();
+        if (eth && !recent.some((t) => t.address === eth.address)) {
+          recent.unshift(eth);
+        }
         renderDropdown([], recent);
       }
     });
