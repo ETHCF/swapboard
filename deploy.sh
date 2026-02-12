@@ -197,9 +197,19 @@ log "Updated app.js with subgraph URL"
 # ============================================================
 
 if [[ "$SKIP_FRONTEND" != "true" ]]; then
-    log "Step 5: Deploying frontend to IPFS..."
+    log "Step 5: Building and deploying frontend to IPFS..."
 
-    cd "$SCRIPT_DIR/frontend"
+    DIST_DIR="$SCRIPT_DIR/dist"
+    rm -rf "$DIST_DIR"
+    mkdir -p "$DIST_DIR"
+
+    # Copy only production files
+    PROD_FILES="index.html app.js lib.js style.css mock.js API.html manifest.json sw.js"
+    for f in $PROD_FILES; do
+        cp "$SCRIPT_DIR/frontend/$f" "$DIST_DIR/$f"
+    done
+
+    cd "$DIST_DIR"
 
     # Generate file hashes for verification
     log "Generating build hashes..."
@@ -245,7 +255,7 @@ if [[ "$SKIP_FRONTEND" != "true" ]]; then
         echo "IPFS_CID=$IPFS_CID" >> "$SCRIPT_DIR/.deploy.env"
     else
         warn "IPFS not installed. Skipping IPFS upload."
-        warn "Install IPFS and run: cd frontend && ipfs add -r ."
+        warn "Install IPFS and run: cd dist && ipfs add -r ."
         IPFS_CID="(not deployed)"
     fi
 

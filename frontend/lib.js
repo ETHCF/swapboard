@@ -54,8 +54,9 @@ function escapeHtml(str) {
     ">": "&gt;",
     '"': "&quot;",
     "'": "&#039;",
+    "/": "&#x2F;",
   };
-  return String(str).replace(/[&<>"']/g, (c) => map[c]);
+  return String(str).replace(/[&<>"'/]/g, (c) => map[c]);
 }
 
 /**

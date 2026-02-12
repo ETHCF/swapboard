@@ -110,6 +110,13 @@ describe("escapeHtml", () => {
   test("escapes all occurrences of special characters", () => {
     expect(escapeHtml("a & b & c")).toBe("a &amp; b &amp; c");
   });
+
+  // MUTATION: Missing forward slash in escape map
+  // BREAKS: XSS via closing script tags e.g. </script>
+  test("escapes forward slash to &#x2F;", () => {
+    expect(escapeHtml("a/b")).toBe("a&#x2F;b");
+    expect(escapeHtml("</script>")).toBe("&lt;&#x2F;script&gt;");
+  });
 });
 
 // ============================================================================

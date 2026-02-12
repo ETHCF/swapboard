@@ -668,7 +668,7 @@
     let selectedIndex = -1;
 
     function renderDropdown(tokens, recentTokens = []) {
-      dropdown.innerHTML = "";
+      dropdown.textContent = "";
       selectedIndex = -1;
 
       if (recentTokens.length > 0) {
@@ -1042,7 +1042,7 @@
       const recent = getRecentTokens();
       if (recent.length === 0) return;
 
-      dropdown.innerHTML = "";
+      dropdown.textContent = "";
       const title = document.createElement("div");
       title.className = "recent-tokens-title";
       title.textContent = "Recent:";
@@ -1082,16 +1082,16 @@
   function createCopyButton(text) {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.innerHTML = "&#x29C9;";
+    btn.textContent = "\u29C9";
     btn.classList.add("copy-btn");
     btn.title = "Copy to clipboard";
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       try {
         await navigator.clipboard.writeText(text);
-        btn.innerHTML = "&#x2713;";
+        btn.textContent = "\u2713";
         setTimeout(() => {
-          btn.innerHTML = "&#x29C9;";
+          btn.textContent = "\u29C9";
         }, 1000);
       } catch (err) {
         console.error("Copy failed:", err);
@@ -1168,10 +1168,22 @@
   }
 
   let toastTimeout = null;
+  function setTextWithDots(el, text) {
+    el.textContent = "";
+    el.appendChild(document.createTextNode(text));
+    const dots = document.createElement("span");
+    dots.className = "loading-dots";
+    el.appendChild(dots);
+  }
+
   function showToast(msg, type = "info", persistent = false) {
     const toast = $("#toast");
+    toast.textContent = "";
     if (msg.endsWith("...")) {
-      toast.innerHTML = msg.slice(0, -3) + '<span class="loading-dots"></span>';
+      toast.appendChild(document.createTextNode(msg.slice(0, -3)));
+      const dots = document.createElement("span");
+      dots.className = "loading-dots";
+      toast.appendChild(dots);
     } else {
       toast.textContent = msg;
     }
@@ -1266,6 +1278,9 @@
     }
     if (msg.includes("nonce")) {
       return "Transaction conflict, try again";
+    }
+    if (msg.includes("could not decode result data") || msg.includes("bad_data")) {
+      return "Token contract not found on this network";
     }
     if (msg.includes("missing revert data")) {
       return "Transaction failed. Order may already be filled or cancelled.";
@@ -1403,7 +1418,7 @@
    */
   function renderSkeletonRows(count = 10) {
     const tbody = $("#order-table");
-    tbody.innerHTML = "";
+    tbody.textContent = "";
 
     for (let i = 0; i < count; i++) {
       const tr = document.createElement("tr");
@@ -1492,14 +1507,12 @@
     if (gasEstimate) {
       const gasDiv = document.createElement("div");
       gasDiv.className = "gas-estimate";
-      gasDiv.innerHTML =
-        "<br>Estimated gas: " +
-        escapeHtml(gasEstimate.gas) +
-        " (~" +
-        escapeHtml(gasEstimate.eth) +
-        " ETH / " +
-        escapeHtml(gasEstimate.usd) +
-        ")";
+      gasDiv.appendChild(document.createElement("br"));
+      gasDiv.appendChild(
+        document.createTextNode(
+          "Estimated gas: " + gasEstimate.gas + " (~" + gasEstimate.eth + " ETH / " + gasEstimate.usd + ")"
+        )
+      );
       bodyEl.appendChild(gasDiv);
     }
 
@@ -1534,7 +1547,7 @@
 
     // Status
     const statusEl = $("#order-modal-status");
-    statusEl.innerHTML = "";
+    statusEl.textContent = "";
     const statusSpan = document.createElement("span");
     statusSpan.className = "order-modal-status";
     if (order.active) {
@@ -1560,7 +1573,7 @@
 
     // Maker
     const makerEl = $("#order-modal-maker");
-    makerEl.innerHTML = "";
+    makerEl.textContent = "";
     const makerLink = document.createElement("a");
     makerLink.href = "https://etherscan.io/address/" + order.maker;
     makerLink.target = "_blank";
@@ -1573,7 +1586,7 @@
 
     // Offered
     const offeredEl = $("#order-modal-offered");
-    offeredEl.innerHTML = "";
+    offeredEl.textContent = "";
     const tokenADecimals = order.tokenA.decimals || 18;
     const amountA = BigInt(order.amountA);
     const formattedAmountA = formatAmount(amountA, tokenADecimals);
@@ -1591,7 +1604,7 @@
 
     // Wanted
     const wantedEl = $("#order-modal-wanted");
-    wantedEl.innerHTML = "";
+    wantedEl.textContent = "";
     const tokenBDecimals = order.tokenB.decimals || 18;
     const amountB = BigInt(order.amountB);
     const formattedAmountB = formatAmount(amountB, tokenBDecimals);
@@ -1624,20 +1637,18 @@
       const humanB = Number(amountB) / Math.pow(10, tokenBDecimals);
       const priceAPerB = humanA / humanB;
       const priceBPerA = humanB / humanA;
-      priceEl.innerHTML =
-        "1 " +
-        escapeHtml(order.tokenB.symbol) +
-        " = " +
-        priceAPerB.toFixed(6) +
-        " " +
-        escapeHtml(order.tokenA.symbol) +
-        "<br>" +
-        "1 " +
-        escapeHtml(order.tokenA.symbol) +
-        " = " +
-        priceBPerA.toFixed(6) +
-        " " +
-        escapeHtml(order.tokenB.symbol);
+      priceEl.textContent = "";
+      priceEl.appendChild(
+        document.createTextNode(
+          "1 " + order.tokenB.symbol + " = " + priceAPerB.toFixed(6) + " " + order.tokenA.symbol
+        )
+      );
+      priceEl.appendChild(document.createElement("br"));
+      priceEl.appendChild(
+        document.createTextNode(
+          "1 " + order.tokenA.symbol + " = " + priceBPerA.toFixed(6) + " " + order.tokenB.symbol
+        )
+      );
     } else {
       priceEl.textContent = "--";
     }
@@ -1649,7 +1660,7 @@
       const marketDev = calculateMarketDeviation(order);
       if (marketDev) {
         marketRow.style.display = "flex";
-        marketEl.innerHTML = "";
+        marketEl.textContent = "";
         const devSpan = document.createElement("span");
         devSpan.className = "market-deviation";
         if (marketDev.deviation < -1) {
@@ -1671,7 +1682,7 @@
     const takerEl = $("#order-modal-taker");
     if (order.taker) {
       takerRow.style.display = "flex";
-      takerEl.innerHTML = "";
+      takerEl.textContent = "";
       const takerLink = document.createElement("a");
       takerLink.href = "https://etherscan.io/address/" + order.taker;
       takerLink.target = "_blank";
@@ -1687,7 +1698,7 @@
 
     // Share link
     const linkEl = $("#order-modal-link");
-    linkEl.innerHTML = "";
+    linkEl.textContent = "";
     const linkInput = document.createElement("input");
     linkInput.type = "text";
     linkInput.className = "order-modal-link-input";
@@ -1699,7 +1710,7 @@
 
     // Actions
     const actionsEl = $("#order-modal-actions");
-    actionsEl.innerHTML = "";
+    actionsEl.textContent = "";
 
     if (order.active) {
       const isOwnOrder = userAddress && order.maker.toLowerCase() === userAddress.toLowerCase();
@@ -1922,12 +1933,17 @@
 
     const pairsList = $("#pairs-list");
     if (data && data.pairStats_collection && data.pairStats_collection.length > 0) {
-      pairsList.innerHTML = data.pairStats_collection
-        .map(
-          (p) =>
-            `<a href="#" class="pair-link" data-token-a="${escapeHtml(p.tokenA.address)}" data-token-b="${escapeHtml(p.tokenB.address)}">[${escapeHtml(p.tokenA.symbol)}/${escapeHtml(p.tokenB.symbol)}]</a>`
-        )
-        .join(" ");
+      pairsList.textContent = "";
+      data.pairStats_collection.forEach((p, i) => {
+        if (i > 0) pairsList.appendChild(document.createTextNode(" "));
+        const link = document.createElement("a");
+        link.href = "#";
+        link.className = "pair-link";
+        link.dataset.tokenA = p.tokenA.address;
+        link.dataset.tokenB = p.tokenB.address;
+        link.textContent = "[" + p.tokenA.symbol + "/" + p.tokenB.symbol + "]";
+        pairsList.appendChild(link);
+      });
 
       // Attach click handlers to pair links
       pairsList.querySelectorAll(".pair-link").forEach((link) => {
@@ -1963,8 +1979,16 @@
       const wantingSelect = $("#filter-wanting");
 
       // Clear existing options except "All"
-      sellingSelect.innerHTML = '<option value="">All</option>';
-      wantingSelect.innerHTML = '<option value="">All</option>';
+      sellingSelect.textContent = "";
+      const sellingDefault = document.createElement("option");
+      sellingDefault.value = "";
+      sellingDefault.textContent = "All";
+      sellingSelect.appendChild(sellingDefault);
+      wantingSelect.textContent = "";
+      const wantingDefault = document.createElement("option");
+      wantingDefault.value = "";
+      wantingDefault.textContent = "All";
+      wantingSelect.appendChild(wantingDefault);
 
       data.tokens.forEach((token) => {
         const option1 = document.createElement("option");
@@ -2097,7 +2121,7 @@
 
   function renderOrders() {
     const tbody = $("#order-table");
-    tbody.innerHTML = "";
+    tbody.textContent = "";
 
     if (cachedOrders.length === 0) {
       const tr = document.createElement("tr");
@@ -2705,13 +2729,13 @@
           const createBtn = $("#create-btn");
           const originalText = createBtn.textContent;
           createBtn.disabled = true;
-          createBtn.innerHTML = 'Processing<span class="loading-dots"></span>';
+          setTextWithDots(createBtn, "Processing");
 
           try {
             let receipt;
 
             if (useEth) {
-              createBtn.innerHTML = 'Creating<span class="loading-dots"></span>';
+              setTextWithDots(createBtn, "Creating");
               showToast("Confirm order in wallet...", "info", true);
               const tx = await contract.createOrderWithEth(tokenBAddr, amountB, {
                 value: amountA,
@@ -2719,12 +2743,21 @@
               showToast("Waiting for tx confirmation...", "info", true);
               receipt = await tx.wait();
             } else {
+              // Verify token contract exists on this network
+              const code = await provider.getCode(tokenAAddr);
+              if (code === "0x") {
+                showToast("Token contract not found on this network", "error");
+                createBtn.disabled = false;
+                createBtn.textContent = originalText;
+                return;
+              }
+
               showToast("Checking allowance...", "info", true);
               const tokenContract = new ethers.Contract(tokenAAddr, ERC20_ABI, signer);
               const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
 
               if (allowance < amountA) {
-                createBtn.innerHTML = 'Approving<span class="loading-dots"></span>';
+                setTextWithDots(createBtn, "Approving");
                 showToast("Approve tokens in wallet...", "info", true);
                 const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountA);
                 showToast("Waiting for approval tx...", "info", true);
@@ -2732,7 +2765,7 @@
                 showToast("Approval confirmed");
               }
 
-              createBtn.innerHTML = 'Creating<span class="loading-dots"></span>';
+              setTextWithDots(createBtn, "Creating");
               showToast("Confirm order in wallet...", "info", true);
               const tx = await contract.createOrder(tokenAAddr, amountA, tokenBAddr, amountB);
               showToast("Waiting for tx confirmation...", "info", true);
@@ -2752,7 +2785,7 @@
             $("#tokenB-info").textContent = "";
             $("#tokenA-balance").textContent = "";
             $("#tokenB-balance").textContent = "";
-            $("#price-info").innerHTML = "";
+            $("#price-info").textContent = "";
             $("#sell-modal").classList.add("hidden");
 
             // Get order ID from event and wait for subgraph to index
@@ -2974,9 +3007,17 @@
     $("#wallet-menu").classList.add("hidden");
   }
 
+  function setRevokeStatus(el, className, text) {
+    el.textContent = "";
+    const div = document.createElement("div");
+    div.className = className;
+    div.textContent = text;
+    el.appendChild(div);
+  }
+
   async function loadUserApprovals() {
     const revokeList = $("#revoke-list");
-    revokeList.innerHTML = '<div class="revoke-loading">Checking approvals...</div>';
+    setRevokeStatus(revokeList, "revoke-loading", "Checking approvals...");
 
     const query = `{
       orders(
@@ -2989,7 +3030,7 @@
     }`;
     const data = await querySubgraph(query, {}, true);
     if (!data || !data.orders) {
-      revokeList.innerHTML = '<div class="revoke-empty">Failed to load orders</div>';
+      setRevokeStatus(revokeList, "revoke-empty", "Failed to load orders");
       return;
     }
 
@@ -3017,23 +3058,35 @@
     }
 
     if (approvals.length === 0) {
-      revokeList.innerHTML = '<div class="revoke-empty">No active approvals</div>';
+      setRevokeStatus(revokeList, "revoke-empty", "No active approvals");
       return;
     }
 
-    revokeList.innerHTML = approvals
-      .map((t) => {
-        const amt =
-          t.allowance === ethers.MaxUint256 ? "Unlimited" : formatAmount(t.allowance, t.decimals);
-        return `<div class="revoke-row" data-address="${t.address}">
-        <div>
-          <span class="revoke-token">${escapeHtml(t.symbol)}</span>
-          <span class="revoke-allowance">${amt}</span>
-        </div>
-        <button class="revoke-btn" data-address="${t.address}" data-symbol="${escapeHtml(t.symbol)}">Revoke</button>
-      </div>`;
-      })
-      .join("");
+    revokeList.textContent = "";
+    approvals.forEach((t) => {
+      const amt =
+        t.allowance === ethers.MaxUint256 ? "Unlimited" : formatAmount(t.allowance, t.decimals);
+      const row = document.createElement("div");
+      row.className = "revoke-row";
+      row.dataset.address = t.address;
+      const info = document.createElement("div");
+      const symbolSpan = document.createElement("span");
+      symbolSpan.className = "revoke-token";
+      symbolSpan.textContent = t.symbol;
+      const allowanceSpan = document.createElement("span");
+      allowanceSpan.className = "revoke-allowance";
+      allowanceSpan.textContent = amt;
+      info.appendChild(symbolSpan);
+      info.appendChild(allowanceSpan);
+      const btn = document.createElement("button");
+      btn.className = "revoke-btn";
+      btn.dataset.address = t.address;
+      btn.dataset.symbol = t.symbol;
+      btn.textContent = "Revoke";
+      row.appendChild(info);
+      row.appendChild(btn);
+      revokeList.appendChild(row);
+    });
   }
 
   async function revokeApproval(tokenAddress, tokenSymbol) {
@@ -3048,7 +3101,7 @@
       if (row) row.remove();
       const remaining = $$(".revoke-row").length;
       if (remaining === 0) {
-        $("#revoke-list").innerHTML = '<div class="revoke-empty">No active approvals</div>';
+        setRevokeStatus($("#revoke-list"), "revoke-empty", "No active approvals");
       }
     } catch (err) {
       console.error("Revoke failed:", err);
@@ -3155,7 +3208,7 @@
       if (!isValidAddress(addr)) {
         $(infoId).textContent = addr ? "Invalid address" : "";
         if (balanceId) $(balanceId).textContent = "";
-        if (quickAmountsId) $(quickAmountsId).innerHTML = "";
+        if (quickAmountsId) $(quickAmountsId).textContent = "";
         currentTokenInfo = null;
         return;
       }
@@ -3163,7 +3216,7 @@
       timeout = setTimeout(async () => {
         $(infoId).textContent = "Loading...";
         if (balanceId) $(balanceId).textContent = "";
-        if (quickAmountsId) $(quickAmountsId).innerHTML = "";
+        if (quickAmountsId) $(quickAmountsId).textContent = "";
 
         const info = await fetchTokenInfo(addr);
         const addrIsWeth = isWeth(addr);
@@ -3175,7 +3228,7 @@
 
         // Show token info with CoinGecko verification link if available
         const infoEl = $(infoId);
-        infoEl.innerHTML = "";
+        infoEl.textContent = "";
 
         const coinGeckoId = COINGECKO_ID_MAP[addr.toLowerCase()];
         if (coinGeckoId) {
@@ -3230,7 +3283,7 @@
               validateAmountInput(amountInputId, stateKey);
 
               if (quickAmountsId && balance > 0n) {
-                $(quickAmountsId).innerHTML = "";
+                $(quickAmountsId).textContent = "";
                 [25, 50, 75, 100].forEach((pct) => {
                   const btn = document.createElement("button");
                   btn.type = "button";
@@ -3255,7 +3308,7 @@
 
               // Add quick amount buttons
               if (quickAmountsId && balance > 0n) {
-                $(quickAmountsId).innerHTML = "";
+                $(quickAmountsId).textContent = "";
                 [25, 50, 75, 100].forEach((pct) => {
                   const btn = document.createElement("button");
                   btn.type = "button";
@@ -3765,11 +3818,21 @@
       if (!isNaN(amountA) && !isNaN(amountB) && amountA > 0 && amountB > 0) {
         const priceAPerB = amountA / amountB;
         const priceBPerA = amountB / amountA;
-        $("#price-info").innerHTML =
-          `1 ${tokenBSymbol} = ${priceAPerB.toFixed(6).replace(/\.?0+$/, "")} ${tokenASymbol}<br>` +
-          `1 ${tokenASymbol} = ${priceBPerA.toFixed(6).replace(/\.?0+$/, "")} ${tokenBSymbol}`;
+        const priceInfo = $("#price-info");
+        priceInfo.textContent = "";
+        priceInfo.appendChild(
+          document.createTextNode(
+            "1 " + tokenBSymbol + " = " + priceAPerB.toFixed(6).replace(/\.?0+$/, "") + " " + tokenASymbol
+          )
+        );
+        priceInfo.appendChild(document.createElement("br"));
+        priceInfo.appendChild(
+          document.createTextNode(
+            "1 " + tokenASymbol + " = " + priceBPerA.toFixed(6).replace(/\.?0+$/, "") + " " + tokenBSymbol
+          )
+        );
       } else {
-        $("#price-info").innerHTML = "";
+        $("#price-info").textContent = "";
       }
     }
 
@@ -3784,10 +3847,10 @@
 
     // Clear price info when tokens change
     $("#create-tokenA").addEventListener("input", () => {
-      $("#price-info").innerHTML = "";
+      $("#price-info").textContent = "";
     });
     $("#create-tokenB").addEventListener("input", () => {
-      $("#price-info").innerHTML = "";
+      $("#price-info").textContent = "";
     });
 
     // Sortable column headers
