@@ -431,6 +431,27 @@ describe("Swapboard Subgraph", () => {
     assert.fieldEquals("Token", USDC_ADDRESS.toLowerCase(), "volumeBought", "30000000000");
   });
 
+  test("OrderFilled decrements Token order counts", () => {
+    let createEvent = createOrderCreatedEvent(
+      0,
+      MAKER_ADDRESS,
+      WETH_ADDRESS,
+      "10000000000000000000",
+      USDC_ADDRESS,
+      "30000000000"
+    );
+    handleOrderCreated(createEvent);
+
+    assert.fieldEquals("Token", WETH_ADDRESS.toLowerCase(), "ordersSelling", "1");
+    assert.fieldEquals("Token", USDC_ADDRESS.toLowerCase(), "ordersBuying", "1");
+
+    let fillEvent = createOrderFilledEvent(0, TAKER_ADDRESS);
+    handleOrderFilled(fillEvent);
+
+    assert.fieldEquals("Token", WETH_ADDRESS.toLowerCase(), "ordersSelling", "0");
+    assert.fieldEquals("Token", USDC_ADDRESS.toLowerCase(), "ordersBuying", "0");
+  });
+
   test("OrderFilled accumulates Token volumes", () => {
     for (let i = 0; i < 3; i++) {
       let createEvent = createOrderCreatedEvent(
@@ -510,6 +531,27 @@ describe("Swapboard Subgraph", () => {
 
     assert.fieldEquals("Token", WETH_ADDRESS.toLowerCase(), "volumeSold", "0");
     assert.fieldEquals("Token", USDC_ADDRESS.toLowerCase(), "volumeBought", "0");
+  });
+
+  test("OrderCanceled decrements Token order counts", () => {
+    let createEvent = createOrderCreatedEvent(
+      0,
+      MAKER_ADDRESS,
+      WETH_ADDRESS,
+      "10000000000000000000",
+      USDC_ADDRESS,
+      "30000000000"
+    );
+    handleOrderCreated(createEvent);
+
+    assert.fieldEquals("Token", WETH_ADDRESS.toLowerCase(), "ordersSelling", "1");
+    assert.fieldEquals("Token", USDC_ADDRESS.toLowerCase(), "ordersBuying", "1");
+
+    let cancelEvent = createOrderCanceledEvent(0);
+    handleOrderCanceled(cancelEvent);
+
+    assert.fieldEquals("Token", WETH_ADDRESS.toLowerCase(), "ordersSelling", "0");
+    assert.fieldEquals("Token", USDC_ADDRESS.toLowerCase(), "ordersBuying", "0");
   });
 
   test("OrderCanceled does not update PairStats tradeCount", () => {
@@ -608,6 +650,10 @@ describe("Swapboard Subgraph", () => {
     // Volume only from filled orders
     assert.fieldEquals("Token", WETH_ADDRESS.toLowerCase(), "volumeSold", "20000000000000000000");
     assert.fieldEquals("Token", USDC_ADDRESS.toLowerCase(), "volumeBought", "60000000000");
+
+    // Order counts: 4 created, 2 filled, 1 cancelled = 1 active
+    assert.fieldEquals("Token", WETH_ADDRESS.toLowerCase(), "ordersSelling", "1");
+    assert.fieldEquals("Token", USDC_ADDRESS.toLowerCase(), "ordersBuying", "1");
 
     // PairStats tradeCount only from filled orders
     let pairId = WETH_ADDRESS.toLowerCase() + "-" + USDC_ADDRESS.toLowerCase();

@@ -182,19 +182,21 @@ export function handleOrderFilled(event: OrderFilled): void {
   order.filledTx = event.transaction.hash;
   order.save();
 
-  // Update tokenA volume (amount sold)
+  // Update tokenA volume and decrement selling counter
   let tokenA = Token.load(order.tokenA);
   if (tokenA != null) {
     tokenA.volumeSold = tokenA.volumeSold.plus(order.amountA);
+    tokenA.ordersSelling = tokenA.ordersSelling.minus(ONE);
     tokenA.save();
   } else {
     log.error("OrderFilled: TokenA {} not found for order {}", [order.tokenA, orderId]);
   }
 
-  // Update tokenB volume (amount bought)
+  // Update tokenB volume and decrement buying counter
   let tokenB = Token.load(order.tokenB);
   if (tokenB != null) {
     tokenB.volumeBought = tokenB.volumeBought.plus(order.amountB);
+    tokenB.ordersBuying = tokenB.ordersBuying.minus(ONE);
     tokenB.save();
   } else {
     log.error("OrderFilled: TokenB {} not found for order {}", [order.tokenB, orderId]);
@@ -231,6 +233,18 @@ export function handleOrderCanceled(event: OrderCanceled): void {
   order.cancelledAt = event.block.timestamp;
   order.cancelledTx = event.transaction.hash;
   order.save();
+
+  // Decrement token order counters
+  let tokenA = Token.load(order.tokenA);
+  if (tokenA != null) {
+    tokenA.ordersSelling = tokenA.ordersSelling.minus(ONE);
+    tokenA.save();
+  }
+  let tokenB = Token.load(order.tokenB);
+  if (tokenB != null) {
+    tokenB.ordersBuying = tokenB.ordersBuying.minus(ONE);
+    tokenB.save();
+  }
 
   // Update global stats
   let stats = getOrCreateGlobalStats();
