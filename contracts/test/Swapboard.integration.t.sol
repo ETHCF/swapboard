@@ -64,8 +64,8 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(charlie);
         usdc.approve(address(board), 200_000e6);
-        board.fillOrder(order0);
-        board.fillOrder(order3);
+        board.fillOrder(order0, 0);
+        board.fillOrder(order3, 0);
         vm.stopPrank();
 
         assertFalse(board.canFill(order0));
@@ -90,7 +90,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(bob);
         usdc.approve(address(board), 150_000e6);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
 
         assertEq(weth.balanceOf(bob), bobWethBefore + 50 ether);
@@ -134,11 +134,11 @@ contract SwapboardIntegrationTest is Test {
         usdc.approve(address(board), 30_000e6);
 
         vm.prank(bob);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
 
         vm.prank(charlie);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
 
         assertEq(weth.balanceOf(bob), 1000 ether + 10 ether);
         assertEq(weth.balanceOf(charlie), 0);
@@ -154,7 +154,7 @@ contract SwapboardIntegrationTest is Test {
         usdc.approve(address(board), 30_000e6);
 
         vm.prank(bob);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
@@ -184,11 +184,11 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(bob);
         usdc.approve(address(board), 150_000e6);
-        board.fillOrder(orderIds[0]);
-        board.fillOrder(orderIds[2]);
-        board.fillOrder(orderIds[4]);
-        board.fillOrder(orderIds[6]);
-        board.fillOrder(orderIds[8]);
+        board.fillOrder(orderIds[0], 0);
+        board.fillOrder(orderIds[2], 0);
+        board.fillOrder(orderIds[4], 0);
+        board.fillOrder(orderIds[6], 0);
+        board.fillOrder(orderIds[8], 0);
         vm.stopPrank();
 
         vm.startPrank(alice);
@@ -213,7 +213,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(bob);
         dai.approve(address(board), 95_000 ether);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
 
         assertEq(wbtc.balanceOf(bob), 1e8);
@@ -234,7 +234,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(bob);
         usdc.approve(address(board), 1e6);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
 
         assertEq(weth.balanceOf(bob), 1000 ether + largeAmount);
@@ -248,7 +248,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(bob);
         usdc.approve(address(board), 1);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
 
         assertEq(weth.balanceOf(bob), 1000 ether + 1);
@@ -269,7 +269,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit ISwapboard.OrderFilled(orderId, bob);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
     }
 
@@ -312,7 +312,7 @@ contract SwapboardIntegrationTest is Test {
         vm.startPrank(bob);
         usdc.approve(address(board), numOrders * 3000e6);
         for (uint256 i = 0; i < numOrders; i++) {
-            board.fillOrder(i);
+            board.fillOrder(i, 0);
         }
         vm.stopPrank();
 

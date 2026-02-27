@@ -143,7 +143,7 @@ contract SwapboardTest is Test {
 
         vm.startPrank(taker);
         tokenB.approve(address(board), AMOUNT_B);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
 
         ISwapboard.Order memory order = board.getOrder(orderId);
@@ -157,7 +157,7 @@ contract SwapboardTest is Test {
     function test_fillOrder_revert_orderNotFound() public {
         vm.startPrank(taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
-        board.fillOrder(999);
+        board.fillOrder(999, 0);
         vm.stopPrank();
     }
 
@@ -169,10 +169,10 @@ contract SwapboardTest is Test {
 
         vm.startPrank(taker);
         tokenB.approve(address(board), AMOUNT_B);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
 
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
     }
 
@@ -294,7 +294,7 @@ contract SwapboardTest is Test {
         tokenB.approve(address(board), AMOUNT_B);
 
         uint256 orderId = board.createOrder(address(tokenA), AMOUNT_A, address(tokenB), AMOUNT_B);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
 
         assertEq(tokenA.balanceOf(maker), AMOUNT_A * 10 - AMOUNT_A + AMOUNT_A);
@@ -324,7 +324,7 @@ contract SwapboardTest is Test {
         vm.expectEmit(true, true, false, true);
         emit ISwapboard.OrderFilled(orderId, taker);
 
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
     }
 
@@ -376,10 +376,41 @@ contract SwapboardTest is Test {
 
         vm.startPrank(taker);
         tokenB.approve(address(board), amountB);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
 
         assertEq(tokenA.balanceOf(taker), amountA);
         assertEq(tokenB.balanceOf(maker), amountB);
+    }
+
+    function test_fillOrder_revert_deadlineExpired() public {
+        vm.startPrank(maker);
+        tokenA.approve(address(board), AMOUNT_A);
+        uint256 orderId = board.createOrder(address(tokenA), AMOUNT_A, address(tokenB), AMOUNT_B);
+        vm.stopPrank();
+
+        vm.warp(1000);
+
+        vm.startPrank(taker);
+        tokenB.approve(address(board), AMOUNT_B);
+        vm.expectRevert(ISwapboard.DeadlineExpired.selector);
+        board.fillOrder(orderId, 999);
+        vm.stopPrank();
+    }
+
+    function test_fillOrder_deadlineZero_noExpiry() public {
+        vm.startPrank(maker);
+        tokenA.approve(address(board), AMOUNT_A);
+        uint256 orderId = board.createOrder(address(tokenA), AMOUNT_A, address(tokenB), AMOUNT_B);
+        vm.stopPrank();
+
+        vm.warp(type(uint256).max);
+
+        vm.startPrank(taker);
+        tokenB.approve(address(board), AMOUNT_B);
+        board.fillOrder(orderId, 0);
+        vm.stopPrank();
+
+        assertFalse(board.getOrder(orderId).active);
     }
 }

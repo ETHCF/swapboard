@@ -179,7 +179,7 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 takerBalanceBefore = tokenA.balanceOf(taker);
 
         vm.prank(taker);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
 
         uint256 takerBalanceAfter = tokenA.balanceOf(taker);
         assertEq(
@@ -201,7 +201,7 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 makerBalanceBefore = tokenB.balanceOf(maker);
 
         vm.prank(taker);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
 
         uint256 makerBalanceAfter = tokenB.balanceOf(maker);
         assertEq(
@@ -243,7 +243,7 @@ contract SwapboardStatelessInvariantTest is Test {
         assertTrue(board.canFill(orderId), "Order should be fillable");
 
         vm.prank(taker);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
 
         assertFalse(board.canFill(orderId), "Order should not be fillable after fill");
 

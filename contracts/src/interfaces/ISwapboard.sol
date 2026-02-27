@@ -98,6 +98,9 @@ interface ISwapboard {
     /// @notice Thrown when msg.value is zero for a payable function
     error ZeroETH();
 
+    /// @notice Thrown when a fill is attempted after the specified deadline
+    error DeadlineExpired();
+
     /// @notice Creates a new OTC order by depositing tokenA
     /// @dev Transfers tokenA from caller to contract. Reverts if token is fee-on-transfer.
     /// @param tokenA Address of the ERC20 token to sell
@@ -115,8 +118,10 @@ interface ISwapboard {
     /// @notice Fills an existing order by transferring tokenB to maker
     /// @dev Transfers tokenB from caller to maker, transfers tokenA from contract to caller
     /// @param orderId The unique identifier of the order to fill
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrder(
-        uint256 orderId
+        uint256 orderId,
+        uint256 deadline
     ) external;
 
     /// @notice Cancels an existing order and returns tokenA to maker
@@ -165,8 +170,10 @@ interface ISwapboard {
     /// @notice Fills an order by sending ETH (auto-wrapped to WETH)
     /// @dev Requires order.tokenB == WETH and msg.value == order.amountB
     /// @param orderId The unique identifier of the order to fill
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrderWithEth(
-        uint256 orderId
+        uint256 orderId,
+        uint256 deadline
     ) external payable;
 
     /// @notice Cancels an order where tokenA is WETH, returning ETH to maker
@@ -179,7 +186,9 @@ interface ISwapboard {
     /// @notice Fills an order where tokenA is WETH, receiving ETH instead
     /// @dev Pays tokenB normally, receives ETH after WETH unwrap
     /// @param orderId The unique identifier of the order to fill
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrderUnwrap(
-        uint256 orderId
+        uint256 orderId,
+        uint256 deadline
     ) external;
 }

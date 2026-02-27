@@ -128,7 +128,7 @@ contract SwapboardETHTest is Test {
         uint256 takerTokenBefore = token.balanceOf(taker);
 
         vm.prank(taker);
-        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId);
+        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId, 0);
 
         ISwapboard.Order memory order = board.getOrder(orderId);
         assertFalse(order.active);
@@ -146,7 +146,7 @@ contract SwapboardETHTest is Test {
         emit ISwapboard.OrderFilled(orderId, taker);
 
         vm.prank(taker);
-        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId);
+        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId, 0);
     }
 
     function test_fillOrderWithEth_revert_notWETH() public {
@@ -160,7 +160,7 @@ contract SwapboardETHTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ISwapboard.NotWETH.selector, address(weth), address(tokenB))
         );
-        board.fillOrderWithEth{value: 1 ether}(orderId);
+        board.fillOrderWithEth{value: 1 ether}(orderId, 0);
     }
 
     function test_fillOrderWithEth_revert_amountMismatch_tooLow() public {
@@ -175,7 +175,7 @@ contract SwapboardETHTest is Test {
                 ISwapboard.ETHAmountMismatch.selector, ETH_AMOUNT, ETH_AMOUNT - 1
             )
         );
-        board.fillOrderWithEth{value: ETH_AMOUNT - 1}(orderId);
+        board.fillOrderWithEth{value: ETH_AMOUNT - 1}(orderId, 0);
     }
 
     function test_fillOrderWithEth_revert_amountMismatch_tooHigh() public {
@@ -190,13 +190,13 @@ contract SwapboardETHTest is Test {
                 ISwapboard.ETHAmountMismatch.selector, ETH_AMOUNT, ETH_AMOUNT + 1
             )
         );
-        board.fillOrderWithEth{value: ETH_AMOUNT + 1}(orderId);
+        board.fillOrderWithEth{value: ETH_AMOUNT + 1}(orderId, 0);
     }
 
     function test_fillOrderWithEth_revert_orderNotFound() public {
         vm.prank(taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
-        board.fillOrderWithEth{value: ETH_AMOUNT}(999);
+        board.fillOrderWithEth{value: ETH_AMOUNT}(999, 0);
     }
 
     function test_fillOrderWithEth_revert_orderNotActive() public {
@@ -207,12 +207,12 @@ contract SwapboardETHTest is Test {
 
         // Fill once
         vm.prank(taker);
-        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId);
+        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId, 0);
 
         // Try to fill again
         vm.prank(taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId);
+        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId, 0);
     }
 
     // ============ cancelOrderUnwrap ============
@@ -310,7 +310,7 @@ contract SwapboardETHTest is Test {
 
         vm.startPrank(taker);
         token.approve(address(board), TOKEN_AMOUNT);
-        board.fillOrderUnwrap(orderId);
+        board.fillOrderUnwrap(orderId, 0);
         vm.stopPrank();
 
         ISwapboard.Order memory order = board.getOrder(orderId);
@@ -329,7 +329,7 @@ contract SwapboardETHTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit ISwapboard.OrderFilled(orderId, taker);
-        board.fillOrderUnwrap(orderId);
+        board.fillOrderUnwrap(orderId, 0);
         vm.stopPrank();
     }
 
@@ -344,13 +344,13 @@ contract SwapboardETHTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ISwapboard.NotWETH.selector, address(weth), address(token))
         );
-        board.fillOrderUnwrap(orderId);
+        board.fillOrderUnwrap(orderId, 0);
     }
 
     function test_fillOrderUnwrap_revert_orderNotFound() public {
         vm.prank(taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
-        board.fillOrderUnwrap(999);
+        board.fillOrderUnwrap(999, 0);
     }
 
     function test_fillOrderUnwrap_revert_orderNotActive() public {
@@ -359,12 +359,12 @@ contract SwapboardETHTest is Test {
 
         vm.startPrank(taker);
         token.approve(address(board), TOKEN_AMOUNT);
-        board.fillOrderUnwrap(orderId);
+        board.fillOrderUnwrap(orderId, 0);
         vm.stopPrank();
 
         vm.prank(taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        board.fillOrderUnwrap(orderId);
+        board.fillOrderUnwrap(orderId, 0);
     }
 
     function test_fillOrderUnwrap_revert_ethTransferFailed() public {
@@ -380,7 +380,7 @@ contract SwapboardETHTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ISwapboard.ETHTransferFailed.selector, address(rejecter))
         );
-        board.fillOrderUnwrap(orderId);
+        board.fillOrderUnwrap(orderId, 0);
         vm.stopPrank();
     }
 
@@ -406,7 +406,7 @@ contract SwapboardETHTest is Test {
 
         vm.startPrank(taker);
         token.approve(address(board), TOKEN_AMOUNT);
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
         vm.stopPrank();
 
         assertEq(weth.balanceOf(taker), takerWethBefore + ETH_AMOUNT);
@@ -436,7 +436,7 @@ contract SwapboardETHTest is Test {
         uint256 takerTokenBefore = token.balanceOf(taker);
 
         vm.prank(taker);
-        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId);
+        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId, 0);
 
         assertEq(weth.balanceOf(maker), makerWethBefore + ETH_AMOUNT);
         assertEq(token.balanceOf(taker), takerTokenBefore + TOKEN_AMOUNT);
@@ -451,7 +451,7 @@ contract SwapboardETHTest is Test {
 
         vm.startPrank(taker);
         token.approve(address(board), TOKEN_AMOUNT);
-        board.fillOrderUnwrap(orderId);
+        board.fillOrderUnwrap(orderId, 0);
         vm.stopPrank();
 
         assertEq(taker.balance, takerEthBefore + ETH_AMOUNT);
@@ -492,7 +492,7 @@ contract SwapboardETHTest is Test {
         // Fill one
         vm.startPrank(taker);
         token.approve(address(board), TOKEN_AMOUNT);
-        board.fillOrderUnwrap(id0);
+        board.fillOrderUnwrap(id0, 0);
         vm.stopPrank();
 
         assertEq(weth.balanceOf(address(board)), 3 ether);
@@ -543,7 +543,7 @@ contract SwapboardETHTest is Test {
         vm.stopPrank();
 
         vm.prank(taker);
-        board.fillOrderWithEth{value: ethAmount}(orderId);
+        board.fillOrderWithEth{value: ethAmount}(orderId, 0);
 
         assertEq(weth.balanceOf(maker), makerWethBefore + ethAmount);
         assertEq(token.balanceOf(taker), takerTokenBefore + tokenAmount);
@@ -566,6 +566,32 @@ contract SwapboardETHTest is Test {
         assertEq(maker.balance, makerEthBefore + ethAmount);
     }
 
+    function test_fillOrderWithEth_revert_deadlineExpired() public {
+        vm.startPrank(maker);
+        token.approve(address(board), TOKEN_AMOUNT);
+        uint256 orderId = board.createOrder(address(token), TOKEN_AMOUNT, address(weth), ETH_AMOUNT);
+        vm.stopPrank();
+
+        vm.warp(1000);
+
+        vm.prank(taker);
+        vm.expectRevert(ISwapboard.DeadlineExpired.selector);
+        board.fillOrderWithEth{value: ETH_AMOUNT}(orderId, 999);
+    }
+
+    function test_fillOrderUnwrap_revert_deadlineExpired() public {
+        vm.prank(maker);
+        uint256 orderId = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
+
+        vm.warp(1000);
+
+        vm.startPrank(taker);
+        token.approve(address(board), TOKEN_AMOUNT);
+        vm.expectRevert(ISwapboard.DeadlineExpired.selector);
+        board.fillOrderUnwrap(orderId, 999);
+        vm.stopPrank();
+    }
+
     function testFuzz_fillOrderUnwrap(
         uint256 ethAmount,
         uint256 tokenAmount
@@ -584,7 +610,7 @@ contract SwapboardETHTest is Test {
 
         vm.startPrank(taker);
         token.approve(address(board), tokenAmount);
-        board.fillOrderUnwrap(orderId);
+        board.fillOrderUnwrap(orderId, 0);
         vm.stopPrank();
 
         assertEq(taker.balance, takerEthBefore + ethAmount);

@@ -120,7 +120,7 @@ contract SwapboardHandler is Test {
 
         calls_fillOrder++;
 
-        board.fillOrder(orderId);
+        board.fillOrder(orderId, 0);
 
         ghost_totalTokenAWithdrawn += order.amountA;
         ghost_ordersFilled++;

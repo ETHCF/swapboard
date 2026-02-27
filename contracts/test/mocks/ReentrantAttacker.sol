@@ -100,7 +100,7 @@ contract ReentrantAttacker {
 
         if (keccak256(bytes(attackType)) == keccak256(bytes("fill"))) {
             // Try to fill the same order again
-            try board.fillOrder(orderId) {} catch {}
+            try board.fillOrder(orderId, 0) {} catch {}
         } else if (keccak256(bytes(attackType)) == keccak256(bytes("cancel"))) {
             // Try to cancel the same order again
             try board.cancelOrder(orderId) {} catch {}
