@@ -108,19 +108,14 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         if (maker == address(0)) revert OrderNotFound(orderId);
         if (!order.active) revert OrderNotActive(orderId);
 
-        address tokenB = order.tokenB;
-        uint256 amountB = order.amountB;
-        address tokenA = order.tokenA;
-        uint256 amountA = order.amountA;
-
         order.active = false;
 
         // Transfer tokenB from taker to maker
         // Note: If tokenB is fee-on-transfer, maker receives less than amountB
-        IERC20(tokenB).safeTransferFrom(msg.sender, maker, amountB);
+        IERC20(order.tokenB).safeTransferFrom(msg.sender, maker, order.amountB);
 
         // Transfer tokenA from contract to taker
-        IERC20(tokenA).safeTransfer(msg.sender, amountA);
+        IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
 
         emit OrderFilled(orderId, msg.sender);
     }
@@ -136,12 +131,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         if (!order.active) revert OrderNotActive(orderId);
         if (msg.sender != maker) revert NotMaker(orderId, msg.sender, maker);
 
-        address tokenA = order.tokenA;
-        uint256 amountA = order.amountA;
-
         order.active = false;
 
-        IERC20(tokenA).safeTransfer(maker, amountA);
+        IERC20(order.tokenA).safeTransfer(maker, order.amountA);
 
         emit OrderCanceled(orderId);
     }
@@ -191,8 +183,6 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         if (!order.active) revert OrderNotActive(orderId);
 
         uint256 amountB = order.amountB;
-        address tokenA = order.tokenA;
-        uint256 amountA = order.amountA;
 
         if (order.tokenB != weth) revert NotWETH(weth, order.tokenB);
         if (msg.value != amountB) revert ETHAmountMismatch(amountB, msg.value);
@@ -202,7 +192,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         IWETH(weth).deposit{value: msg.value}();
         IERC20(weth).safeTransfer(maker, amountB);
 
-        IERC20(tokenA).safeTransfer(msg.sender, amountA);
+        IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
 
         emit OrderFilled(orderId, msg.sender);
     }
@@ -225,7 +215,10 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         IWETH(weth).withdraw(amountA);
 
-        (bool success,) = payable(maker).call{value: amountA}("");
+        bool success;
+        assembly {
+            success := call(gas(), maker, amountA, 0, 0, 0, 0)
+        }
         if (!success) revert ETHTransferFailed(maker);
 
         emit OrderCanceled(orderId);
@@ -245,17 +238,18 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         if (!order.active) revert OrderNotActive(orderId);
         if (order.tokenA != weth) revert NotWETH(weth, order.tokenA);
 
-        address tokenB = order.tokenB;
-        uint256 amountB = order.amountB;
         uint256 amountA = order.amountA;
 
         order.active = false;
 
-        IERC20(tokenB).safeTransferFrom(msg.sender, maker, amountB);
+        IERC20(order.tokenB).safeTransferFrom(msg.sender, maker, order.amountB);
 
         IWETH(weth).withdraw(amountA);
 
-        (bool success,) = payable(msg.sender).call{value: amountA}("");
+        bool success;
+        assembly {
+            success := call(gas(), caller(), amountA, 0, 0, 0, 0)
+        }
         if (!success) revert ETHTransferFailed(msg.sender);
 
         emit OrderFilled(orderId, msg.sender);
