@@ -16,11 +16,11 @@ interface ISwapboard {
     /// @param active Whether the order can still be filled or cancelled
     struct Order {
         address maker;
+        bool active;
         address tokenA;
         uint256 amountA;
         address tokenB;
         uint256 amountB;
-        bool active;
     }
 
     /// @notice Emitted when a new order is created

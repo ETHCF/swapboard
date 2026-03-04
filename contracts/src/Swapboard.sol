@@ -84,11 +84,11 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         orders[orderId] = Order({
             maker: msg.sender,
+            active: true,
             tokenA: tokenA,
             amountA: amountA,
             tokenB: tokenB,
-            amountB: amountB,
-            active: true
+            amountB: amountB
         });
 
         emit OrderCreated(orderId, msg.sender, tokenA, amountA, tokenB, amountB);
@@ -104,9 +104,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         Order storage order = orders[orderId];
 
-        address maker = order.maker;
+        (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!order.active) revert OrderNotActive(orderId);
+        if (!active) revert OrderNotActive(orderId);
 
         order.active = false;
 
@@ -126,9 +126,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     ) external nonReentrant {
         Order storage order = orders[orderId];
 
-        address maker = order.maker;
+        (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!order.active) revert OrderNotActive(orderId);
+        if (!active) revert OrderNotActive(orderId);
         if (msg.sender != maker) revert NotMaker(orderId, msg.sender, maker);
 
         order.active = false;
@@ -159,11 +159,11 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         orders[orderId] = Order({
             maker: msg.sender,
+            active: true,
             tokenA: weth,
             amountA: msg.value,
             tokenB: tokenB,
-            amountB: amountB,
-            active: true
+            amountB: amountB
         });
 
         emit OrderCreated(orderId, msg.sender, weth, msg.value, tokenB, amountB);
@@ -178,9 +178,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         Order storage order = orders[orderId];
 
-        address maker = order.maker;
+        (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!order.active) revert OrderNotActive(orderId);
+        if (!active) revert OrderNotActive(orderId);
 
         uint256 amountB = order.amountB;
 
@@ -203,9 +203,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     ) external nonReentrant {
         Order storage order = orders[orderId];
 
-        address maker = order.maker;
+        (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!order.active) revert OrderNotActive(orderId);
+        if (!active) revert OrderNotActive(orderId);
         if (msg.sender != maker) revert NotMaker(orderId, msg.sender, maker);
         if (order.tokenA != weth) revert NotWETH(weth, order.tokenA);
 
@@ -233,9 +233,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         Order storage order = orders[orderId];
 
-        address maker = order.maker;
+        (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!order.active) revert OrderNotActive(orderId);
+        if (!active) revert OrderNotActive(orderId);
         if (order.tokenA != weth) revert NotWETH(weth, order.tokenA);
 
         uint256 amountA = order.amountA;
