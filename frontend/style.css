@@ -74,7 +74,7 @@ body {
   font-family: "Courier New", Courier, monospace;
   font-size: 14px;
   line-height: 1.5;
-  background: var(--bg);
+  background: var(--bg) url('/bg.jpg') no-repeat center center / cover fixed;
   color: var(--fg);
   padding: 20px;
   max-width: 1400px;
