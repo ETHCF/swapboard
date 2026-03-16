@@ -134,9 +134,9 @@
   const CONTRACT_ABI = [
     "function createOrder(address tokenA, uint256 amountA, address tokenB, uint256 amountB) external returns (uint256 orderId)",
     "function createOrderWithEth(address tokenB, uint256 amountB) external payable returns (uint256 orderId)",
-    "function fillOrder(uint256 orderId) external",
-    "function fillOrderWithEth(uint256 orderId) external payable",
-    "function fillOrderUnwrap(uint256 orderId) external",
+    "function fillOrder(uint256 orderId, uint256 deadline) external",
+    "function fillOrderWithEth(uint256 orderId, uint256 deadline) external payable",
+    "function fillOrderUnwrap(uint256 orderId, uint256 deadline) external",
     "function cancelOrder(uint256 orderId) external",
     "function cancelOrderUnwrap(uint256 orderId) external",
     "function getOrder(uint256 orderId) external view returns (tuple(address maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB, bool active))",
@@ -2412,11 +2412,13 @@
     const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
     const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
 
+    const deadline = Math.floor(Date.now() / 1000) + 300;
+
     // Estimate gas cost
     showToast("Estimating gas...");
     let gasEstimate = null;
     try {
-      const txData = contract.interface.encodeFunctionData("fillOrder", [order.orderId]);
+      const txData = contract.interface.encodeFunctionData("fillOrder", [order.orderId, deadline]);
       gasEstimate = await estimateGasCost({
         from: userAddress,
         to: CONFIG.CONTRACT_ADDRESS,
@@ -2452,7 +2454,7 @@
           }
 
           showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrder(order.orderId);
+          const tx = await contract.fillOrder(order.orderId, deadline);
           showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
           showToast("Order filled! Syncing...", "success", true);
@@ -2527,10 +2529,12 @@
     const amountBStr = formatAmount(order.amountB, 18);
     const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
 
+    const deadline = Math.floor(Date.now() / 1000) + 300;
+
     showToast("Estimating gas...");
     let gasEstimate = null;
     try {
-      const txData = contract.interface.encodeFunctionData("fillOrderWithEth", [order.orderId]);
+      const txData = contract.interface.encodeFunctionData("fillOrderWithEth", [order.orderId, deadline]);
       gasEstimate = await estimateGasCost({
         from: userAddress,
         to: CONFIG.CONTRACT_ADDRESS,
@@ -2547,7 +2551,7 @@
       async () => {
         try {
           showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrderWithEth(order.orderId, {
+          const tx = await contract.fillOrderWithEth(order.orderId, deadline, {
             value: BigInt(order.amountB),
           });
           showToast("Waiting for tx confirmation...", "info", true);
@@ -2575,10 +2579,12 @@
     const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
     const amountAStr = formatAmount(order.amountA, 18);
 
+    const deadline = Math.floor(Date.now() / 1000) + 300;
+
     showToast("Estimating gas...");
     let gasEstimate = null;
     try {
-      const txData = contract.interface.encodeFunctionData("fillOrderUnwrap", [order.orderId]);
+      const txData = contract.interface.encodeFunctionData("fillOrderUnwrap", [order.orderId, deadline]);
       gasEstimate = await estimateGasCost({
         from: userAddress,
         to: CONFIG.CONTRACT_ADDRESS,
@@ -2614,7 +2620,7 @@
           }
 
           showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrderUnwrap(order.orderId);
+          const tx = await contract.fillOrderUnwrap(order.orderId, deadline);
           showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
           showToast("Order filled! Syncing...", "success", true);
