@@ -1,6 +1,4 @@
-specVersion: 1.0.0
-indexerHints:
-  prune: auto
+specVersion: 0.0.5
 schema:
   file: ./schema.graphql
 dataSources:
@@ -19,6 +17,7 @@ dataSources:
         - Order
         - Token
         - GlobalStats
+        - PairStats
       abis:
         - name: Swapboard
           file: ./abis/Swapboard.json
