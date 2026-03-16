@@ -3,7 +3,7 @@
  * Provides offline support and caching for the PWA.
  */
 
-const CACHE_NAME = "swapboard-v1";
+const CACHE_NAME = "swapboard-v2";
 const STATIC_ASSETS = ["/", "/index.html", "/style.css", "/app.js", "/manifest.json"];
 
 // Install: cache static assets
@@ -41,7 +41,10 @@ self.addEventListener("fetch", (event) => {
   if (
     url.hostname.includes("thegraph.com") ||
     url.hostname.includes("coingecko.com") ||
-    url.hostname.includes("uniswap.org")
+    url.hostname.includes("uniswap.org") ||
+    url.hostname.includes("cdnjs.cloudflare.com") ||
+    url.hostname.includes("goldsky.com") ||
+    url.hostname.includes("alchemy.com")
   ) {
     event.respondWith(
       fetch(event.request)
