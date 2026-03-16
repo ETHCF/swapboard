@@ -2874,11 +2874,11 @@
 
     if (chainId !== EXPECTED_CHAIN_ID) {
       const networkName = NETWORK_NAMES[chainId] || "Chain " + chainId;
-      showToast(`Wrong network: ${networkName}. Switching to Sepolia...`, "error", true);
+      showToast(`Wrong network: ${networkName}. Switching to Ethereum mainnet...`, "error", true);
 
       const switched = await switchToExpectedNetwork();
       if (!switched) {
-        showToast("Please switch to Sepolia network in your wallet", "error");
+        showToast("Please switch to Ethereum mainnet", "error");
         return false;
       }
       return false;
@@ -2913,7 +2913,7 @@
         try {
           cachedWethAddress = (await contract.weth()).toLowerCase();
         } catch (e) {
-          cachedWethAddress = "0x7b79995e5f793a07bc00c21412e50ecae098e7f9";
+          cachedWethAddress = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
         }
       }
 
@@ -3887,7 +3887,7 @@
               try {
                 cachedWethAddress = (await contract.weth()).toLowerCase();
               } catch (e) {
-                cachedWethAddress = "0x7b79995e5f793a07bc00c21412e50ecae098e7f9";
+                cachedWethAddress = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
               }
             }
 
@@ -3937,7 +3937,7 @@
       window.ethereum.on("chainChanged", (chainIdHex) => {
         const chainId = parseInt(chainIdHex, 16);
         if (chainId !== EXPECTED_CHAIN_ID) {
-          showToast("Please switch to Sepolia network", "error");
+          showToast("Please switch to Ethereum mainnet", "error");
           disconnectWallet();
         } else {
           window.location.reload();
