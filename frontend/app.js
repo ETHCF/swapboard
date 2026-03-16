@@ -30,11 +30,11 @@
    * @constant {Object}
    */
   const CONFIG = {
-    // Contract address on Sepolia testnet
-    CONTRACT_ADDRESS: "0x57FbEE5959DA886E6699afaE1113E9Fa20E21762",
-    // Goldsky subgraph endpoint (Sepolia)
+    // Contract address on Ethereum mainnet
+    CONTRACT_ADDRESS: "0x000000fF3D7A2d373615141d7489Ca66683DbecF",
+    // Goldsky subgraph endpoint (Mainnet)
     SUBGRAPH_URL:
-      "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/2.0.0/gn",
+      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn",
     // Number of orders per page
     PAGE_SIZE: 20,
     // Request timeout in milliseconds
@@ -45,13 +45,13 @@
     SHOW_MARKET_DEVIATION: false,
   };
 
-  const EXPECTED_CHAIN_ID = 11155111;
+  const EXPECTED_CHAIN_ID = 1;
   const EXPECTED_CHAIN = {
-    chainId: "0xaa36a7",
-    chainName: "Sepolia",
-    nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
-    rpcUrls: ["https://rpc.sepolia.org"],
-    blockExplorerUrls: ["https://sepolia.etherscan.io"],
+    chainId: "0x1",
+    chainName: "Ethereum",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q"],
+    blockExplorerUrls: ["https://etherscan.io"],
   };
 
   // ============================================================================
