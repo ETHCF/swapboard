@@ -2001,6 +2001,14 @@
         option2.textContent = token.symbol;
         wantingSelect.appendChild(option2);
       });
+
+      // Restore saved filter selections
+      if (currentFilters.selling) {
+        sellingSelect.value = currentFilters.selling;
+      }
+      if (currentFilters.wanting) {
+        wantingSelect.value = currentFilters.wanting;
+      }
     }
   }
 
