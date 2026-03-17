@@ -43,7 +43,6 @@
     DEBOUNCE_DELAY: 500,
     // Show market deviation percentage (vs CoinGecko prices)
     SHOW_MARKET_DEVIATION: false,
-    RPC_URL: "https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q",
   };
 
   const EXPECTED_CHAIN_ID = 1;
@@ -175,8 +174,6 @@
   let signer = null;
   let userAddress = null;
   let contract = null;
-  let readProvider = null;
-  let readContract = null;
   let cachedWethAddress = null;
 
   function isWeth(addr) {
@@ -2899,33 +2896,6 @@
    * Connects to the user's Ethereum wallet via window.ethereum (MetaMask, etc).
    * Sets up the ethers provider, signer, and contract instance.
    */
-  function setupEventListeners() {
-    if (readContract) {
-      readContract.removeAllListeners();
-    }
-    readProvider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
-    readContract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, readProvider);
-
-    readContract.on("OrderFilled", (orderId, taker) => {
-      if (userAddress && taker.toLowerCase() !== userAddress.toLowerCase()) {
-        showNotification("Order Filled", `Your order #${orderId} has been filled!`, "order-" + orderId);
-      }
-      loadOrders();
-      loadStats();
-    });
-
-    readContract.on("OrderCanceled", (orderId) => {
-      showToast(`Order #${orderId} canceled`, "info");
-      loadOrders();
-      loadStats();
-    });
-
-    readContract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
-      loadOrders();
-      loadStats();
-    });
-  }
-
   async function connectWallet() {
     if (typeof window.ethereum === "undefined") {
       showToast("No wallet found. Install MetaMask.", "error");
@@ -2959,7 +2929,29 @@
       updateWalletMenu();
       updateNotifyText();
 
-      setupEventListeners();
+      // Subscribe to contract events for real-time updates
+      contract.on("OrderFilled", (orderId, taker) => {
+        if (taker.toLowerCase() !== userAddress.toLowerCase()) {
+          showNotification(
+            "Order Filled",
+            `Your order #${orderId} has been filled!`,
+            "order-" + orderId
+          );
+        }
+        loadOrders();
+        loadStats();
+      });
+
+      contract.on("OrderCanceled", (orderId) => {
+        showToast(`Order #${orderId} canceled`, "info");
+        loadOrders();
+        loadStats();
+      });
+
+      contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
+        loadOrders();
+        loadStats();
+      });
 
       showToast("Wallet connected", "success");
       loadOrders();
@@ -3910,7 +3902,29 @@
             $("#my-orders-label").classList.remove("hidden");
             updateNotifyText();
 
-            setupEventListeners();
+            // Subscribe to contract events for real-time updates
+            contract.on("OrderFilled", (orderId, taker) => {
+              if (taker.toLowerCase() !== userAddress.toLowerCase()) {
+                showNotification(
+                  "Order Filled",
+                  `Your order #${orderId} has been filled!`,
+                  "order-" + orderId
+                );
+              }
+              loadOrders();
+              loadStats();
+            });
+
+            contract.on("OrderCanceled", (orderId) => {
+              showToast(`Order #${orderId} canceled`, "info");
+              loadOrders();
+              loadStats();
+            });
+
+            contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
+              loadOrders();
+              loadStats();
+            });
 
             loadOrders();
           }
