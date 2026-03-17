@@ -1,6 +1,6 @@
 {
   "name": "swapboard-subgraph",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "The Graph subgraph for Swapboard contract indexing",
   "author": "Zak Cole <zak@numbergroup.xyz> (https://numbergroup.xyz)",

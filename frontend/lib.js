@@ -11,16 +11,16 @@
 // ============================================================================
 
 const CONFIG = {
-  CONTRACT_ADDRESS: "0x57FbEE5959DA886E6699afaE1113E9Fa20E21762",
+  CONTRACT_ADDRESS: "0x000000fF3D7A2d373615141d7489Ca66683DbecF",
   SUBGRAPH_URL:
-    "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/2.0.0/gn",
+    "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn",
   PAGE_SIZE: 20,
   REQUEST_TIMEOUT: 30000,
   DEBOUNCE_DELAY: 500,
   SHOW_MARKET_DEVIATION: false,
 };
 
-const EXPECTED_CHAIN_ID = 11155111;
+const EXPECTED_CHAIN_ID = 1;
 
 const COINGECKO_ID_MAP = {
   "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "weth",

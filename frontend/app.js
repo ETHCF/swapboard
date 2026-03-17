@@ -30,11 +30,11 @@
    * @constant {Object}
    */
   const CONFIG = {
-    // Contract address on Sepolia testnet
-    CONTRACT_ADDRESS: "0x57FbEE5959DA886E6699afaE1113E9Fa20E21762",
-    // Goldsky subgraph endpoint (Sepolia)
+    // Contract address on Ethereum mainnet
+    CONTRACT_ADDRESS: "0x000000fF3D7A2d373615141d7489Ca66683DbecF",
+    // Goldsky subgraph endpoint (Mainnet)
     SUBGRAPH_URL:
-      "https://api.goldsky.com/api/public/project_cmk2ptqkv97cw01xi85vph3la/subgraphs/swapboard-sepolia/2.0.0/gn",
+      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn",
     // Number of orders per page
     PAGE_SIZE: 20,
     // Request timeout in milliseconds
@@ -45,13 +45,13 @@
     SHOW_MARKET_DEVIATION: false,
   };
 
-  const EXPECTED_CHAIN_ID = 11155111;
+  const EXPECTED_CHAIN_ID = 1;
   const EXPECTED_CHAIN = {
-    chainId: "0xaa36a7",
-    chainName: "Sepolia",
-    nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
-    rpcUrls: ["https://rpc.sepolia.org"],
-    blockExplorerUrls: ["https://sepolia.etherscan.io"],
+    chainId: "0x1",
+    chainName: "Ethereum",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q"],
+    blockExplorerUrls: ["https://etherscan.io"],
   };
 
   // ============================================================================
@@ -134,9 +134,9 @@
   const CONTRACT_ABI = [
     "function createOrder(address tokenA, uint256 amountA, address tokenB, uint256 amountB) external returns (uint256 orderId)",
     "function createOrderWithEth(address tokenB, uint256 amountB) external payable returns (uint256 orderId)",
-    "function fillOrder(uint256 orderId) external",
-    "function fillOrderWithEth(uint256 orderId) external payable",
-    "function fillOrderUnwrap(uint256 orderId) external",
+    "function fillOrder(uint256 orderId, uint256 deadline) external",
+    "function fillOrderWithEth(uint256 orderId, uint256 deadline) external payable",
+    "function fillOrderUnwrap(uint256 orderId, uint256 deadline) external",
     "function cancelOrder(uint256 orderId) external",
     "function cancelOrderUnwrap(uint256 orderId) external",
     "function getOrder(uint256 orderId) external view returns (tuple(address maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB, bool active))",
@@ -2001,6 +2001,14 @@
         option2.textContent = token.symbol;
         wantingSelect.appendChild(option2);
       });
+
+      // Restore saved filter selections
+      if (currentFilters.selling) {
+        sellingSelect.value = currentFilters.selling;
+      }
+      if (currentFilters.wanting) {
+        wantingSelect.value = currentFilters.wanting;
+      }
     }
   }
 
@@ -2412,11 +2420,13 @@
     const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
     const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
 
+    const deadline = Math.floor(Date.now() / 1000) + 300;
+
     // Estimate gas cost
     showToast("Estimating gas...");
     let gasEstimate = null;
     try {
-      const txData = contract.interface.encodeFunctionData("fillOrder", [order.orderId]);
+      const txData = contract.interface.encodeFunctionData("fillOrder", [order.orderId, deadline]);
       gasEstimate = await estimateGasCost({
         from: userAddress,
         to: CONFIG.CONTRACT_ADDRESS,
@@ -2452,7 +2462,7 @@
           }
 
           showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrder(order.orderId);
+          const tx = await contract.fillOrder(order.orderId, deadline);
           showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
           showToast("Order filled! Syncing...", "success", true);
@@ -2527,10 +2537,12 @@
     const amountBStr = formatAmount(order.amountB, 18);
     const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
 
+    const deadline = Math.floor(Date.now() / 1000) + 300;
+
     showToast("Estimating gas...");
     let gasEstimate = null;
     try {
-      const txData = contract.interface.encodeFunctionData("fillOrderWithEth", [order.orderId]);
+      const txData = contract.interface.encodeFunctionData("fillOrderWithEth", [order.orderId, deadline]);
       gasEstimate = await estimateGasCost({
         from: userAddress,
         to: CONFIG.CONTRACT_ADDRESS,
@@ -2547,7 +2559,7 @@
       async () => {
         try {
           showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrderWithEth(order.orderId, {
+          const tx = await contract.fillOrderWithEth(order.orderId, deadline, {
             value: BigInt(order.amountB),
           });
           showToast("Waiting for tx confirmation...", "info", true);
@@ -2575,10 +2587,12 @@
     const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
     const amountAStr = formatAmount(order.amountA, 18);
 
+    const deadline = Math.floor(Date.now() / 1000) + 300;
+
     showToast("Estimating gas...");
     let gasEstimate = null;
     try {
-      const txData = contract.interface.encodeFunctionData("fillOrderUnwrap", [order.orderId]);
+      const txData = contract.interface.encodeFunctionData("fillOrderUnwrap", [order.orderId, deadline]);
       gasEstimate = await estimateGasCost({
         from: userAddress,
         to: CONFIG.CONTRACT_ADDRESS,
@@ -2614,7 +2628,7 @@
           }
 
           showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrderUnwrap(order.orderId);
+          const tx = await contract.fillOrderUnwrap(order.orderId, deadline);
           showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
           showToast("Order filled! Syncing...", "success", true);
@@ -2874,11 +2888,11 @@
 
     if (chainId !== EXPECTED_CHAIN_ID) {
       const networkName = NETWORK_NAMES[chainId] || "Chain " + chainId;
-      showToast(`Wrong network: ${networkName}. Switching to Sepolia...`, "error", true);
+      showToast(`Wrong network: ${networkName}. Switching to Ethereum mainnet...`, "error", true);
 
       const switched = await switchToExpectedNetwork();
       if (!switched) {
-        showToast("Please switch to Sepolia network in your wallet", "error");
+        showToast("Please switch to Ethereum mainnet", "error");
         return false;
       }
       return false;
@@ -2913,7 +2927,7 @@
         try {
           cachedWethAddress = (await contract.weth()).toLowerCase();
         } catch (e) {
-          cachedWethAddress = "0x7b79995e5f793a07bc00c21412e50ecae098e7f9";
+          cachedWethAddress = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
         }
       }
 
@@ -3887,7 +3901,7 @@
               try {
                 cachedWethAddress = (await contract.weth()).toLowerCase();
               } catch (e) {
-                cachedWethAddress = "0x7b79995e5f793a07bc00c21412e50ecae098e7f9";
+                cachedWethAddress = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
               }
             }
 
@@ -3937,7 +3951,7 @@
       window.ethereum.on("chainChanged", (chainIdHex) => {
         const chainId = parseInt(chainIdHex, 16);
         if (chainId !== EXPECTED_CHAIN_ID) {
-          showToast("Please switch to Sepolia network", "error");
+          showToast("Please switch to Ethereum mainnet", "error");
           disconnectWallet();
         } else {
           window.location.reload();

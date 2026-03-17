@@ -1,16 +1,14 @@
-specVersion: 1.0.0
-indexerHints:
-  prune: auto
+specVersion: 0.0.5
 schema:
   file: ./schema.graphql
 dataSources:
   - kind: ethereum
     name: Swapboard
-    network: sepolia
+    network: mainnet
     source:
-      address: "0x57FbEE5959DA886E6699afaE1113E9Fa20E21762"
+      address: "0x000000fF3D7A2d373615141d7489Ca66683DbecF"
       abi: Swapboard
-      startBlock: 10240098
+      startBlock: 24622661
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -19,6 +17,7 @@ dataSources:
         - Order
         - Token
         - GlobalStats
+        - PairStats
       abis:
         - name: Swapboard
           file: ./abis/Swapboard.json
