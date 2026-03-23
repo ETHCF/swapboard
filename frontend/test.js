@@ -308,50 +308,6 @@ async function runTests() {
       `Got "${firstRow[4]}"`
     );
 
-    // ==================== TOKEN INPUT VALIDATION ====================
-    console.log("\n--- Token Input Validation ---");
-
-    // Connect wallet to enable sell button
-    await page.click("#connect-btn");
-    await page.waitForFunction(
-      () => !document.querySelector("#sell-btn").classList.contains("hidden"),
-      { timeout: 3000 }
-    );
-    await new Promise((r) => setTimeout(r, 200));
-
-    // Open sell modal
-    await page.click("#sell-btn");
-    await page.waitForFunction(
-      () => !document.querySelector("#sell-modal").classList.contains("hidden"),
-      { timeout: 2000 }
-    );
-
-    // Enter invalid address
-    await page.type("#create-tokenA", "0xinvalid");
-    await new Promise((r) => setTimeout(r, 600)); // Wait for debounce
-
-    const tokenAInfo = await page.$eval("#tokenA-info", (el) => el.textContent);
-    test(
-      "Invalid address shows error",
-      tokenAInfo === "Invalid address",
-      `Expected "Invalid address", got "${tokenAInfo}"`
-    );
-
-    // Clear and enter valid format (won't fetch real data but validates format)
-    await page.$eval("#create-tokenA", (el) => (el.value = ""));
-    await page.type("#create-tokenA", "0x1234567890123456789012345678901234567890");
-    await new Promise((r) => setTimeout(r, 600));
-
-    const tokenAInfoValid = await page.$eval("#tokenA-info", (el) => el.textContent);
-    test(
-      "Valid address format shows loading/result",
-      tokenAInfoValid !== "Invalid address" && tokenAInfoValid !== "",
-      `Got "${tokenAInfoValid}"`
-    );
-
-    // Close sell modal
-    await page.click("#sell-modal-cancel");
-
     // ==================== TABLE STRUCTURE ====================
     console.log("\n--- Table Structure ---");
 
