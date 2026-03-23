@@ -257,8 +257,15 @@ a {
 
 .api-note {
   text-align: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.version-note {
+  text-align: center;
   margin-bottom: 15px;
   font-size: 13px;
+  color: var(--muted);
 }
 
 .stats-row {

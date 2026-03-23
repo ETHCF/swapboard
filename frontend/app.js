@@ -3428,6 +3428,16 @@
     $("#contract-link").href =
       EXPECTED_CHAIN.blockExplorerUrls[0] + "/address/" + CONFIG.CONTRACT_ADDRESS;
 
+    // Fix build link if placeholders were not replaced by deploy.sh
+    const buildLinks = document.querySelectorAll("footer a");
+    for (const link of buildLinks) {
+      if (link.textContent.includes("__COMMIT_HASH__")) {
+        link.textContent = "[Build: dev]";
+        link.href = "https://github.com/ETHCF/swapboard";
+        link.title = "Running from source — no deploy hash available";
+      }
+    }
+
     // Load saved preferences
     loadFilterPreferences();
     loadSortPreferences();
