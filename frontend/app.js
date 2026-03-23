@@ -3402,6 +3402,57 @@
     }
   }
 
+  async function resolveBuildInfo() {
+    const REPO = "https://github.com/ETHCF/swapboard";
+    const API = "https://api.github.com/repos/ETHCF/swapboard";
+
+    const buildLink = document.querySelector('footer a[title="View commit on GitHub"]');
+    const hashEls = document.querySelectorAll(".verify-hash");
+
+    const needsCommit = buildLink && buildLink.href.includes("__COMMIT_FULL__");
+    const needsHashes = hashEls.length > 0 && hashEls[0].textContent.includes("__");
+
+    if (!needsCommit && !needsHashes) return;
+
+    if (needsCommit) {
+      try {
+        const res = await fetch(API + "/commits/main");
+        if (res.ok) {
+          const data = await res.json();
+          const full = data.sha;
+          const short = full.slice(0, 7);
+          buildLink.href = REPO + "/commit/" + full;
+          buildLink.textContent = "[Build: " + short + "]";
+        }
+      } catch (_) {}
+    }
+
+    if (needsHashes) {
+      const fileMap = {
+        __HASH_HTML__: "index.html",
+        __HASH_APPJS__: "app.js",
+        __HASH_LIBJS__: "lib.js",
+        __HASH_CSS__: "style.css",
+        __HASH_MOCK__: "mock.js",
+      };
+      for (const el of hashEls) {
+        const placeholder = el.textContent.trim();
+        const filename = fileMap[placeholder];
+        if (!filename) continue;
+        try {
+          const res = await fetch(filename);
+          if (!res.ok) continue;
+          const buf = await res.arrayBuffer();
+          const digest = await crypto.subtle.digest("SHA-256", buf);
+          const hex = Array.from(new Uint8Array(digest))
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join("");
+          el.textContent = hex.slice(0, 16) + "...";
+        } catch (_) {}
+      }
+    }
+  }
+
   function init() {
     if (typeof ethers === "undefined") {
       const script = document.createElement("script");
@@ -3428,15 +3479,8 @@
     $("#contract-link").href =
       EXPECTED_CHAIN.blockExplorerUrls[0] + "/address/" + CONFIG.CONTRACT_ADDRESS;
 
-    // Fix build link if placeholders were not replaced by deploy.sh
-    const buildLinks = document.querySelectorAll("footer a");
-    for (const link of buildLinks) {
-      if (link.textContent.includes("__COMMIT_HASH__")) {
-        link.textContent = "[Build: dev]";
-        link.href = "https://github.com/ETHCF/swapboard";
-        link.title = "Running from source — no deploy hash available";
-      }
-    }
+    // Resolve build info if deploy.sh placeholders are unreplaced
+    resolveBuildInfo();
 
     // Load saved preferences
     loadFilterPreferences();
