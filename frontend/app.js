@@ -1894,23 +1894,59 @@
   }
 
   async function loadStats() {
-    const data = await querySubgraph(`
-      query {
-        globalStats(id: "global") {
-          totalOrders
-          activeOrders
-          filledOrders
-          cancelledOrders
+    const [statsData, tokenData] = await Promise.all([
+      querySubgraph(`
+        query {
+          globalStats(id: "global") {
+            totalOrders
+            activeOrders
+            filledOrders
+            cancelledOrders
+          }
         }
-      }
-    `);
+      `),
+      querySubgraph(`
+        query {
+          tokens(first: 100) {
+            address
+            decimals
+            volumeSold
+          }
+        }
+      `),
+    ]);
 
-    if (data && data.globalStats) {
-      const s = data.globalStats;
+    if (statsData && statsData.globalStats) {
+      const s = statsData.globalStats;
       $("#stat-total").textContent = formatNumber(s.totalOrders || "0");
       $("#stat-active").textContent = formatNumber(s.activeOrders || "0");
       $("#stat-filled").textContent = formatNumber(s.filledOrders || "0");
       $("#stat-cancelled").textContent = formatNumber(s.cancelledOrders || "0");
+    }
+
+    if (tokenData && tokenData.tokens && tokenData.tokens.length > 0) {
+      const addresses = tokenData.tokens
+        .map((t) => t.address.toLowerCase())
+        .filter((addr) => COINGECKO_ID_MAP[addr]);
+      const coinGeckoIds = addresses.map((addr) => COINGECKO_ID_MAP[addr]);
+      if (coinGeckoIds.length > 0) {
+        await fetchPrices(coinGeckoIds);
+      }
+
+      let totalUsd = 0;
+      let hasPrice = false;
+      for (const token of tokenData.tokens) {
+        const price = getTokenPrice(token.address);
+        if (price === null) continue;
+        hasPrice = true;
+        const volume = Number(BigInt(token.volumeSold)) / Math.pow(10, token.decimals);
+        totalUsd += volume * price;
+      }
+
+      $("#stat-volume").textContent = hasPrice
+        ? "$" + formatNumber(Math.round(totalUsd))
+        : "N/A";
+    } else {
       $("#stat-volume").textContent = "N/A";
     }
   }
