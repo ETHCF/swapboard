@@ -36,7 +36,7 @@
     SUBGRAPH_URL:
       "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn",
     // Number of orders per page
-    PAGE_SIZE: 20,
+    PAGE_SIZE: 200,
     // Request timeout in milliseconds
     REQUEST_TIMEOUT: 30000,
     // Debounce delay for token info fetch

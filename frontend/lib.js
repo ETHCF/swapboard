@@ -14,7 +14,7 @@ const CONFIG = {
   CONTRACT_ADDRESS: "0x000000fF3D7A2d373615141d7489Ca66683DbecF",
   SUBGRAPH_URL:
     "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn",
-  PAGE_SIZE: 20,
+  PAGE_SIZE: 200,
   REQUEST_TIMEOUT: 30000,
   DEBOUNCE_DELAY: 500,
   SHOW_MARKET_DEVIATION: false,
