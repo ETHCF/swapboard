@@ -206,6 +206,36 @@
   const AUTO_REFRESH_MS = 30000;
 
   // ============================================================================
+  // EIP-6963 Multi-Wallet Discovery
+  // ============================================================================
+
+  /**
+   * Discovered EIP-6963 wallet providers.
+   * @type {Map<string, {info: Object, provider: Object}>}
+   */
+  const discoveredProviders = new Map();
+
+  /**
+   * The currently selected EIP-1193 provider (from wallet selection).
+   * @type {Object|null}
+   */
+  let selectedProvider = null;
+
+  /**
+   * Sets up EIP-6963 provider discovery.
+   * Listens for wallet announcements and requests providers to announce themselves.
+   */
+  function setupEIP6963Discovery() {
+    window.addEventListener("eip6963:announceProvider", (event) => {
+      const { info, provider } = event.detail;
+      if (info?.uuid && provider) {
+        discoveredProviders.set(info.uuid, { info, provider });
+      }
+    });
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+  }
+
+  // ============================================================================
   // Price Service (CoinGecko)
   // ============================================================================
 
@@ -2937,16 +2967,70 @@
   }
 
   /**
-   * Connects to the user's Ethereum wallet via window.ethereum (MetaMask, etc).
-   * Sets up the ethers provider, signer, and contract instance.
+   * Initiates wallet connection flow.
+   * Shows wallet selection modal if multiple wallets available.
    */
   async function connectWallet() {
-    if (typeof window.ethereum === "undefined") {
-      showToast("No wallet found. Install MetaMask.", "error");
+    showWalletModal();
+  }
+
+  /**
+   * Shows the wallet selection modal with all discovered wallets.
+   * If only one wallet is found, connects directly without showing modal.
+   */
+  function showWalletModal() {
+    const walletList = $("#wallet-list");
+    walletList.innerHTML = "";
+
+    const providers = Array.from(discoveredProviders.values());
+
+    // No EIP-6963 wallets found - check for legacy window.ethereum
+    if (providers.length === 0) {
+      if (typeof window.ethereum !== "undefined") {
+        // Single legacy wallet - connect directly
+        connectWithProvider(window.ethereum, "Browser Wallet");
+        return;
+      }
+      // No wallets at all
+      showToast("No wallet found. Install MetaMask or another wallet.", "error");
       return;
     }
+
+    // If only one EIP-6963 wallet, connect directly
+    if (providers.length === 1) {
+      const { info, provider: walletProvider } = providers[0];
+      connectWithProvider(walletProvider, info.name);
+      return;
+    }
+
+    // Multiple wallets - show selection modal
+    providers.forEach(({ info, provider: walletProvider }) => {
+      const btn = document.createElement("a");
+      btn.href = "#";
+      btn.className = "wallet-option";
+      btn.textContent = `[${info.name}]`;
+
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        $("#wallet-modal").classList.add("hidden");
+        connectWithProvider(walletProvider, info.name);
+      });
+
+      walletList.appendChild(btn);
+    });
+
+    $("#wallet-modal").classList.remove("hidden");
+  }
+
+  /**
+   * Connects to wallet using a specific EIP-1193 provider.
+   * @param {Object} walletProvider - The EIP-1193 provider object
+   * @param {string} walletName - Display name of the wallet (for toasts)
+   */
+  async function connectWithProvider(walletProvider, walletName) {
     try {
-      provider = new ethers.BrowserProvider(window.ethereum);
+      selectedProvider = walletProvider;
+      provider = new ethers.BrowserProvider(walletProvider);
       await provider.send("eth_requestAccounts", []);
       signer = await provider.getSigner();
       userAddress = await signer.getAddress();
@@ -2997,7 +3081,10 @@
         loadStats();
       });
 
-      showToast("Wallet connected", "success");
+      // Set up provider event listeners for the selected wallet
+      setupProviderListeners(walletProvider);
+
+      showToast(`Connected to ${walletName}`, "success");
       loadOrders();
     } catch (e) {
       console.error("Connect error:", e);
@@ -3021,10 +3108,36 @@
     }
   }
 
+  /**
+   * Sets up event listeners for the selected wallet provider.
+   * @param {Object} walletProvider - The EIP-1193 provider object
+   */
+  function setupProviderListeners(walletProvider) {
+    walletProvider.on("accountsChanged", (accounts) => {
+      if (accounts.length === 0) {
+        disconnectWallet();
+        $("#sell-modal").classList.add("hidden");
+      } else {
+        connectWithProvider(walletProvider, "Wallet");
+      }
+    });
+
+    walletProvider.on("chainChanged", (chainIdHex) => {
+      const chainId = parseInt(chainIdHex, 16);
+      if (chainId !== EXPECTED_CHAIN_ID) {
+        showToast("Please switch to Ethereum mainnet", "error");
+        disconnectWallet();
+      } else {
+        window.location.reload();
+      }
+    });
+  }
+
   function disconnectWallet() {
     userAddress = null;
     signer = null;
     contract = null;
+    selectedProvider = null;
     $("#connect-btn").textContent = "[Connect Wallet]";
     $("#sell-btn").classList.add("hidden");
     $("#network-indicator").classList.add("hidden");
@@ -3227,23 +3340,14 @@
   }
 
   async function switchWallet() {
-    try {
-      // Revoke permissions to force account picker on reconnect
-      await window.ethereum.request({
-        method: "wallet_revokePermissions",
-        params: [{ eth_accounts: {} }],
-      });
-    } catch (err) {
-      // wallet_revokePermissions may not be supported in all wallets
-    }
-
     // Clear local state
     userAddress = null;
     signer = null;
     contract = null;
+    selectedProvider = null;
 
-    // Immediately reconnect - should show account picker
-    await connectWallet();
+    // Show wallet selection modal
+    showWalletModal();
   }
 
   function setupTokenInfoFetch(inputId, infoId, balanceId, quickAmountsId) {
@@ -3506,6 +3610,9 @@
   }
 
   function initApp() {
+    // Initialize wallet discovery immediately (EIP-6963)
+    setupEIP6963Discovery();
+
     validateConfig();
 
     // Initialize dark mode from localStorage or system preference
@@ -3582,6 +3689,7 @@
           $("#modal").classList.add("hidden");
           $("#sell-modal").classList.add("hidden");
           $("#order-modal").classList.add("hidden");
+          $("#wallet-modal").classList.add("hidden");
           // Clear hash when closing via escape
           if (window.location.hash) {
             history.pushState(
@@ -3733,6 +3841,17 @@
     $("#revoke-modal").addEventListener("click", (e) => {
       if (e.target === $("#revoke-modal")) {
         $("#revoke-modal").classList.add("hidden");
+      }
+    });
+
+    $("#wallet-modal-cancel").addEventListener("click", (e) => {
+      e.preventDefault();
+      $("#wallet-modal").classList.add("hidden");
+    });
+
+    $("#wallet-modal").addEventListener("click", (e) => {
+      if (e.target === $("#wallet-modal")) {
+        $("#wallet-modal").classList.add("hidden");
       }
     });
 
@@ -4028,25 +4147,6 @@
           }
         })
         .catch(() => {});
-
-      window.ethereum.on("accountsChanged", (accounts) => {
-        if (accounts.length === 0) {
-          disconnectWallet();
-          $("#sell-modal").classList.add("hidden");
-        } else {
-          connectWallet();
-        }
-      });
-
-      window.ethereum.on("chainChanged", (chainIdHex) => {
-        const chainId = parseInt(chainIdHex, 16);
-        if (chainId !== EXPECTED_CHAIN_ID) {
-          showToast("Please switch to Ethereum mainnet", "error");
-          disconnectWallet();
-        } else {
-          window.location.reload();
-        }
-      });
     }
 
     loadStats();

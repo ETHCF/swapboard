@@ -995,6 +995,38 @@ footer a:hover {
   font-size: 11px;
 }
 
+/* Wallet Selection Modal */
+.wallet-modal-content {
+  max-width: 320px;
+}
+
+.wallet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 15px 0;
+}
+
+.wallet-option {
+  display: block;
+  color: var(--fg);
+  text-decoration: none;
+  padding: 4px 0;
+}
+
+.wallet-option:hover {
+  text-decoration: underline;
+}
+
+.wallet-modal-content .modal-actions a {
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.wallet-modal-content .modal-actions a:hover {
+  text-decoration: underline;
+}
+
 /* Loading Skeleton */
 .skeleton {
   background: linear-gradient(
