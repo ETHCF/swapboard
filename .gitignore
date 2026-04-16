@@ -60,6 +60,7 @@ image.png
 
 # Claude settings
 .claude/
+.claude-skills/
 spec.md
 CLAUDE.md
 

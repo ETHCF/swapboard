@@ -87,7 +87,8 @@ contract SwapboardHandler is Test {
 
         calls_createOrder++;
 
-        uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        uint256 orderId =
+            board.createOrder(address(tokenA), amountA, address(tokenB), amountB, false);
 
         ghost_totalTokenADeposited += amountA;
         ghost_ordersCreated++;
@@ -120,7 +121,7 @@ contract SwapboardHandler is Test {
 
         calls_fillOrder++;
 
-        board.fillOrder(orderId, 0);
+        board.fillOrder(orderId, 0, 0);
 
         ghost_totalTokenAWithdrawn += order.amountA;
         ghost_ordersFilled++;

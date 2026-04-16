@@ -142,7 +142,7 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 balanceBefore = tokenA.balanceOf(maker);
 
         vm.prank(maker);
-        board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        board.createOrder(address(tokenA), amountA, address(tokenB), amountB, false);
 
         uint256 balanceAfter = tokenA.balanceOf(maker);
         assertEq(balanceBefore - balanceAfter, amountA, "Maker balance decrease incorrect");
@@ -159,7 +159,7 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 balanceBefore = tokenA.balanceOf(address(board));
 
         vm.prank(maker);
-        board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        board.createOrder(address(tokenA), amountA, address(tokenB), amountB, false);
 
         uint256 balanceAfter = tokenA.balanceOf(address(board));
         assertEq(balanceAfter - balanceBefore, amountA, "Contract balance increase incorrect");
@@ -174,12 +174,13 @@ contract SwapboardStatelessInvariantTest is Test {
         amountB = bound(amountB, 1, 1e30);
 
         vm.prank(maker);
-        uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        uint256 orderId =
+            board.createOrder(address(tokenA), amountA, address(tokenB), amountB, false);
 
         uint256 takerBalanceBefore = tokenA.balanceOf(taker);
 
         vm.prank(taker);
-        board.fillOrder(orderId, 0);
+        board.fillOrder(orderId, 0, 0);
 
         uint256 takerBalanceAfter = tokenA.balanceOf(taker);
         assertEq(
@@ -196,12 +197,13 @@ contract SwapboardStatelessInvariantTest is Test {
         amountB = bound(amountB, 1, 1e30);
 
         vm.prank(maker);
-        uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        uint256 orderId =
+            board.createOrder(address(tokenA), amountA, address(tokenB), amountB, false);
 
         uint256 makerBalanceBefore = tokenB.balanceOf(maker);
 
         vm.prank(taker);
-        board.fillOrder(orderId, 0);
+        board.fillOrder(orderId, 0, 0);
 
         uint256 makerBalanceAfter = tokenB.balanceOf(maker);
         assertEq(
@@ -220,7 +222,8 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 balanceInitial = tokenA.balanceOf(maker);
 
         vm.prank(maker);
-        uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        uint256 orderId =
+            board.createOrder(address(tokenA), amountA, address(tokenB), amountB, false);
 
         vm.prank(maker);
         board.cancelOrder(orderId);
@@ -238,12 +241,13 @@ contract SwapboardStatelessInvariantTest is Test {
         amountB = bound(amountB, 1, 1e30);
 
         vm.prank(maker);
-        uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        uint256 orderId =
+            board.createOrder(address(tokenA), amountA, address(tokenB), amountB, false);
 
         assertTrue(board.canFill(orderId), "Order should be fillable");
 
         vm.prank(taker);
-        board.fillOrder(orderId, 0);
+        board.fillOrder(orderId, 0, 0);
 
         assertFalse(board.canFill(orderId), "Order should not be fillable after fill");
 
@@ -261,7 +265,7 @@ contract SwapboardStatelessInvariantTest is Test {
 
         for (uint256 i = 0; i < n; i++) {
             vm.prank(maker);
-            board.createOrder(address(tokenA), 1 ether, address(tokenB), 1 ether);
+            board.createOrder(address(tokenA), 1 ether, address(tokenB), 1 ether, false);
 
             uint256 currentId = board.nextOrderId();
             assertGt(currentId, prevId, "nextOrderId did not increase");
