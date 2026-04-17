@@ -259,6 +259,31 @@
     "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce": "shiba-inu",
   };
 
+  const STABLE_ADDRESSES = new Set([
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // USDC
+    "0xdac17f958d2ee523a2206206994597c13d831ec7", // USDT
+    "0x6b175474e89094c44da98b954eedeac495271d0f", // DAI
+  ]);
+
+  function isStable(addr) {
+    return !!addr && STABLE_ADDRESSES.has(addr.toLowerCase());
+  }
+
+  // Picks which token should be the quote (numerator) in the Price column.
+  // Returns "A", "B", or null to fall back to the existing tokenB/tokenA default.
+  function preferredQuoteSide(tokenAAddr, tokenBAddr) {
+    const aStable = isStable(tokenAAddr);
+    const bStable = isStable(tokenBAddr);
+    if (aStable && !bStable) return "A";
+    if (bStable && !aStable) return "B";
+    if (aStable && bStable) return null;
+    const aEth = isWeth(tokenAAddr);
+    const bEth = isWeth(tokenBAddr);
+    if (aEth && !bEth) return "A";
+    if (bEth && !aEth) return "B";
+    return null;
+  }
+
   /**
    * Price cache with TTL tracking.
    * @type {Map<string, {usd: number, fetchedAt: number}>}
@@ -2223,26 +2248,38 @@
       const amountA = BigInt(order.amountA);
       const amountB = BigInt(order.amountB);
 
-      // Price: calculate both directions for toggle
+      // Price: calculate both directions for toggle.
+      // priceNormal is the side shown by default; priceInverted is shown after click.
+      // Default to tokenB/tokenA, but flip when one side is a stable or ETH so the
+      // quote currency follows trading conventions ($ for stables, ETH for non-stable
+      // ERC20s paired with ETH).
       let priceNormal = "N/A";
       let priceInverted = "N/A";
       if (amountA > 0n && amountB > 0n) {
-        const priceNum =
+        const priceBPerA =
           (Number(amountB) / Number(amountA)) * Math.pow(10, tokenADecimals - tokenBDecimals);
-        const priceNumInv =
+        const priceAPerB =
           (Number(amountA) / Number(amountB)) * Math.pow(10, tokenBDecimals - tokenADecimals);
-        priceNormal =
-          formatRatio(priceNum) +
+        const bQuoted =
+          formatRatio(priceBPerA) +
           " " +
           escapeHtml(order.tokenB.symbol) +
           "/" +
           escapeHtml(order.tokenA.symbol);
-        priceInverted =
-          formatRatio(priceNumInv) +
+        const aQuoted =
+          formatRatio(priceAPerB) +
           " " +
           escapeHtml(order.tokenA.symbol) +
           "/" +
           escapeHtml(order.tokenB.symbol);
+        const quoteSide = preferredQuoteSide(order.tokenA.address, order.tokenB.address);
+        if (quoteSide === "A") {
+          priceNormal = aQuoted;
+          priceInverted = bQuoted;
+        } else {
+          priceNormal = bQuoted;
+          priceInverted = aQuoted;
+        }
       }
 
       // Calculate USD value of sell side
