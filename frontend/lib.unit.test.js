@@ -304,55 +304,55 @@ describe("getOrderShareUrl", () => {
 // ============================================================================
 
 describe("formatUsd", () => {
-  // MUTATION: Return "$ 0" for null
-  // BREAKS: Returns "$ 0" instead of "$ --"
-  test("returns $ -- for null", () => {
-    expect(formatUsd(null)).toBe("$ --");
+  // MUTATION: Return "$0" for null
+  // BREAKS: Returns "$0" instead of "$--"
+  test("returns $-- for null", () => {
+    expect(formatUsd(null)).toBe("$--");
   });
 
-  // MUTATION: Return "$ NaN" for undefined (no check)
-  // BREAKS: Returns "$ NaN"
-  test("returns $ -- for undefined", () => {
-    expect(formatUsd(undefined)).toBe("$ --");
+  // MUTATION: Return "$NaN" for undefined (no check)
+  // BREAKS: Returns "$NaN"
+  test("returns $-- for undefined", () => {
+    expect(formatUsd(undefined)).toBe("$--");
   });
 
   // MUTATION: Change threshold from 1000000 to 1000
-  // BREAKS: 1500 would show as "$ 1.50M"
+  // BREAKS: 1500 would show as "$1.50M"
   test("formats values >= 1M with M suffix", () => {
-    expect(formatUsd(1000000)).toBe("$ 1.00M");
-    expect(formatUsd(2500000)).toBe("$ 2.50M");
-    expect(formatUsd(999999)).toBe("$ 999,999"); // Just under 1M
+    expect(formatUsd(1000000)).toBe("$1.00M");
+    expect(formatUsd(2500000)).toBe("$2.50M");
+    expect(formatUsd(999999)).toBe("$999,999"); // Just under 1M
   });
 
   // MUTATION: Remove comma insertion regex
-  // BREAKS: Returns "$ 1500" instead of "$ 1,500"
+  // BREAKS: Returns "$1500" instead of "$1,500"
   test("formats values >= 1000 with comma separators", () => {
-    expect(formatUsd(1000)).toBe("$ 1,000");
-    expect(formatUsd(1500)).toBe("$ 1,500");
-    expect(formatUsd(999999)).toBe("$ 999,999");
+    expect(formatUsd(1000)).toBe("$1,000");
+    expect(formatUsd(1500)).toBe("$1,500");
+    expect(formatUsd(999999)).toBe("$999,999");
   });
 
   // MUTATION: Use toFixed(0) instead of toFixed(2)
-  // BREAKS: Returns "$ 6" instead of "$ 5.50"
+  // BREAKS: Returns "$6" instead of "$5.50"
   test("formats values >= 1 with 2 decimal places", () => {
-    expect(formatUsd(5.5)).toBe("$ 5.50");
-    expect(formatUsd(1.0)).toBe("$ 1.00");
-    expect(formatUsd(999.99)).toBe("$ 999.99");
+    expect(formatUsd(5.5)).toBe("$5.50");
+    expect(formatUsd(1.0)).toBe("$1.00");
+    expect(formatUsd(999.99)).toBe("$999.99");
   });
 
   // MUTATION: Change threshold from 0.01 to 0.001
   // BREAKS: 0.05 would show as exponential
   test("formats values >= 0.01 with 4 decimal places", () => {
-    expect(formatUsd(0.01)).toBe("$ 0.0100");
-    expect(formatUsd(0.05)).toBe("$ 0.0500");
-    expect(formatUsd(0.0123)).toBe("$ 0.0123");
+    expect(formatUsd(0.01)).toBe("$0.0100");
+    expect(formatUsd(0.05)).toBe("$0.0500");
+    expect(formatUsd(0.0123)).toBe("$0.0123");
   });
 
   // MUTATION: Use toFixed(4) instead of toExponential(2)
-  // BREAKS: Returns "$ 0.0000" instead of "$ 1.00e-6"
+  // BREAKS: Returns "$0.0000" instead of "$1.00e-6"
   test("formats values < 0.01 in scientific notation", () => {
-    expect(formatUsd(0.001)).toBe("$ 1.00e-3");
-    expect(formatUsd(0.000001)).toBe("$ 1.00e-6");
+    expect(formatUsd(0.001)).toBe("$1.00e-3");
+    expect(formatUsd(0.000001)).toBe("$1.00e-6");
   });
 });
 

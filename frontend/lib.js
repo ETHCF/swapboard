@@ -122,20 +122,20 @@ function getOrderShareUrl(orderId, baseUrl) {
  * @returns {string}
  */
 function formatUsd(usdValue) {
-  if (usdValue === null || usdValue === undefined) return "$ --";
+  if (usdValue === null || usdValue === undefined) return "$--";
   if (usdValue >= 1000000) {
-    return "$ " + (usdValue / 1000000).toFixed(2) + "M";
+    return "$" + (usdValue / 1000000).toFixed(2) + "M";
   }
   if (usdValue >= 1000) {
-    return "$ " + usdValue.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return "$" + usdValue.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
   if (usdValue >= 1) {
-    return "$ " + usdValue.toFixed(2);
+    return "$" + usdValue.toFixed(2);
   }
   if (usdValue >= 0.01) {
-    return "$ " + usdValue.toFixed(4);
+    return "$" + usdValue.toFixed(4);
   }
-  return "$ " + usdValue.toExponential(2);
+  return "$" + usdValue.toExponential(2);
 }
 
 /**

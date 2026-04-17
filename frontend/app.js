@@ -592,7 +592,7 @@
       return {
         gas: gasEstimate.toString(),
         eth: gasCostEth < 0.0001 ? gasCostEth.toExponential(2) : gasCostEth.toFixed(6),
-        usd: gasCostUsd ? formatUsd(gasCostUsd) : "$ --",
+        usd: gasCostUsd ? formatUsd(gasCostUsd) : "$--",
       };
     } catch (e) {
       console.error("Gas estimation error:", e);
