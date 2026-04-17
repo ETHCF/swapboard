@@ -544,7 +544,8 @@ tbody tr.highlighted-order:hover {
   font-size: 10px;
   color: var(--muted);
   display: block;
-  margin-top: 2px;
+  line-height: 1;
+  margin-top: 0;
 }
 
 /* Modal */

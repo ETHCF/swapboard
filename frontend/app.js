@@ -2143,6 +2143,7 @@
           active
           taker
           createdAt
+          filledAt
           tokenA {
             address
             symbol
@@ -2335,6 +2336,13 @@
           statusSpan.classList.add("status-canceled-label");
         }
         tdAction.appendChild(statusSpan);
+        if (order.taker && order.filledAt) {
+          const filledDateSpan = document.createElement("span");
+          filledDateSpan.className = "order-age";
+          filledDateSpan.textContent = formatTimeAgo(parseInt(order.filledAt));
+          filledDateSpan.title = new Date(parseInt(order.filledAt) * 1000).toLocaleString();
+          tdAction.appendChild(filledDateSpan);
+        }
       }
       tr.appendChild(tdAction);
 
