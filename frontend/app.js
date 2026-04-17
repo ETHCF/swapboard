@@ -2260,18 +2260,20 @@
           (Number(amountB) / Number(amountA)) * Math.pow(10, tokenADecimals - tokenBDecimals);
         const priceAPerB =
           (Number(amountA) / Number(amountB)) * Math.pow(10, tokenBDecimals - tokenADecimals);
-        const bQuoted =
-          formatRatio(priceBPerA) +
-          " " +
-          escapeHtml(order.tokenB.symbol) +
-          "/" +
-          escapeHtml(order.tokenA.symbol);
-        const aQuoted =
-          formatRatio(priceAPerB) +
-          " " +
-          escapeHtml(order.tokenA.symbol) +
-          "/" +
-          escapeHtml(order.tokenB.symbol);
+        const bQuoted = isStable(order.tokenB.address)
+          ? formatUsd(priceBPerA) + " / " + escapeHtml(order.tokenA.symbol)
+          : formatRatio(priceBPerA) +
+            " " +
+            escapeHtml(order.tokenB.symbol) +
+            "/" +
+            escapeHtml(order.tokenA.symbol);
+        const aQuoted = isStable(order.tokenA.address)
+          ? formatUsd(priceAPerB) + " / " + escapeHtml(order.tokenB.symbol)
+          : formatRatio(priceAPerB) +
+            " " +
+            escapeHtml(order.tokenA.symbol) +
+            "/" +
+            escapeHtml(order.tokenB.symbol);
         const quoteSide = preferredQuoteSide(order.tokenA.address, order.tokenB.address);
         if (quoteSide === "A") {
           priceNormal = aQuoted;

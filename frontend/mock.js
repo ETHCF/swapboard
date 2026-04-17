@@ -94,7 +94,7 @@
       'MOCK MODE ACTIVE - Data is simulated <button id="mock-disable" style="background:#fff;color:#ff6600;border:none;padding:4px 10px;cursor:pointer;font-weight:bold;font-family:inherit;">Disable</button>';
     document.body.prepend(banner);
     document.getElementById("mock-disable").addEventListener("click", function () {
-      localStorage.removeItem("swapboard_mock");
+      localStorage.setItem(STORAGE_KEY, "false");
       window.location.reload();
     });
   });
