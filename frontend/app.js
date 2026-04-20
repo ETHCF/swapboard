@@ -1412,16 +1412,34 @@
           const amtB1 = BigInt(a.amountB);
           const amtA2 = BigInt(b.amountA);
           const amtB2 = BigInt(b.amountB);
-          valA =
-            amtA1 > 0n
-              ? (Number(amtB1) / Number(amtA1)) *
-                Math.pow(10, a.tokenA.decimals - a.tokenB.decimals)
-              : 0;
-          valB =
-            amtA2 > 0n
-              ? (Number(amtB2) / Number(amtA2)) *
-                Math.pow(10, b.tokenA.decimals - b.tokenB.decimals)
-              : 0;
+          const qsA = preferredQuoteSide(a.tokenA.address, a.tokenB.address);
+          if (qsA === "A") {
+            valA =
+              amtB1 > 0n
+                ? (Number(amtA1) / Number(amtB1)) *
+                  Math.pow(10, a.tokenB.decimals - a.tokenA.decimals)
+                : 0;
+          } else {
+            valA =
+              amtA1 > 0n
+                ? (Number(amtB1) / Number(amtA1)) *
+                  Math.pow(10, a.tokenA.decimals - a.tokenB.decimals)
+                : 0;
+          }
+          const qsB = preferredQuoteSide(b.tokenA.address, b.tokenB.address);
+          if (qsB === "A") {
+            valB =
+              amtB2 > 0n
+                ? (Number(amtA2) / Number(amtB2)) *
+                  Math.pow(10, b.tokenB.decimals - b.tokenA.decimals)
+                : 0;
+          } else {
+            valB =
+              amtA2 > 0n
+                ? (Number(amtB2) / Number(amtA2)) *
+                  Math.pow(10, b.tokenA.decimals - b.tokenB.decimals)
+                : 0;
+          }
           break;
         default:
           return 0;
