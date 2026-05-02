@@ -1861,11 +1861,28 @@
   // Token Information
   // ============================================================================
 
+  async function retryRpc(fn, attempts = 3, baseDelayMs = 200) {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fn();
+      } catch (e) {
+        lastErr = e;
+        if (i < attempts - 1) {
+          await new Promise((r) => setTimeout(r, baseDelayMs * (i + 1)));
+        }
+      }
+    }
+    throw lastErr;
+  }
+
   /**
    * Fetches ERC20 token metadata from the blockchain.
-   * Results are cached to avoid redundant RPC calls.
+   * Successful results are cached to avoid redundant RPC calls.
+   * Returns `decimals: null` when the on-chain value cannot be determined;
+   * callers must treat that as a hard failure rather than substituting a default.
    * @param {string} address - Token contract address
-   * @returns {Promise<{address: string, symbol: string, name: string, decimals: number}>}
+   * @returns {Promise<{address: string, symbol: string, name: string, decimals: number|null}>}
    */
   async function fetchTokenInfo(address) {
     const lowerAddr = address.toLowerCase();
@@ -1875,20 +1892,24 @@
     try {
       const tokenContract = new ethers.Contract(address, ERC20_ABI, provider);
       const [symbol, name, decimals] = await Promise.all([
-        tokenContract.symbol().catch(() => "???"),
-        tokenContract.name().catch(() => "Unknown"),
-        tokenContract.decimals().catch(() => 18),
+        retryRpc(() => tokenContract.symbol()).catch(() => "???"),
+        retryRpc(() => tokenContract.name()).catch(() => "Unknown"),
+        retryRpc(() => tokenContract.decimals()),
       ]);
       const safeSymbol = String(symbol).slice(0, 20);
       const safeName = String(name).slice(0, 100);
-      const safeDecimals = Math.min(Math.max(Number(decimals) || 18, 0), 77);
+      const decimalsNum = Number(decimals);
+      const safeDecimals =
+        Number.isInteger(decimalsNum) && decimalsNum >= 0 && decimalsNum <= 77
+          ? decimalsNum
+          : null;
       const info = { address, symbol: safeSymbol, name: safeName, decimals: safeDecimals };
-      tokenCache.set(lowerAddr, info);
+      if (safeDecimals !== null) {
+        tokenCache.set(lowerAddr, info);
+      }
       return info;
     } catch (e) {
-      const info = { address, symbol: "???", name: "Unknown", decimals: 18 };
-      tokenCache.set(lowerAddr, info);
-      return info;
+      return { address, symbol: "???", name: "Unknown", decimals: null };
     }
   }
 
@@ -2847,6 +2868,21 @@
       if (useEth) tokenA.symbol = "ETH";
       const tokenB = await fetchTokenInfo(tokenBAddr);
 
+      if (tokenA.decimals == null) {
+        showToast(
+          `Could not read decimals for ${tokenAAddr}. Please check that the token address is correct`,
+          "error",
+        );
+        return;
+      }
+      if (tokenB.decimals == null) {
+        showToast(
+          `Could not read decimals for ${tokenBAddr}. Please check that the token address is correct`,
+          "error",
+        );
+        return;
+      }
+
       let amountA, amountB;
       try {
         amountA = parseAmount(amountAStr, tokenA.decimals);
@@ -3438,6 +3474,20 @@
         if (quickAmountsId) $(quickAmountsId).textContent = "";
 
         const info = await fetchTokenInfo(addr);
+        if (info.decimals == null) {
+          const infoEl = $(infoId);
+          infoEl.textContent = "";
+          const warnSpan = document.createElement("span");
+          warnSpan.className = "token-warning";
+          warnSpan.textContent = "Could not read token decimals — cannot use this token";
+          infoEl.appendChild(warnSpan);
+
+          const stateKey = inputId === "#create-tokenA" ? "tokenA" : "tokenB";
+          createFormState[stateKey].info = null;
+          createFormState[stateKey].balance = null;
+          currentTokenInfo = null;
+          return;
+        }
         const addrIsWeth = isWeth(addr);
         if (addrIsWeth) {
           info.symbol = "ETH";
