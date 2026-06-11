@@ -1,6 +1,6 @@
 {
   "framework": null,
-  "buildCommand": "mkdir -p dist && for f in index.html app.js lib.js style.css mock.js API.html manifest.json sw.js; do cp \"$f\" \"dist/$f\"; done",
+  "buildCommand": "mkdir -p dist && for f in index.html app.js lib.js style.css mock.js API.html manifest.json sw.js og-image.jpg; do cp \"$f\" \"dist/$f\"; done",
   "outputDirectory": "dist",
   "installCommand": "",
   "headers": [
