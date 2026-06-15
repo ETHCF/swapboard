@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity ^0.8.33;
+pragma solidity ^0.8.34;
 
 /// @title ISwapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
@@ -9,14 +9,16 @@ pragma solidity ^0.8.33;
 interface ISwapboard {
     /// @notice Represents a single OTC order
     /// @param maker Address that created the order and deposited tokenA
-    /// @param tokenA Address of the token being sold (held in escrow)
-    /// @param amountA Amount of tokenA deposited by maker (in base units)
-    /// @param tokenB Address of the token maker wants to receive
-    /// @param amountB Amount of tokenB required to fill the order (in base units)
     /// @param active Whether the order can still be filled or cancelled
+    /// @param partialFill Whether the order allows partial fills
+    /// @param tokenA Address of the token being sold (held in escrow)
+    /// @param amountA Amount of tokenA remaining in the order (in base units)
+    /// @param tokenB Address of the token maker wants to receive
+    /// @param amountB Amount of tokenB still required to fill the order (in base units)
     struct Order {
         address maker;
         bool active;
+        bool partialFill;
         address tokenA;
         uint256 amountA;
         address tokenB;
@@ -30,8 +32,29 @@ interface ISwapboard {
     /// @param amountA Amount of tokenA deposited
     /// @param tokenB Address of the token wanted
     /// @param amountB Amount of tokenB required to fill
+    /// @param partialFill Whether the order allows partial fills
     event OrderCreated(
         uint256 indexed orderId,
+        address indexed maker,
+        address tokenA,
+        uint256 amountA,
+        address tokenB,
+        uint256 amountB,
+        bool partialFill
+    );
+
+    /// @notice Emitted when an order is fully filled by a taker
+    /// @dev May follow one or more OrderPartiallyFilled events for the same orderId
+    /// @param orderId Unique identifier for the filled order
+    /// @param taker Address that filled the order
+    /// @param maker Address that created the order
+    /// @param tokenA Address of the token transferred to the taker
+    /// @param amountA Amount of tokenA transferred to the taker
+    /// @param tokenB Address of the token transferred to the maker
+    /// @param amountB Amount of tokenB transferred to the maker
+    event OrderFilled(
+        uint256 indexed orderId,
+        address indexed taker,
         address indexed maker,
         address tokenA,
         uint256 amountA,
@@ -39,14 +62,36 @@ interface ISwapboard {
         uint256 amountB
     );
 
-    /// @notice Emitted when an order is filled by a taker
-    /// @param orderId Unique identifier for the filled order
-    /// @param taker Address that filled the order
-    event OrderFilled(uint256 indexed orderId, address indexed taker);
+    /// @notice Emitted when an order is partially filled by a taker
+    /// @param orderId Unique identifier for the partially filled order
+    /// @param taker Address that partially filled the order
+    /// @param maker Address that created the order
+    /// @param tokenA Address of the token transferred to the taker
+    /// @param amountAFilled Amount of tokenA transferred to the taker
+    /// @param tokenB Address of the token transferred to the maker
+    /// @param amountBFilled Amount of tokenB transferred to the maker
+    /// @param amountARemaining Amount of tokenA still in escrow
+    /// @param amountBRemaining Amount of tokenB still required
+    event OrderPartiallyFilled(
+        uint256 indexed orderId,
+        address indexed taker,
+        address indexed maker,
+        address tokenA,
+        uint256 amountAFilled,
+        address tokenB,
+        uint256 amountBFilled,
+        uint256 amountARemaining,
+        uint256 amountBRemaining
+    );
 
     /// @notice Emitted when an order is cancelled by its maker
     /// @param orderId Unique identifier for the cancelled order
-    event OrderCanceled(uint256 indexed orderId);
+    /// @param maker Address that created and cancelled the order
+    /// @param tokenA Address of the token returned to the maker
+    /// @param amountA Amount of tokenA returned to the maker (remaining after prior fills)
+    event OrderCanceled(
+        uint256 indexed orderId, address indexed maker, address tokenA, uint256 amountA
+    );
 
     /// @notice Thrown when a zero address is provided for a token
     error ZeroAddress();
@@ -86,8 +131,8 @@ interface ISwapboard {
     /// @param actual The actual token address
     error NotWETH(address expected, address actual);
 
-    /// @notice Thrown when msg.value does not match the required ETH amount
-    /// @param required The required ETH amount
+    /// @notice Thrown when msg.value exceeds the remaining order amount
+    /// @param required The maximum acceptable ETH amount
     /// @param sent The actual msg.value
     error ETHAmountMismatch(uint256 required, uint256 sent);
 
@@ -101,34 +146,119 @@ interface ISwapboard {
     /// @notice Thrown when a fill is attempted after the specified deadline
     error DeadlineExpired();
 
+    /// @notice Thrown when a partial fill is attempted on a non-partial order
+    /// @param orderId The order ID that does not allow partial fills
+    error PartialFillNotAllowed(uint256 orderId);
+
+    /// @notice Thrown when the computed fillAmountA rounds to zero
+    /// @dev Means the fill is too small to transfer any tokenA
+    error ZeroFillAmount();
+
+    /// @notice Thrown when array arguments have mismatched lengths
+    error LengthMismatch();
+
+    /// @notice Parameters for creating an order in a batch
+    /// @param tokenA Address of the ERC20 token to sell
+    /// @param amountA Amount of tokenA to deposit (in base units)
+    /// @param tokenB Address of the ERC20 token wanted in exchange
+    /// @param amountB Amount of tokenB required to fill the order (in base units)
+    /// @param partialFill Whether the order allows partial fills
+    struct CreateOrderParams {
+        address tokenA;
+        uint256 amountA;
+        address tokenB;
+        uint256 amountB;
+        bool partialFill;
+    }
+
     /// @notice Creates a new OTC order by depositing tokenA
     /// @dev Transfers tokenA from caller to contract. Reverts if token is fee-on-transfer.
     /// @param tokenA Address of the ERC20 token to sell
     /// @param amountA Amount of tokenA to deposit (in base units)
     /// @param tokenB Address of the ERC20 token wanted in exchange
     /// @param amountB Amount of tokenB required to fill the order (in base units)
+    /// @param partialFill Whether the order allows partial fills
     /// @return orderId The unique identifier for the created order
     function createOrder(
         address tokenA,
         uint256 amountA,
         address tokenB,
-        uint256 amountB
+        uint256 amountB,
+        bool partialFill
     ) external returns (uint256 orderId);
 
-    /// @notice Fills an existing order by transferring tokenB to maker
-    /// @dev Transfers tokenB from caller to maker, transfers tokenA from contract to caller
+    /// @notice Creates multiple orders in a single transaction
+    /// @dev Atomic: if any order creation reverts, the entire batch reverts.
+    ///      Gas scales linearly with array length.
+    /// @param params Array of CreateOrderParams structs
+    /// @return orderIds Array of unique identifiers for the created orders
+    function createOrders(
+        CreateOrderParams[] calldata params
+    ) external returns (uint256[] memory orderIds);
+
+    /// @notice Fills an existing order, fully or partially
+    /// @dev When fillAmountB is 0 or >= remaining amountB, fills the entire order.
+    ///      When fillAmountB < remaining amountB, performs a partial fill (requires
+    ///      partialFill flag). Partial fillAmountA = fillAmountB * amountA / amountB,
+    ///      rounded down (favoring maker).
+    ///      Fee-on-transfer tokenB: maker receives less than the nominal amount.
+    ///      This is the maker's risk — verify token behavior before creating orders.
     /// @param orderId The unique identifier of the order to fill
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @param fillAmountB Amount of tokenB to pay (0 = fill entire order)
     function fillOrder(
         uint256 orderId,
-        uint256 deadline
+        uint256 deadline,
+        uint256 fillAmountB
     ) external;
 
-    /// @notice Cancels an existing order and returns tokenA to maker
-    /// @dev Only callable by the order's maker
+    /// @notice Fills multiple orders in a single transaction
+    /// @dev Non-payable — use WETH for ETH-denominated fills. Atomic: if any fill
+    ///      reverts, the entire batch reverts. Gas scales linearly with array length.
+    ///      Fee-on-transfer tokenB: maker receives less than the nominal amount.
+    ///      This is the maker's risk — verify token behavior before creating orders.
+    /// @param orderIds Array of order identifiers to fill
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @param fillAmountsB Array of tokenB amounts to pay (0 = fill entire order)
+    function fillOrders(
+        uint256[] calldata orderIds,
+        uint256 deadline,
+        uint256[] calldata fillAmountsB
+    ) external;
+
+    /// @notice Batch fill that skips inactive/nonexistent orders without reverting
+    /// @dev NOT a general best-effort fill. The only failure mode handled here is an
+    ///      inactive or nonexistent order — those are skipped and marked false in the
+    ///      returned array. Every other revert path (insufficient tokenB allowance,
+    ///      tokenB transfer failure, partial-fill-not-allowed, zero-fill rounding,
+    ///      expired deadline, length mismatch) aborts the entire batch. Integrators
+    ///      must pre-validate allowances and partial-fill flags off-chain.
+    ///      Fee-on-transfer tokenB: maker receives less than the nominal amount.
+    ///      This is the maker's risk — verify token behavior before creating orders.
+    /// @param orderIds Array of order identifiers to fill
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @param fillAmountsB Array of tokenB amounts to pay (0 = fill entire order)
+    /// @return filled Array of booleans indicating which orders were filled
+    function tryFillOrders(
+        uint256[] calldata orderIds,
+        uint256 deadline,
+        uint256[] calldata fillAmountsB
+    ) external returns (bool[] memory filled);
+
+    /// @notice Cancels an existing order and returns remaining tokenA to maker
+    /// @dev Only callable by the order's maker. For partially filled orders,
+    ///      returns only the remaining amountA still held in escrow.
     /// @param orderId The unique identifier of the order to cancel
     function cancelOrder(
         uint256 orderId
+    ) external;
+
+    /// @notice Cancels multiple orders in a single transaction
+    /// @dev Only callable by the orders' maker. Atomic: if any cancellation reverts,
+    ///      the entire batch reverts. Gas scales linearly with array length.
+    /// @param orderIds Array of order identifiers to cancel
+    function cancelOrders(
+        uint256[] calldata orderIds
     ) external;
 
     /// @notice Retrieves the details of a single order
@@ -161,14 +291,18 @@ interface ISwapboard {
     /// @dev Wraps msg.value to WETH and stores order with tokenA = WETH
     /// @param tokenB Address of the ERC20 token wanted in exchange
     /// @param amountB Amount of tokenB required to fill the order (in base units)
+    /// @param partialFill Whether the order allows partial fills
     /// @return orderId The unique identifier for the created order
     function createOrderWithEth(
         address tokenB,
-        uint256 amountB
+        uint256 amountB,
+        bool partialFill
     ) external payable returns (uint256 orderId);
 
-    /// @notice Fills an order by sending ETH (auto-wrapped to WETH)
-    /// @dev Requires order.tokenB == WETH and msg.value == order.amountB
+    /// @notice Fills an order where tokenB is WETH by sending ETH
+    /// @dev msg.value is the fill amount. For full fills, msg.value must equal
+    ///      remaining amountB. For partial fills (msg.value < amountB), the order
+    ///      must have partialFill enabled. Reverts if msg.value > amountB.
     /// @param orderId The unique identifier of the order to fill
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrderWithEth(
@@ -176,19 +310,31 @@ interface ISwapboard {
         uint256 deadline
     ) external payable;
 
-    /// @notice Cancels an order where tokenA is WETH, returning ETH to maker
-    /// @dev Only callable by the order's maker. Unwraps WETH to ETH.
+    /// @notice Cancels an order where tokenA is WETH, returning remaining ETH to maker
+    /// @dev Only callable by the order's maker. Unwraps remaining WETH to ETH.
     /// @param orderId The unique identifier of the order to cancel
     function cancelOrderUnwrap(
         uint256 orderId
     ) external;
 
-    /// @notice Fills an order where tokenA is WETH, receiving ETH instead
-    /// @dev Pays tokenB normally, receives ETH after WETH unwrap
+    /// @notice Cancels multiple orders where tokenA is WETH, returning remaining ETH to maker
+    /// @dev Only callable by the orders' maker. Atomic: if any cancellation reverts,
+    ///      the entire batch reverts. Gas scales linearly with array length.
+    /// @param orderIds Array of order identifiers to cancel
+    function cancelOrdersUnwrap(
+        uint256[] calldata orderIds
+    ) external;
+
+    /// @notice Fills an order where tokenA is WETH, receiving ETH instead of WETH
+    /// @dev When fillAmountB is 0 or >= remaining amountB, fills the entire order.
+    ///      When fillAmountB < remaining amountB, performs a partial fill (requires
+    ///      partialFill flag). Taker receives ETH after WETH unwrap.
     /// @param orderId The unique identifier of the order to fill
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @param fillAmountB Amount of tokenB to pay (0 = fill entire order)
     function fillOrderUnwrap(
         uint256 orderId,
-        uint256 deadline
+        uint256 deadline,
+        uint256 fillAmountB
     ) external;
 }
