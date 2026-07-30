@@ -26,8 +26,8 @@ contract SwapboardETHTest is Test {
     address public maker = address(0x1);
     address public taker = address(0x2);
 
-    uint256 constant ETH_AMOUNT = 1 ether;
-    uint256 constant TOKEN_AMOUNT = 3000e6;
+    uint256 public constant ETH_AMOUNT = 1 ether;
+    uint256 public constant TOKEN_AMOUNT = 3000e6;
 
     /// @notice Deploys fixtures for each test
     function setUp() public {

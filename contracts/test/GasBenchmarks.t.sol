@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 // solhint-disable use-natspec
 // solhint-disable no-console
+// solhint-disable gas-small-strings
 
 import {Test, console2} from "forge-std/Test.sol";
 import {Swapboard} from "../src/Swapboard.sol";
