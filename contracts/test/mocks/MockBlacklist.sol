@@ -23,7 +23,9 @@ contract MockBlacklist {
     modifier notBlacklisted(
         address account
     ) {
-        if (isBlacklisted[account]) revert Blacklisted();
+        if (isBlacklisted[account]) {
+            revert Blacklisted();
+        }
         _;
     }
 

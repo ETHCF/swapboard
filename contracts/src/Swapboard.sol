@@ -43,14 +43,20 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     constructor(
         address _weth
     ) {
-        if (_weth == address(0)) revert ZeroAddress();
-        if (_weth.code.length == 0) revert NotAContract(_weth);
+        if (_weth == address(0)) {
+            revert ZeroAddress();
+        }
+        if (_weth.code.length == 0) {
+            revert NotAContract(_weth);
+        }
         WETH = _weth;
     }
 
     /// @notice Accept ETH only from WETH contract (for withdraw callbacks)
     receive() external payable {
-        if (msg.sender != WETH) revert NotWETH(WETH, msg.sender);
+        if (msg.sender != WETH) {
+            revert NotWETH(WETH, msg.sender);
+        }
     }
 
     /// @inheritdoc ISwapboard
@@ -67,13 +73,27 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         address tokenB,
         uint256 amountB
     ) external nonReentrant returns (uint256 orderId) {
-        if (tokenA == address(0)) revert ZeroAddress();
-        if (tokenB == address(0)) revert ZeroAddress();
-        if (amountA == 0) revert ZeroAmount();
-        if (amountB == 0) revert ZeroAmount();
-        if (tokenA == tokenB) revert SameToken();
-        if (tokenA.code.length == 0) revert NotAContract(tokenA);
-        if (tokenB.code.length == 0) revert NotAContract(tokenB);
+        if (tokenA == address(0)) {
+            revert ZeroAddress();
+        }
+        if (tokenB == address(0)) {
+            revert ZeroAddress();
+        }
+        if (amountA == 0) {
+            revert ZeroAmount();
+        }
+        if (amountB == 0) {
+            revert ZeroAmount();
+        }
+        if (tokenA == tokenB) {
+            revert SameToken();
+        }
+        if (tokenA.code.length == 0) {
+            revert NotAContract(tokenA);
+        }
+        if (tokenB.code.length == 0) {
+            revert NotAContract(tokenB);
+        }
 
         uint256 balanceBefore = IERC20(tokenA).balanceOf(address(this));
         IERC20(tokenA).safeTransferFrom(msg.sender, address(this), amountA);
@@ -109,13 +129,19 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         uint256 orderId,
         uint256 deadline
     ) external nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) revert DeadlineExpired();
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
+        }
 
         Order storage order = orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!active) revert OrderNotActive(orderId);
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!active) {
+            revert OrderNotActive(orderId);
+        }
 
         order.active = false;
 
@@ -136,9 +162,15 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         Order storage order = orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!active) revert OrderNotActive(orderId);
-        if (msg.sender != maker) revert NotMaker(orderId, msg.sender, maker);
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!active) {
+            revert OrderNotActive(orderId);
+        }
+        if (msg.sender != maker) {
+            revert NotMaker(orderId, msg.sender, maker);
+        }
 
         order.active = false;
 
@@ -154,11 +186,21 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         address tokenB,
         uint256 amountB
     ) external payable nonReentrant returns (uint256 orderId) {
-        if (msg.value == 0) revert ZeroETH();
-        if (tokenB == address(0)) revert ZeroAddress();
-        if (amountB == 0) revert ZeroAmount();
-        if (tokenB == WETH) revert SameToken();
-        if (tokenB.code.length == 0) revert NotAContract(tokenB);
+        if (msg.value == 0) {
+            revert ZeroETH();
+        }
+        if (tokenB == address(0)) {
+            revert ZeroAddress();
+        }
+        if (amountB == 0) {
+            revert ZeroAmount();
+        }
+        if (tokenB == WETH) {
+            revert SameToken();
+        }
+        if (tokenB.code.length == 0) {
+            revert NotAContract(tokenB);
+        }
 
         IWETH(WETH).deposit{value: msg.value}();
 
@@ -185,18 +227,28 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         uint256 orderId,
         uint256 deadline
     ) external payable nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) revert DeadlineExpired();
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
+        }
 
         Order storage order = orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!active) revert OrderNotActive(orderId);
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!active) {
+            revert OrderNotActive(orderId);
+        }
 
         uint256 amountB = order.amountB;
 
-        if (order.tokenB != WETH) revert NotWETH(WETH, order.tokenB);
-        if (msg.value != amountB) revert ETHAmountMismatch(amountB, msg.value);
+        if (order.tokenB != WETH) {
+            revert NotWETH(WETH, order.tokenB);
+        }
+        if (msg.value != amountB) {
+            revert ETHAmountMismatch(amountB, msg.value);
+        }
 
         order.active = false;
 
@@ -215,10 +267,18 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         Order storage order = orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!active) revert OrderNotActive(orderId);
-        if (msg.sender != maker) revert NotMaker(orderId, msg.sender, maker);
-        if (order.tokenA != WETH) revert NotWETH(WETH, order.tokenA);
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!active) {
+            revert OrderNotActive(orderId);
+        }
+        if (msg.sender != maker) {
+            revert NotMaker(orderId, msg.sender, maker);
+        }
+        if (order.tokenA != WETH) {
+            revert NotWETH(WETH, order.tokenA);
+        }
 
         uint256 amountA = order.amountA;
 
@@ -231,7 +291,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         assembly {
             success := call(gas(), maker, amountA, 0, 0, 0, 0)
         }
-        if (!success) revert ETHTransferFailed(maker);
+        if (!success) {
+            revert ETHTransferFailed(maker);
+        }
 
         emit OrderCanceled(orderId);
     }
@@ -241,14 +303,22 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         uint256 orderId,
         uint256 deadline
     ) external nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) revert DeadlineExpired();
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
+        }
 
         Order storage order = orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!active) revert OrderNotActive(orderId);
-        if (order.tokenA != WETH) revert NotWETH(WETH, order.tokenA);
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!active) {
+            revert OrderNotActive(orderId);
+        }
+        if (order.tokenA != WETH) {
+            revert NotWETH(WETH, order.tokenA);
+        }
 
         uint256 amountA = order.amountA;
 
@@ -263,7 +333,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         assembly {
             success := call(gas(), caller(), amountA, 0, 0, 0, 0)
         }
-        if (!success) revert ETHTransferFailed(msg.sender);
+        if (!success) {
+            revert ETHTransferFailed(msg.sender);
+        }
 
         emit OrderFilled(orderId, msg.sender);
     }

@@ -30,13 +30,17 @@ contract MockWETH {
     function withdraw(
         uint256 amount
     ) external {
-        if (balanceOf[msg.sender] < amount) revert InsufficientWETH();
+        if (balanceOf[msg.sender] < amount) {
+            revert InsufficientWETH();
+        }
         balanceOf[msg.sender] -= amount;
         totalSupply -= amount;
         emit Withdrawal(msg.sender, amount);
         emit Transfer(msg.sender, address(0), amount);
         (bool success,) = payable(msg.sender).call{value: amount}("");
-        if (!success) revert ETHTransferFailed();
+        if (!success) {
+            revert ETHTransferFailed();
+        }
     }
 
     function approve(

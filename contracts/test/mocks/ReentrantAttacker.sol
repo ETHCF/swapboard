@@ -97,7 +97,9 @@ contract ReentrantAttacker {
     }
 
     function _attemptReentrancy() internal {
-        if (attacking) return; // Prevent infinite loop
+        if (attacking) { // Prevent infinite loop
+            return;
+        }
         attacking = true;
 
         if (keccak256(bytes(attackType)) == keccak256(bytes("fill"))) {

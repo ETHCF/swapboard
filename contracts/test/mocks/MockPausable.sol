@@ -21,7 +21,9 @@ contract MockPausable {
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
     modifier whenNotPaused() {
-        if (paused) revert Paused();
+        if (paused) {
+            revert Paused();
+        }
         _;
     }
 
