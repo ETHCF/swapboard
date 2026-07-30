@@ -28,10 +28,12 @@ docs/          API documentation
 ### Build
 
 ```bash
-# Contracts
-cd contracts && forge build
+# Lint + build (contracts and subgraph)
+make build
 
-# Subgraph
+# Or step by step
+make lint
+cd contracts && forge build
 cd subgraph && pnpm install && pnpm build
 
 # Frontend
@@ -44,17 +46,21 @@ cd e2e && pnpm install
 ### Lint
 
 ```bash
-# Contracts
+# forge lint + solhint
+make lint
+
+# or manually
 cd contracts && forge lint
+cd contracts && npx solhint 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 ```
 
 ### Test
 
 ```bash
-# Default: contract + subgraph + frontend tests
+# Default: lint + contract + subgraph + frontend tests
 ./test.sh
 
-# Fast: contract tests only (no Docker)
+# Fast: lint + contract + frontend unit tests only (no Docker)
 ./test.sh --fast
 
 # Full E2E: includes Docker stack with Graph Node

@@ -9,7 +9,7 @@ install:
 	cd e2e && pnpm install
 
 # Build all
-build:
+build: lint
 	cd contracts && forge build
 	cd subgraph && pnpm build
 
@@ -31,9 +31,10 @@ fmt:
 fmt-check:
 	cd contracts && forge fmt --check
 
-# Lint contracts
+# Lint contracts (forge lint + solhint)
 lint:
 	cd contracts && forge lint
+	cd contracts && npx --yes solhint 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 
 # Clean build artifacts
 clean:
@@ -74,11 +75,12 @@ serve:
 help:
 	@echo "Available targets:"
 	@echo "  install      - Install all dependencies"
-	@echo "  build        - Build contracts and subgraph"
+	@echo "  build        - Lint, then build contracts and subgraph"
 	@echo "  test         - Run all tests"
 	@echo "  coverage     - Run contract tests with coverage"
 	@echo "  fmt          - Format Solidity code"
 	@echo "  fmt-check    - Check Solidity formatting"
+	@echo "  lint         - Lint Solidity (forge lint + solhint)"
 	@echo "  clean        - Clean build artifacts"
 	@echo "  anvil        - Start local Anvil node"
 	@echo "  deploy-local - Deploy to local Anvil"

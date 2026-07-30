@@ -10,6 +10,7 @@ Brief description of changes.
 ## Testing
 
 - [ ] Unit tests pass (`forge test`)
+- [ ] Linting passes (`make lint`)
 - [ ] E2E tests pass (`cd e2e && pnpm test`)
 - [ ] Manual testing completed
 
@@ -20,6 +21,7 @@ Brief description of changes.
 - [ ] Added tests for new functionality
 - [ ] Updated documentation if needed
 - [ ] No new warnings introduced
+- [ ] Linting passes
 
 ## Related Issues
 

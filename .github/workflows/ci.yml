@@ -27,13 +27,17 @@ jobs:
         working-directory: contracts
         run: forge fmt --check
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Lint contracts
+        run: make lint
+
       - name: Build contracts
         working-directory: contracts
         run: forge build --sizes
-
-      - name: Lint contracts
-        working-directory: contracts
-        run: forge lint
 
       - name: Run tests
         working-directory: contracts

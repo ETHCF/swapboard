@@ -9,10 +9,20 @@ show_help() {
   echo "Options:"
   echo "  --all       Run all tests including full e2e (requires Docker)"
   echo "  --e2e       Run only full e2e tests (requires Docker)"
-  echo "  --fast      Run contract + frontend unit tests only (no Docker)"
+  echo "  --fast      Run lint + contract + frontend unit tests only (no Docker)"
   echo "  --help      Show this help"
   echo ""
-  echo "Default: Run contract, subgraph, frontend unit, and frontend e2e tests"
+  echo "Default: Lint contracts, then run contract, subgraph, frontend unit, and frontend e2e tests"
+}
+
+run_contract_lint() {
+  echo "0. Contract Lint (forge lint + solhint)"
+  echo "-----------------------------------------"
+  cd "$ROOT_DIR/contracts"
+  forge lint
+  npx --yes solhint 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
+  cd "$ROOT_DIR"
+  echo ""
 }
 
 run_contract_tests() {
@@ -91,6 +101,7 @@ case "${1:-}" in
     echo "SWAPBOARD FAST TESTS"
     echo "========================================="
     echo ""
+    run_contract_lint
     run_contract_tests
     run_frontend_unit_tests
     ;;
@@ -99,6 +110,7 @@ case "${1:-}" in
     echo "SWAPBOARD FULL TEST SUITE"
     echo "========================================="
     echo ""
+    run_contract_lint
     run_contract_tests
     run_subgraph_tests
     run_frontend_unit_tests
@@ -110,6 +122,7 @@ case "${1:-}" in
     echo "SWAPBOARD TEST SUITE"
     echo "========================================="
     echo ""
+    run_contract_lint
     run_contract_tests
     run_subgraph_tests
     run_frontend_unit_tests

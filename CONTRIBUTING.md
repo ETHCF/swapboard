@@ -27,11 +27,14 @@ cd ../e2e && pnpm install
 ### Running Tests
 
 ```bash
-# All tests
+# All tests (includes contract lint)
 ./test.sh
 
 # Contract tests only
 cd contracts && forge test -vvv
+
+# Lint (forge lint + solhint)
+make lint
 
 # Subgraph tests
 cd subgraph && pnpm test
@@ -46,6 +49,7 @@ cd e2e && pnpm test
 
 - Follow the [Solidity Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html)
 - Use `forge fmt` to format code
+- Run `make lint` (`forge lint` + solhint) before opening a PR
 - Maximum line length: 100 characters
 - Use NatSpec comments for all public functions
 
@@ -67,7 +71,7 @@ cd e2e && pnpm test
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make your changes
-4. Run all tests (`./test.sh`)
+4. Run lint and tests (`make lint && ./test.sh`)
 5. Commit with a clear message
 6. Push to your fork
 7. Open a Pull Request
@@ -76,6 +80,7 @@ cd e2e && pnpm test
 
 - All tests must pass
 - Code must be formatted (`forge fmt`)
+- Linting must pass (`make lint`)
 - Include test coverage for new features
 - Update documentation if needed
 - Keep commits atomic and well-described
