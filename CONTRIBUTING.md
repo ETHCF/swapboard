@@ -5,7 +5,7 @@
 ### Prerequisites
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
-- [Node.js](https://nodejs.org/) v20+
+- [Node.js](https://nodejs.org/) v22+
 - [pnpm](https://pnpm.io/) v8+
 
 ### Clone and Install

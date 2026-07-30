@@ -21,7 +21,7 @@ docs/          API documentation
 ### Prerequisites
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
-- [Node.js](https://nodejs.org/) v20+
+- [Node.js](https://nodejs.org/) v22+
 - [pnpm](https://pnpm.io/)
 - [Docker](https://www.docker.com/) (required for subgraph and e2e tests)
 
