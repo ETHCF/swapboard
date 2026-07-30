@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
+// solhint-disable use-natspec
+
 /// @title MockRebase
 /// @notice Mock ERC20 with rebasing functionality (like stETH, AMPL)
 contract MockRebase {

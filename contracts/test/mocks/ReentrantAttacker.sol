@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
+// solhint-disable use-natspec
+
 import {Swapboard} from "../../src/Swapboard.sol";
 
 /// @title ReentrantAttacker

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
+// solhint-disable use-natspec
 // solhint-disable no-console
 
 import {Test, console2} from "forge-std/Test.sol";
@@ -12,22 +13,12 @@ import {MockWETH} from "./mocks/MockWETH.sol";
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
 /// @notice Gas consumption tests for optimization baseline
 contract GasBenchmarks is Test {
-    /// @notice Swapboard instance under test
     Swapboard public board;
-
-    /// @notice Selling token used in gas benchmarks
     MockERC20 public tokenA;
-
-    /// @notice Buying token used in gas benchmarks
     MockERC20 public tokenB;
-
-    /// @notice Mock WETH passed to Swapboard
     MockWETH public mockWeth;
 
-    /// @notice Order maker address
     address public maker = makeAddr("maker");
-
-    /// @notice Order taker address
     address public taker = makeAddr("taker");
 
     /// @notice Deploys Swapboard, tokens, and approvals for gas benchmarks

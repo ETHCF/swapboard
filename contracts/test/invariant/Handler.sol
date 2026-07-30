@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
+// solhint-disable use-natspec
+
 import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
 import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";

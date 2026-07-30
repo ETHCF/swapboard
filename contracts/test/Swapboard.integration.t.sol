@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
+// solhint-disable use-natspec
+
 import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
@@ -20,6 +22,7 @@ contract SwapboardIntegrationTest is Test {
     address public charlie = address(0xC4A7);
     address public dave = address(0xDA7E);
 
+    /// @notice Deploys fixtures for each test
     function setUp() public {
         mockWeth = new MockWETH();
         board = new Swapboard(address(mockWeth));
@@ -39,6 +42,7 @@ contract SwapboardIntegrationTest is Test {
         wbtc.mint(dave, 100e8);
     }
 
+    /// @notice Tests multiple users creating and filling orders
     function test_multipleUsersMultipleOrders() public {
         vm.startPrank(alice);
         weth.approve(address(board), 100 ether);
@@ -79,6 +83,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(usdc.balanceOf(dave), 95_000e6);
     }
 
+    /// @notice Tests full create-then-fill order lifecycle
     function test_orderLifecycle_createFill() public {
         vm.startPrank(alice);
         weth.approve(address(board), 50 ether);
@@ -101,6 +106,7 @@ contract SwapboardIntegrationTest is Test {
         assertFalse(order.active);
     }
 
+    /// @notice Tests full create-then-cancel order lifecycle
     function test_orderLifecycle_createCancel() public {
         uint256 aliceWethBefore = weth.balanceOf(alice);
 
@@ -121,6 +127,7 @@ contract SwapboardIntegrationTest is Test {
         assertFalse(order.active);
     }
 
+    /// @notice Tests only one of two competing fillers succeeds
     function test_raceCondition_twoFillersOneOrder() public {
         vm.startPrank(alice);
         weth.approve(address(board), 10 ether);
@@ -144,6 +151,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(weth.balanceOf(charlie), 0);
     }
 
+    /// @notice Tests fill wins over concurrent cancel attempt
     function test_raceCondition_fillAndCancel() public {
         vm.startPrank(alice);
         weth.approve(address(board), 10 ether);
@@ -161,6 +169,7 @@ contract SwapboardIntegrationTest is Test {
         board.cancelOrder(orderId);
     }
 
+    /// @notice Tests creating and filling a batch of orders
     function test_batchOperations() public {
         vm.startPrank(alice);
         weth.approve(address(board), 100 ether);
@@ -205,6 +214,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(usdc.balanceOf(alice), 10_000_000e6 + 150_000e6);
     }
 
+    /// @notice Tests orders between tokens with different decimals
     function test_differentDecimalTokens() public {
         vm.startPrank(dave);
         wbtc.approve(address(board), 1e8);
@@ -220,6 +230,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(dai.balanceOf(dave), 95_000 ether);
     }
 
+    /// @notice Tests creating and filling large amount orders
     function test_largeAmounts() public {
         uint256 largeAmount = type(uint128).max;
         weth.mint(alice, largeAmount);
@@ -240,6 +251,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(weth.balanceOf(bob), 1000 ether + largeAmount);
     }
 
+    /// @notice Tests creating and filling dust-sized orders
     function test_dustAmounts() public {
         vm.startPrank(alice);
         weth.approve(address(board), 1);
@@ -255,6 +267,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(usdc.balanceOf(alice), 10_000_000e6 + 1);
     }
 
+    /// @notice Tests OrderCreated then OrderFilled event sequence
     function test_eventSequence() public {
         vm.startPrank(alice);
         weth.approve(address(board), 10 ether);
@@ -273,6 +286,7 @@ contract SwapboardIntegrationTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests getOrders returns empty structs for missing IDs
     function test_getOrdersWithNonExistent() public {
         vm.startPrank(alice);
         weth.approve(address(board), 20 ether);
@@ -294,6 +308,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(orders[3].maker, address(0));
     }
 
+    /// @notice Stress tests creating and filling many orders
     function test_stressTest_manyOrders() public {
         uint256 numOrders = 100;
 

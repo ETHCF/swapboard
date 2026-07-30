@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
+// solhint-disable use-natspec
+
 /// @title MockBlacklist
 /// @notice Mock ERC20 with blacklist functionality (like USDC/USDT)
 contract MockBlacklist {

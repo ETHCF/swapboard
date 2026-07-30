@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
+// solhint-disable use-natspec
 // solhint-disable no-console
 
 import {Test, console2} from "forge-std/Test.sol";
@@ -20,6 +21,7 @@ contract SwapboardInvariantTest is Test {
     MockWETH public mockWeth;
     SwapboardHandler public handler;
 
+    /// @notice Deploys fixtures for each test
     function setUp() public {
         mockWeth = new MockWETH();
         board = new Swapboard(address(mockWeth));
@@ -118,6 +120,7 @@ contract SwapboardStatelessInvariantTest is Test {
     address public maker = makeAddr("maker");
     address public taker = makeAddr("taker");
 
+    /// @notice Deploys fixtures for each test
     function setUp() public {
         mockWeth = new MockWETH();
         board = new Swapboard(address(mockWeth));

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.33;
 
+// solhint-disable use-natspec
+
 /**
  * @title SwapboardTest
  * @notice Unit tests for the Swapboard contract
@@ -25,11 +27,10 @@ contract SwapboardTest is Test {
     address public maker = address(0x1);
     address public taker = address(0x2);
 
-    /// @dev 100 tokens with 18 decimals
     uint256 constant AMOUNT_A = 100 ether;
-    /// @dev 250,000 tokens with 6 decimals (USDC-style)
     uint256 constant AMOUNT_B = 250_000e6;
 
+    /// @notice Deploys fixtures for each test
     function setUp() public {
         mockWeth = new MockWETH();
         board = new Swapboard(address(mockWeth));
@@ -41,10 +42,12 @@ contract SwapboardTest is Test {
         tokenB.mint(taker, AMOUNT_B * 10);
     }
 
+    /// @notice Tests initial nextOrderId is zero
     function test_initialState() public view {
         assertEq(board.nextOrderId(), 0);
     }
 
+    /// @notice Tests createOrder
     function test_createOrder() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -67,6 +70,7 @@ contract SwapboardTest is Test {
         assertEq(tokenA.balanceOf(maker), AMOUNT_A * 10 - AMOUNT_A);
     }
 
+    /// @notice Tests createOrder revert zeroAddress tokenA
     function test_createOrder_revert_zeroAddress_tokenA() public {
         vm.startPrank(maker);
         vm.expectRevert(ISwapboard.ZeroAddress.selector);
@@ -74,6 +78,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests createOrder revert zeroAddress tokenB
     function test_createOrder_revert_zeroAddress_tokenB() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -82,6 +87,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests createOrder revert zeroAmount amountA
     function test_createOrder_revert_zeroAmount_amountA() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -90,6 +96,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests createOrder revert zeroAmount amountB
     function test_createOrder_revert_zeroAmount_amountB() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -98,6 +105,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests createOrder revert sameToken
     function test_createOrder_revert_sameToken() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -106,6 +114,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests createOrder revert notAContract tokenA
     function test_createOrder_revert_notAContract_tokenA() public {
         vm.startPrank(maker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotAContract.selector, address(0x999)));
@@ -113,6 +122,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests createOrder revert notAContract tokenB
     function test_createOrder_revert_notAContract_tokenB() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -121,6 +131,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests createOrder revert FOT
     function test_createOrder_revert_FOT() public {
         MockFOT fot = new MockFOT();
         fot.mint(maker, 1000 ether);
@@ -135,6 +146,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests fillOrder
     function test_fillOrder() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -154,6 +166,7 @@ contract SwapboardTest is Test {
         assertEq(tokenA.balanceOf(address(board)), 0);
     }
 
+    /// @notice Tests fillOrder revert orderNotFound
     function test_fillOrder_revert_orderNotFound() public {
         vm.startPrank(taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
@@ -161,6 +174,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests fillOrder revert orderNotActive
     function test_fillOrder_revert_orderNotActive() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -176,6 +190,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests cancelOrder
     function test_cancelOrder() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -191,6 +206,7 @@ contract SwapboardTest is Test {
         assertEq(tokenA.balanceOf(address(board)), 0);
     }
 
+    /// @notice Tests cancelOrder revert orderNotFound
     function test_cancelOrder_revert_orderNotFound() public {
         vm.startPrank(maker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
@@ -198,6 +214,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests cancelOrder revert orderNotActive
     function test_cancelOrder_revert_orderNotActive() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -209,6 +226,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests cancelOrder revert notMaker
     function test_cancelOrder_revert_notMaker() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -221,6 +239,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests canFill
     function test_canFill() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -230,6 +249,7 @@ contract SwapboardTest is Test {
         assertTrue(board.canFill(orderId));
     }
 
+    /// @notice Tests canFill false notActive
     function test_canFill_false_notActive() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -240,10 +260,12 @@ contract SwapboardTest is Test {
         assertFalse(board.canFill(orderId));
     }
 
+    /// @notice Tests canFill false nonExistent
     function test_canFill_false_nonExistent() public view {
         assertFalse(board.canFill(999));
     }
 
+    /// @notice Tests getOrders
     function test_getOrders() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A * 3);
@@ -266,12 +288,14 @@ contract SwapboardTest is Test {
         assertEq(orders[2].amountB, AMOUNT_B * 3);
     }
 
+    /// @notice Tests getOrders empty
     function test_getOrders_empty() public view {
         uint256[] memory ids = new uint256[](0);
         ISwapboard.Order[] memory orders = board.getOrders(ids);
         assertEq(orders.length, 0);
     }
 
+    /// @notice Tests multipleOrders
     function test_multipleOrders() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A * 3);
@@ -287,6 +311,7 @@ contract SwapboardTest is Test {
         assertEq(board.nextOrderId(), 3);
     }
 
+    /// @notice Tests filling an order as both maker and taker
     function test_selfFill() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -301,6 +326,7 @@ contract SwapboardTest is Test {
         assertEq(tokenB.balanceOf(maker), AMOUNT_B);
     }
 
+    /// @notice Tests events orderCreated
     function test_events_orderCreated() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -312,6 +338,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests events orderFilled
     function test_events_orderFilled() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -328,6 +355,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests events orderCanceled
     function test_events_orderCanceled() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -340,6 +368,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Fuzz tests createOrder
     function testFuzz_createOrder(
         uint256 amountA,
         uint256 amountB
@@ -359,6 +388,7 @@ contract SwapboardTest is Test {
         assertEq(order.amountB, amountB);
     }
 
+    /// @notice Fuzz tests fillOrder
     function testFuzz_fillOrder(
         uint256 amountA,
         uint256 amountB
@@ -383,6 +413,7 @@ contract SwapboardTest is Test {
         assertEq(tokenB.balanceOf(maker), amountB);
     }
 
+    /// @notice Tests fillOrder revert deadlineExpired
     function test_fillOrder_revert_deadlineExpired() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
@@ -398,6 +429,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests fillOrder deadlineZero noExpiry
     function test_fillOrder_deadlineZero_noExpiry() public {
         vm.startPrank(maker);
         tokenA.approve(address(board), AMOUNT_A);
