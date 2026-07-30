@@ -8,6 +8,7 @@
     "reason-string": ["warn", { "maxLength": 64 }],
     "max-line-length": ["warn", 120],
     "func-name-mixedcase": "off",
-    "var-name-mixedcase": "off"
+    "var-name-mixedcase": "off",
+    "import-path-check": "off"
   }
 }
