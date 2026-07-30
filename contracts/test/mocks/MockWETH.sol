@@ -4,6 +4,9 @@ pragma solidity ^0.8.33;
 // solhint-disable use-natspec
 
 contract MockWETH {
+    error InsufficientWETH();
+    error ETHTransferFailed();
+
     string public name = "Wrapped Ether";
     string public symbol = "WETH";
     uint8 public decimals = 18;
@@ -27,13 +30,13 @@ contract MockWETH {
     function withdraw(
         uint256 amount
     ) external {
-        require(balanceOf[msg.sender] >= amount, "Insufficient WETH");
+        if (balanceOf[msg.sender] < amount) revert InsufficientWETH();
         balanceOf[msg.sender] -= amount;
         totalSupply -= amount;
         emit Withdrawal(msg.sender, amount);
         emit Transfer(msg.sender, address(0), amount);
         (bool success,) = payable(msg.sender).call{value: amount}("");
-        require(success, "ETH transfer failed");
+        if (!success) revert ETHTransferFailed();
     }
 
     function approve(

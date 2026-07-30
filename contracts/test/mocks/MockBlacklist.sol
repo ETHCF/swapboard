@@ -6,6 +6,8 @@ pragma solidity ^0.8.33;
 /// @title MockBlacklist
 /// @notice Mock ERC20 with blacklist functionality (like USDC/USDT)
 contract MockBlacklist {
+    error Blacklisted();
+
     string public name = "Blacklist Token";
     string public symbol = "BLACK";
     uint8 public decimals = 18;
@@ -21,7 +23,7 @@ contract MockBlacklist {
     modifier notBlacklisted(
         address account
     ) {
-        require(!isBlacklisted[account], "Blacklisted");
+        if (isBlacklisted[account]) revert Blacklisted();
         _;
     }
 

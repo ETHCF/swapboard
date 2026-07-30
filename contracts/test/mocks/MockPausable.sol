@@ -6,6 +6,8 @@ pragma solidity ^0.8.33;
 /// @title MockPausable
 /// @notice Mock ERC20 with pause functionality
 contract MockPausable {
+    error Paused();
+
     string public name = "Pausable Token";
     string public symbol = "PAUSE";
     uint8 public decimals = 18;
@@ -19,7 +21,7 @@ contract MockPausable {
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
     modifier whenNotPaused() {
-        require(!paused, "Paused");
+        if (paused) revert Paused();
         _;
     }
 

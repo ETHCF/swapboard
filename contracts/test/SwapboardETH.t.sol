@@ -11,8 +11,10 @@ import {MockWETH} from "./mocks/MockWETH.sol";
 
 /// @notice Contract that rejects ETH transfers
 contract ETHRejecter {
+    error RejectETH();
+
     receive() external payable {
-        revert("no ETH");
+        revert RejectETH();
     }
 }
 
