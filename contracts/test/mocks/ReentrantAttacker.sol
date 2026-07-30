@@ -14,7 +14,7 @@ contract ReentrantAttacker {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    Swapboard public immutable board;
+    Swapboard public immutable BOARD;
     string public attackType;
     uint256 public orderId;
     address public attacker;
@@ -27,7 +27,7 @@ contract ReentrantAttacker {
         address _board,
         string memory _attackType
     ) {
-        board = Swapboard(payable(_board));
+        BOARD = Swapboard(payable(_board));
         attackType = _attackType;
     }
 
@@ -100,10 +100,10 @@ contract ReentrantAttacker {
 
         if (keccak256(bytes(attackType)) == keccak256(bytes("fill"))) {
             // Try to fill the same order again
-            try board.fillOrder(orderId, 0) {} catch {}
+            try BOARD.fillOrder(orderId, 0) {} catch {}
         } else if (keccak256(bytes(attackType)) == keccak256(bytes("cancel"))) {
             // Try to cancel the same order again
-            try board.cancelOrder(orderId) {} catch {}
+            try BOARD.cancelOrder(orderId) {} catch {}
         }
 
         attacking = false;

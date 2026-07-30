@@ -28,7 +28,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     /// @notice Canonical WETH address for this deployment
-    address public immutable weth;
+    address private immutable WETH;
 
     /// @notice Counter for generating unique order IDs
     /// @dev Starts at 0, increments by 1 for each new order
@@ -45,12 +45,17 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     ) {
         if (_weth == address(0)) revert ZeroAddress();
         if (_weth.code.length == 0) revert NotAContract(_weth);
-        weth = _weth;
+        WETH = _weth;
     }
 
     /// @notice Accept ETH only from WETH contract (for withdraw callbacks)
     receive() external payable {
-        if (msg.sender != weth) revert NotWETH(weth, msg.sender);
+        if (msg.sender != WETH) revert NotWETH(WETH, msg.sender);
+    }
+
+    /// @inheritdoc ISwapboard
+    function weth() external view returns (address) {
+        return WETH;
     }
 
     /// @inheritdoc ISwapboard
@@ -150,10 +155,10 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         if (msg.value == 0) revert ZeroETH();
         if (tokenB == address(0)) revert ZeroAddress();
         if (amountB == 0) revert ZeroAmount();
-        if (tokenB == weth) revert SameToken();
+        if (tokenB == WETH) revert SameToken();
         if (tokenB.code.length == 0) revert NotAContract(tokenB);
 
-        IWETH(weth).deposit{value: msg.value}();
+        IWETH(WETH).deposit{value: msg.value}();
 
         unchecked {
             orderId = nextOrderId++;
@@ -162,13 +167,13 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         orders[orderId] = Order({
             maker: msg.sender,
             active: true,
-            tokenA: weth,
+            tokenA: WETH,
             amountA: msg.value,
             tokenB: tokenB,
             amountB: amountB
         });
 
-        emit OrderCreated(orderId, msg.sender, weth, msg.value, tokenB, amountB);
+        emit OrderCreated(orderId, msg.sender, WETH, msg.value, tokenB, amountB);
     }
 
     /// @inheritdoc ISwapboard
@@ -186,13 +191,13 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         uint256 amountB = order.amountB;
 
-        if (order.tokenB != weth) revert NotWETH(weth, order.tokenB);
+        if (order.tokenB != WETH) revert NotWETH(WETH, order.tokenB);
         if (msg.value != amountB) revert ETHAmountMismatch(amountB, msg.value);
 
         order.active = false;
 
-        IWETH(weth).deposit{value: msg.value}();
-        IERC20(weth).safeTransfer(maker, amountB);
+        IWETH(WETH).deposit{value: msg.value}();
+        IERC20(WETH).safeTransfer(maker, amountB);
 
         IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
 
@@ -209,13 +214,13 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         if (maker == address(0)) revert OrderNotFound(orderId);
         if (!active) revert OrderNotActive(orderId);
         if (msg.sender != maker) revert NotMaker(orderId, msg.sender, maker);
-        if (order.tokenA != weth) revert NotWETH(weth, order.tokenA);
+        if (order.tokenA != WETH) revert NotWETH(WETH, order.tokenA);
 
         uint256 amountA = order.amountA;
 
         order.active = false;
 
-        IWETH(weth).withdraw(amountA);
+        IWETH(WETH).withdraw(amountA);
 
         bool success;
         // solhint-disable-next-line no-inline-assembly
@@ -239,7 +244,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) revert OrderNotFound(orderId);
         if (!active) revert OrderNotActive(orderId);
-        if (order.tokenA != weth) revert NotWETH(weth, order.tokenA);
+        if (order.tokenA != WETH) revert NotWETH(WETH, order.tokenA);
 
         uint256 amountA = order.amountA;
 
@@ -247,7 +252,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         IERC20(order.tokenB).safeTransferFrom(msg.sender, maker, order.amountB);
 
-        IWETH(weth).withdraw(amountA);
+        IWETH(WETH).withdraw(amountA);
 
         bool success;
         // solhint-disable-next-line no-inline-assembly
