@@ -44,7 +44,9 @@ contract MockWETH {
         uint256 amount
     ) external returns (bool) {
         allowance[msg.sender][spender] = amount;
+
         emit Approval(msg.sender, spender, amount);
+
         return true;
     }
 
@@ -54,7 +56,9 @@ contract MockWETH {
     ) external returns (bool) {
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
+
         emit Transfer(msg.sender, to, amount);
+
         return true;
     }
 
@@ -67,15 +71,19 @@ contract MockWETH {
         if (allowed != type(uint256).max) {
             allowance[from][msg.sender] = allowed - amount;
         }
+
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
+
         emit Transfer(from, to, amount);
+
         return true;
     }
 
     receive() external payable {
         balanceOf[msg.sender] += msg.value;
         totalSupply += msg.value;
+
         emit Deposit(msg.sender, msg.value);
         emit Transfer(address(0), msg.sender, msg.value);
     }

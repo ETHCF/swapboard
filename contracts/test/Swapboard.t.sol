@@ -27,8 +27,8 @@ contract SwapboardTest is Test {
     address public maker = address(0x1);
     address public taker = address(0x2);
 
-    uint256 constant AMOUNT_A = 100 ether;
-    uint256 constant AMOUNT_B = 250_000e6;
+    uint256 private constant AMOUNT_A = 100 ether;
+    uint256 private constant AMOUNT_B = 250_000e6;
 
     /// @notice Deploys fixtures for each test
     function setUp() public {
