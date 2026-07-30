@@ -62,7 +62,7 @@ echo "Contract deployed at: $CONTRACT_ADDR (block $DEPLOY_BLOCK)"
 
 # Deploy mock tokens for testing
 echo "Deploying test tokens..."
-TOKENA_OUTPUT=$(forge create src/mocks/MockERC20.sol:MockERC20 \
+TOKENA_OUTPUT=$(forge create test/mocks/MockERC20.sol:MockERC20 \
   --rpc-url http://localhost:8545 \
   --private-key $DEPLOYER_KEY \
   --broadcast \
@@ -70,7 +70,7 @@ TOKENA_OUTPUT=$(forge create src/mocks/MockERC20.sol:MockERC20 \
   --constructor-args "Token A" "TKA" 18)
 TOKENA_ADDR=$(echo "$TOKENA_OUTPUT" | jq -r '.deployedTo')
 
-TOKENB_OUTPUT=$(forge create src/mocks/MockERC20.sol:MockERC20 \
+TOKENB_OUTPUT=$(forge create test/mocks/MockERC20.sol:MockERC20 \
   --rpc-url http://localhost:8545 \
   --private-key $DEPLOYER_KEY \
   --broadcast \

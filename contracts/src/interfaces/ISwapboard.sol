@@ -155,6 +155,7 @@ interface ISwapboard {
     ) external view returns (bool);
 
     /// @notice Returns the WETH address used by this contract
+    /// @return The WETH token address
     function weth() external view returns (address);
 
     /// @notice Creates an order selling ETH (auto-wrapped to WETH)

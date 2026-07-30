@@ -38,6 +38,8 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     /// @dev Non-existent orders return default struct with maker=address(0) and active=false
     mapping(uint256 orderId => Order order) public orders;
 
+    /// @notice Sets the canonical WETH address for this deployment
+    /// @param _weth Address of the WETH contract (must be a deployed contract)
     constructor(
         address _weth
     ) {
@@ -216,6 +218,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         IWETH(weth).withdraw(amountA);
 
         bool success;
+        // solhint-disable-next-line no-inline-assembly
         assembly {
             success := call(gas(), maker, amountA, 0, 0, 0, 0)
         }
@@ -247,6 +250,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         IWETH(weth).withdraw(amountA);
 
         bool success;
+        // solhint-disable-next-line no-inline-assembly
         assembly {
             success := call(gas(), caller(), amountA, 0, 0, 0, 0)
         }
