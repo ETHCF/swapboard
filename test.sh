@@ -18,18 +18,14 @@ show_help() {
 run_contract_lint() {
   echo "0. Contract Lint (forge lint + solhint)"
   echo "-----------------------------------------"
-  cd "$ROOT_DIR/contracts"
-  forge lint
-  npx --yes solhint 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
-  cd "$ROOT_DIR"
+  make -C "$ROOT_DIR" lint
   echo ""
 }
 
 run_contract_tests() {
   echo "1. Contract Tests (Foundry)"
   echo "-----------------------------------------"
-  cd "$ROOT_DIR/contracts" && forge test --summary
-  cd "$ROOT_DIR"
+  make -C "$ROOT_DIR" test-contracts
   echo ""
 }
 

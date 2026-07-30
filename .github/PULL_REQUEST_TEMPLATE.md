@@ -9,9 +9,9 @@ Brief description of changes.
 
 ## Testing
 
-- [ ] Unit tests pass (`forge test`)
+- [ ] Unit tests pass (`make test-contracts`)
 - [ ] Linting passes (`make lint`)
-- [ ] E2E tests pass (`cd e2e && pnpm test`)
+- [ ] E2E tests pass (`./test.sh --e2e`)
 - [ ] Manual testing completed
 
 ## Checklist
@@ -21,7 +21,8 @@ Brief description of changes.
 - [ ] Added tests for new functionality
 - [ ] Updated documentation if needed
 - [ ] No new warnings introduced
-- [ ] Linting passes
+- [ ] `make lint` passes
+- [ ] `make fmt-check` passes
 
 ## Related Issues
 

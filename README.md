@@ -28,30 +28,14 @@ docs/          API documentation
 ### Build
 
 ```bash
-# Lint + build (contracts and subgraph)
+make install
 make build
-
-# Or step by step
-make lint
-cd contracts && forge build
-cd subgraph && pnpm install && pnpm build
-
-# Frontend
-cd frontend && pnpm install
-
-# E2E (optional)
-cd e2e && pnpm install
 ```
 
 ### Lint
 
 ```bash
-# forge lint + solhint
 make lint
-
-# or manually
-cd contracts && forge lint
-cd contracts && npx solhint 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 ```
 
 ### Test
@@ -69,11 +53,9 @@ cd contracts && npx solhint 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 # All tests including full E2E
 ./test.sh --all
 
-# Individual test suites
-cd contracts && forge test -vvv           # 84 tests
-cd subgraph && pnpm test                  # 22 tests (Docker)
-cd frontend && node test.js               # 25 tests
-cd e2e && npm run e2e                     # Full stack (Docker)
+# Make targets
+make test            # contract + subgraph + e2e package tests
+make test-contracts  # Foundry tests only
 ```
 
 ### E2E Test Stack

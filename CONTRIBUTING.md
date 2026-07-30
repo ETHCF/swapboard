@@ -13,15 +13,7 @@
 ```bash
 git clone https://github.com/YOUR_USERNAME/swapboard.git
 cd swapboard
-
-# Install contract dependencies
-cd contracts && forge install
-
-# Install subgraph dependencies
-cd ../subgraph && pnpm install
-
-# Install e2e dependencies
-cd ../e2e && pnpm install
+make install
 ```
 
 ### Running Tests
@@ -31,16 +23,13 @@ cd ../e2e && pnpm install
 ./test.sh
 
 # Contract tests only
-cd contracts && forge test -vvv
+make test-contracts
 
 # Lint (forge lint + solhint)
 make lint
 
-# Subgraph tests
-cd subgraph && pnpm test
-
-# E2E tests
-cd e2e && pnpm test
+# Format
+make fmt
 ```
 
 ## Code Style
@@ -48,8 +37,8 @@ cd e2e && pnpm test
 ### Solidity
 
 - Follow the [Solidity Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html)
-- Use `forge fmt` to format code
-- Run `make lint` (`forge lint` + solhint) before opening a PR
+- Use `make fmt` to format code
+- Run `make lint` before opening a PR
 - Maximum line length: 100 characters
 - Use NatSpec comments for all public functions
 
@@ -79,7 +68,7 @@ cd e2e && pnpm test
 ### PR Requirements
 
 - All tests must pass
-- Code must be formatted (`forge fmt`)
+- Code must be formatted (`make fmt` / `make fmt-check`)
 - Linting must pass (`make lint`)
 - Include test coverage for new features
 - Update documentation if needed

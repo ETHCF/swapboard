@@ -24,8 +24,7 @@ jobs:
           cache: true
 
       - name: Check formatting
-        working-directory: contracts
-        run: forge fmt --check
+        run: make fmt-check
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,16 +35,13 @@ jobs:
         run: make lint
 
       - name: Build contracts
-        working-directory: contracts
-        run: forge build --sizes
+        run: make build-contracts
 
       - name: Run tests
-        working-directory: contracts
-        run: forge test -vvv
+        run: make test-contracts
 
       - name: Run coverage
-        working-directory: contracts
-        run: forge coverage --report summary --report lcov
+        run: make coverage
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
