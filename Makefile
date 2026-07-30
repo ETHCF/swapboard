@@ -31,6 +31,10 @@ fmt:
 fmt-check:
 	cd contracts && forge fmt --check
 
+# Lint contracts
+lint:
+	cd contracts && forge lint
+
 # Clean build artifacts
 clean:
 	cd contracts && forge clean

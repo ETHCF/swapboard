@@ -41,6 +41,13 @@ cd frontend && pnpm install
 cd e2e && pnpm install
 ```
 
+### Lint
+
+```bash
+# Contracts
+cd contracts && forge lint
+```
+
 ### Test
 
 ```bash
@@ -66,6 +73,7 @@ cd e2e && npm run e2e                     # Full stack (Docker)
 ### E2E Test Stack
 
 The full E2E tests spin up:
+
 - Anvil (local Ethereum node)
 - PostgreSQL (Graph Node storage)
 - IPFS (subgraph deployment)
@@ -98,6 +106,7 @@ cp .env.example .env
 ```
 
 The script will:
+
 1. Deploy the contract and verify on Etherscan
 2. Update subgraph config with contract address and start block
 3. Build and deploy subgraph to The Graph Studio

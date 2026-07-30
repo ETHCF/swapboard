@@ -31,6 +31,10 @@ jobs:
         working-directory: contracts
         run: forge build --sizes
 
+      - name: Lint contracts
+        working-directory: contracts
+        run: forge lint
+
       - name: Run tests
         working-directory: contracts
         run: forge test -vvv
