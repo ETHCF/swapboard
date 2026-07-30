@@ -86,7 +86,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             if (received != amountA) {
                 revert BalanceMismatch(amountA, received);
             }
-            orderId = nextOrderId++;
+            orderId = nextOrderId;
+
+            ++nextOrderId;
         }
 
         orders[orderId] = Order({
@@ -161,7 +163,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         IWETH(WETH).deposit{value: msg.value}();
 
         unchecked {
-            orderId = nextOrderId++;
+            orderId = nextOrderId;
+
+            ++nextOrderId;
         }
 
         orders[orderId] = Order({

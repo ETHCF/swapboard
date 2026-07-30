@@ -261,7 +261,7 @@ contract SwapboardStatelessInvariantTest is Test {
 
         uint256 prevId = board.nextOrderId();
 
-        for (uint256 i = 0; i < n; i++) {
+        for (uint256 i = 0; i < n; ++i) {
             vm.prank(maker);
             board.createOrder(address(tokenA), 1 ether, address(tokenB), 1 ether);
 

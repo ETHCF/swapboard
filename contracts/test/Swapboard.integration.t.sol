@@ -166,7 +166,7 @@ contract SwapboardIntegrationTest is Test {
         weth.approve(address(board), 100 ether);
 
         uint256[] memory orderIds = new uint256[](10);
-        for (uint256 i = 0; i < 10; i++) {
+        for (uint256 i = 0; i < 10; ++i) {
             orderIds[i] = board.createOrder(address(weth), 10 ether, address(usdc), 30_000e6);
         }
         vm.stopPrank();
@@ -176,7 +176,7 @@ contract SwapboardIntegrationTest is Test {
 
         ISwapboard.Order[] memory orders = board.getOrders(orderIds);
         assertEq(orders.length, 10);
-        for (uint256 i = 0; i < 10; i++) {
+        for (uint256 i = 0; i < 10; ++i) {
             assertEq(orders[i].maker, alice);
             assertEq(orders[i].amountA, 10 ether);
             assertTrue(orders[i].active);
@@ -301,7 +301,7 @@ contract SwapboardIntegrationTest is Test {
         weth.mint(alice, numOrders * 1 ether);
         weth.approve(address(board), numOrders * 1 ether);
 
-        for (uint256 i = 0; i < numOrders; i++) {
+        for (uint256 i = 0; i < numOrders; ++i) {
             board.createOrder(address(weth), 1 ether, address(usdc), 3000e6);
         }
         vm.stopPrank();
@@ -311,7 +311,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(bob);
         usdc.approve(address(board), numOrders * 3000e6);
-        for (uint256 i = 0; i < numOrders; i++) {
+        for (uint256 i = 0; i < numOrders; ++i) {
             board.fillOrder(i, 0);
         }
         vm.stopPrank();
