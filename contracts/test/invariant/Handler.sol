@@ -126,7 +126,7 @@ contract SwapboardHandler is Test {
 
         ghost_totalTokenAWithdrawn += order.amountA;
         ++ghost_ordersFilled;
-        ghost_activeOrders--;
+        --ghost_activeOrders;
         ghost_orderActive[orderId] = false;
     }
 
@@ -154,7 +154,7 @@ contract SwapboardHandler is Test {
 
         ghost_totalTokenAWithdrawn += order.amountA;
         ++ghost_ordersCancelled;
-        ghost_activeOrders--;
+        --ghost_activeOrders;
         ghost_orderActive[orderId] = false;
     }
 
