@@ -13,7 +13,8 @@ pragma solidity 0.8.33;
 import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
-import {MockERC20, MockFOT} from "./mocks/MockERC20.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockFOT} from "./mocks/MockFOT.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
 
 /// @notice Unit tests for Swapboard contract

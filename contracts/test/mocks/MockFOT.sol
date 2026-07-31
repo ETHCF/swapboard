@@ -3,11 +3,12 @@ pragma solidity 0.8.33;
 
 // solhint-disable use-natspec
 
-contract MockERC20 {
-    string public name;
-    string public symbol;
-    uint8 public decimals;
+contract MockFOT {
+    string public name = "Fee On Transfer";
+    string public symbol = "FOT";
+    uint8 public decimals = 18;
     uint256 public totalSupply;
+    uint256 public feePercent = 5;
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -18,16 +19,6 @@ contract MockERC20 {
     // solhint-disable-next-line gas-indexed-events
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
-    constructor(
-        string memory name_,
-        string memory symbol_,
-        uint8 decimals_
-    ) {
-        name = name_;
-        symbol = symbol_;
-        decimals = decimals_;
-    }
-
     function mint(
         address to,
         uint256 amount
@@ -35,15 +26,6 @@ contract MockERC20 {
         totalSupply += amount;
         balanceOf[to] += amount;
         emit Transfer(address(0), to, amount);
-    }
-
-    function burn(
-        address from,
-        uint256 amount
-    ) external {
-        balanceOf[from] -= amount;
-        totalSupply -= amount;
-        emit Transfer(from, address(0), amount);
     }
 
     function approve(
@@ -59,9 +41,12 @@ contract MockERC20 {
         address to,
         uint256 amount
     ) external returns (bool) {
+        uint256 fee = (amount * feePercent) / 100;
+        uint256 netAmount = amount - fee;
         balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(msg.sender, to, amount);
+        balanceOf[to] += netAmount;
+        totalSupply -= fee;
+        emit Transfer(msg.sender, to, netAmount);
         return true;
     }
 
@@ -74,9 +59,12 @@ contract MockERC20 {
         if (allowed != type(uint256).max) {
             allowance[from][msg.sender] = allowed - amount;
         }
+        uint256 fee = (amount * feePercent) / 100;
+        uint256 netAmount = amount - fee;
         balanceOf[from] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(from, to, amount);
+        balanceOf[to] += netAmount;
+        totalSupply -= fee;
+        emit Transfer(from, to, netAmount);
         return true;
     }
 }
