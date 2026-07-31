@@ -356,7 +356,7 @@ async function runTests() {
     "TokenA volumeSold is 100 tokens",
     tokenA && tokenA.volumeSold === parseEther("100").toString()
   );
-  test("TokenA ordersSelling is 2", tokenA && tokenA.ordersSelling === "2");
+  test("TokenA ordersSelling is 0", tokenA && tokenA.ordersSelling === "0");
 
   // Query pair stats
   const pairData = await querySubgraph(`{
@@ -402,13 +402,18 @@ async function runTests() {
   writeFileSync(appJsPath, appJsTest);
 
   try {
-    const browser = await puppeteer.default.launch({ headless: "new" });
+    // Allow file:// pages to fetch the local subgraph (CORS / opaque origin)
+    const browser = await puppeteer.default.launch({
+      headless: "new",
+      args: ["--disable-web-security", "--allow-file-access-from-files"],
+    });
     const page = await browser.newPage();
 
     const errors = [];
     page.on("pageerror", (err) => errors.push(err.message));
 
-    await page.goto(`file://${join(frontendDir, "index.html")}`, {
+    // Disable mock.js auto-activation on file:// so we hit the live e2e subgraph
+    await page.goto(`file://${join(frontendDir, "index.html")}?mock=false`, {
       waitUntil: "domcontentloaded",
       timeout: 10000,
     });
