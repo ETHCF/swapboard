@@ -8,15 +8,7 @@ import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
-
-/// @notice Contract that rejects ETH transfers
-contract ETHRejecter {
-    error RejectETH();
-
-    receive() external payable {
-        revert RejectETH();
-    }
-}
+import {ETHRejecter} from "./mocks/ETHRejecter.sol";
 
 /// @notice Unit tests for Swapboard native ETH support
 contract SwapboardETHTest is Test {
