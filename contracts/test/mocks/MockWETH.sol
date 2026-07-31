@@ -91,6 +91,7 @@ contract MockWETH {
         return true;
     }
 
+    // solhint-disable-next-line no-complex-fallback
     receive() external payable {
         balanceOf[msg.sender] += msg.value;
         totalSupply += msg.value;
