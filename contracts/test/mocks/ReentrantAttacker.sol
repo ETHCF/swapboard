@@ -100,7 +100,8 @@ contract ReentrantAttacker {
     }
 
     function _attemptReentrancy() internal {
-        if (attacking) { // Prevent infinite loop
+        if (attacking) {
+            // Prevent infinite loop
             return;
         }
         attacking = true;
