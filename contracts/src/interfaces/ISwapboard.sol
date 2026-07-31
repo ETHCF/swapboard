@@ -23,6 +23,7 @@ interface ISwapboard {
         uint256 amountB;
     }
 
+    // solhint-disable gas-indexed-events
     /// @notice Emitted when a new order is created
     /// @param orderId Unique identifier for the order
     /// @param maker Address that created the order
@@ -30,7 +31,6 @@ interface ISwapboard {
     /// @param amountA Amount of tokenA deposited
     /// @param tokenB Address of the token wanted
     /// @param amountB Amount of tokenB required to fill
-    // solhint-disable-next-line gas-indexed-events
     event OrderCreated(
         uint256 indexed orderId,
         address indexed maker,
@@ -39,6 +39,7 @@ interface ISwapboard {
         address tokenB,
         uint256 amountB
     );
+    // solhint-enable gas-indexed-events
 
     /// @notice Emitted when an order is filled by a taker
     /// @param orderId Unique identifier for the filled order
