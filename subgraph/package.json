@@ -10,7 +10,7 @@
   },
   "scripts": {
     "codegen": "graph codegen",
-    "build": "graph build",
+    "build": "graph codegen && graph build",
     "test": "graph test -d",
     "test:local": "graph test",
     "deploy": "graph deploy --studio swapboard",
