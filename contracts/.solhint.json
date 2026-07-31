@@ -9,6 +9,7 @@
     "max-line-length": ["warn", 120],
     "func-name-mixedcase": "off",
     "var-name-mixedcase": "off",
-    "import-path-check": "off"
+    "import-path-check": "off",
+    "function-max-lines": ["warn", 60]
   }
 }
