@@ -17,8 +17,13 @@ contract MockRebase {
     mapping(address => uint256) internal _shares;
     mapping(address => mapping(address => uint256)) public allowance;
 
+    // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);
+
+    // solhint-disable-next-line gas-indexed-events
     event Approval(address indexed owner, address indexed spender, uint256 amount);
+
+    // solhint-disable-next-line gas-indexed-events
     event Rebase(uint256 newMultiplier);
 
     function totalSupply() external view returns (uint256) {

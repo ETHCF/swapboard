@@ -15,9 +15,16 @@ contract MockWETH {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
+    // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);
+
+    // solhint-disable-next-line gas-indexed-events
     event Approval(address indexed owner, address indexed spender, uint256 amount);
+
+    // solhint-disable-next-line gas-indexed-events
     event Deposit(address indexed dst, uint256 wad);
+
+    // solhint-disable-next-line gas-indexed-events
     event Withdrawal(address indexed src, uint256 wad);
 
     function deposit() external payable {

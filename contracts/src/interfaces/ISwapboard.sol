@@ -30,6 +30,7 @@ interface ISwapboard {
     /// @param amountA Amount of tokenA deposited
     /// @param tokenB Address of the token wanted
     /// @param amountB Amount of tokenB required to fill
+    // solhint-disable-next-line gas-indexed-events
     event OrderCreated(
         uint256 indexed orderId,
         address indexed maker,
