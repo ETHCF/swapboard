@@ -57,7 +57,10 @@ const SWAPBOARD_ABI = [
   {
     type: "function",
     name: "fillOrder",
-    inputs: [{ name: "orderId", type: "uint256" }],
+    inputs: [
+      { name: "orderId", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
     outputs: [],
     stateMutability: "nonpayable",
   },
@@ -248,12 +251,12 @@ async function runTests() {
   receipt = await publicClient.waitForTransactionReceipt({ hash });
   console.log(`  Created order 1 at block ${receipt.blockNumber}`);
 
-  // Fill order 0
+  // Fill order 0 (deadline 0 = no expiry)
   hash = await bobWallet.writeContract({
     address: CONFIG.CONTRACT_ADDR,
     abi: SWAPBOARD_ABI,
     functionName: "fillOrder",
-    args: [0n],
+    args: [0n, 0n],
   });
   receipt = await publicClient.waitForTransactionReceipt({ hash });
   const fillBlock = receipt.blockNumber;
