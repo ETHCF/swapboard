@@ -182,13 +182,14 @@ async function runTests() {
       `Expected ${expectedActive} orders, got ${orderIds.length}`
     );
 
-    // Switch to "all" filter - expect all 50 orders (paginated to 20)
+    // Switch to "all" filter - PAGE_SIZE (200) exceeds total, so all 50 orders show
     await clickRadio("all");
     orderIds = await getOrderIds();
+    const expectedTotal = parseInt(EXPECTED.stats.total);
     test(
       "All filter shows orders (paginated)",
-      orderIds.length === 20,
-      `Expected 20 orders (page size), got ${orderIds.length}`
+      orderIds.length === expectedTotal,
+      `Expected ${expectedTotal} orders, got ${orderIds.length}`
     );
 
     // Switch to "filled" filter - expect 15 filled orders

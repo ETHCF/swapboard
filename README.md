@@ -21,33 +21,30 @@ docs/          API documentation
 ### Prerequisites
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
-- [Node.js](https://nodejs.org/) v20+
+- [Node.js](https://nodejs.org/) v22+
 - [pnpm](https://pnpm.io/)
 - [Docker](https://www.docker.com/) (required for subgraph and e2e tests)
 
 ### Build
 
 ```bash
-# Contracts
-cd contracts && forge build
+make install
+make build
+```
 
-# Subgraph
-cd subgraph && pnpm install && pnpm build
+### Lint
 
-# Frontend
-cd frontend && pnpm install
-
-# E2E (optional)
-cd e2e && pnpm install
+```bash
+make lint
 ```
 
 ### Test
 
 ```bash
-# Default: contract + subgraph + frontend tests
+# Default: lint + contract + subgraph + frontend tests
 ./test.sh
 
-# Fast: contract tests only (no Docker)
+# Fast: lint + contract + frontend unit tests only (no Docker)
 ./test.sh --fast
 
 # Full E2E: includes Docker stack with Graph Node
@@ -56,16 +53,15 @@ cd e2e && pnpm install
 # All tests including full E2E
 ./test.sh --all
 
-# Individual test suites
-cd contracts && forge test -vvv           # 84 tests
-cd subgraph && pnpm test                  # 22 tests (Docker)
-cd frontend && node test.js               # 25 tests
-cd e2e && npm run e2e                     # Full stack (Docker)
+# Make targets
+make test            # contract + subgraph + e2e package tests
+make test-contracts  # Foundry tests only
 ```
 
 ### E2E Test Stack
 
 The full E2E tests spin up:
+
 - Anvil (local Ethereum node)
 - PostgreSQL (Graph Node storage)
 - IPFS (subgraph deployment)
@@ -98,6 +94,7 @@ cp .env.example .env
 ```
 
 The script will:
+
 1. Deploy the contract and verify on Etherscan
 2. Update subgraph config with contract address and start block
 3. Build and deploy subgraph to The Graph Studio

@@ -23,6 +23,7 @@ interface ISwapboard {
         uint256 amountB;
     }
 
+    // solhint-disable gas-indexed-events
     /// @notice Emitted when a new order is created
     /// @param orderId Unique identifier for the order
     /// @param maker Address that created the order
@@ -38,6 +39,7 @@ interface ISwapboard {
         address tokenB,
         uint256 amountB
     );
+    // solhint-enable gas-indexed-events
 
     /// @notice Emitted when an order is filled by a taker
     /// @param orderId Unique identifier for the filled order
@@ -155,6 +157,7 @@ interface ISwapboard {
     ) external view returns (bool);
 
     /// @notice Returns the WETH address used by this contract
+    /// @return The WETH token address
     function weth() external view returns (address);
 
     /// @notice Creates an order selling ETH (auto-wrapped to WETH)

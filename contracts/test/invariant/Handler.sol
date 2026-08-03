@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity ^0.8.33;
+pragma solidity 0.8.33;
+
+// solhint-disable use-natspec
 
 import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
@@ -61,7 +63,7 @@ contract SwapboardHandler is Test {
         actors.push(address(0x1005));
 
         // Mint tokens to all actors
-        for (uint256 i = 0; i < actors.length; i++) {
+        for (uint256 i = 0; i < actors.length; ++i) {
             tokenA.mint(actors[i], 1_000_000 ether);
             tokenB.mint(actors[i], 1_000_000 ether);
             vm.prank(actors[i]);
@@ -85,13 +87,13 @@ contract SwapboardHandler is Test {
             return; // Skip if insufficient balance
         }
 
-        calls_createOrder++;
+        ++calls_createOrder;
 
         uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
 
         ghost_totalTokenADeposited += amountA;
-        ghost_ordersCreated++;
-        ghost_activeOrders++;
+        ++ghost_ordersCreated;
+        ++ghost_activeOrders;
         ghost_orderAmounts[orderId] = amountA;
         ghost_orderActive[orderId] = true;
     }
@@ -118,13 +120,13 @@ contract SwapboardHandler is Test {
             return; // Insufficient balance
         }
 
-        calls_fillOrder++;
+        ++calls_fillOrder;
 
         board.fillOrder(orderId, 0);
 
         ghost_totalTokenAWithdrawn += order.amountA;
-        ghost_ordersFilled++;
-        ghost_activeOrders--;
+        ++ghost_ordersFilled;
+        --ghost_activeOrders;
         ghost_orderActive[orderId] = false;
     }
 
@@ -146,13 +148,13 @@ contract SwapboardHandler is Test {
 
         // Only maker can cancel
         vm.prank(order.maker);
-        calls_cancelOrder++;
+        ++calls_cancelOrder;
 
         board.cancelOrder(orderId);
 
         ghost_totalTokenAWithdrawn += order.amountA;
-        ghost_ordersCancelled++;
-        ghost_activeOrders--;
+        ++ghost_ordersCancelled;
+        --ghost_activeOrders;
         ghost_orderActive[orderId] = false;
     }
 
@@ -169,9 +171,9 @@ contract SwapboardHandler is Test {
     /// @notice Count active orders by iterating
     function countActiveOrders() external view returns (uint256 count) {
         uint256 nextId = board.nextOrderId();
-        for (uint256 i = 0; i < nextId; i++) {
+        for (uint256 i = 0; i < nextId; ++i) {
             if (board.canFill(i)) {
-                count++;
+                ++count;
             }
         }
     }
@@ -179,7 +181,7 @@ contract SwapboardHandler is Test {
     /// @notice Get sum of all active order amounts
     function sumActiveOrderAmounts() external view returns (uint256 total) {
         uint256 nextId = board.nextOrderId();
-        for (uint256 i = 0; i < nextId; i++) {
+        for (uint256 i = 0; i < nextId; ++i) {
             ISwapboard.Order memory order = board.getOrder(i);
             if (order.active) {
                 total += order.amountA;

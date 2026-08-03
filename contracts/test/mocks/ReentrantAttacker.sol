@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity ^0.8.33;
+pragma solidity 0.8.33;
+
+// solhint-disable use-natspec
 
 import {Swapboard} from "../../src/Swapboard.sol";
 
@@ -14,20 +16,23 @@ contract ReentrantAttacker {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    Swapboard public immutable board;
+    Swapboard public immutable BOARD;
     string public attackType;
     uint256 public orderId;
     address public attacker;
     bool public attacking;
 
+    // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);
+
+    // solhint-disable-next-line gas-indexed-events
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
     constructor(
         address _board,
         string memory _attackType
     ) {
-        board = Swapboard(payable(_board));
+        BOARD = Swapboard(payable(_board));
         attackType = _attackType;
     }
 
@@ -95,15 +100,18 @@ contract ReentrantAttacker {
     }
 
     function _attemptReentrancy() internal {
-        if (attacking) return; // Prevent infinite loop
+        if (attacking) {
+            // Prevent infinite loop
+            return;
+        }
         attacking = true;
 
         if (keccak256(bytes(attackType)) == keccak256(bytes("fill"))) {
             // Try to fill the same order again
-            try board.fillOrder(orderId, 0) {} catch {}
+            try BOARD.fillOrder(orderId, 0) {} catch {}
         } else if (keccak256(bytes(attackType)) == keccak256(bytes("cancel"))) {
             // Try to cancel the same order again
-            try board.cancelOrder(orderId) {} catch {}
+            try BOARD.cancelOrder(orderId) {} catch {}
         }
 
         attacking = false;

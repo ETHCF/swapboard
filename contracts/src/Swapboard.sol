@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity ^0.8.33;
+pragma solidity 0.8.33;
 
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -28,7 +28,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     /// @notice Canonical WETH address for this deployment
-    address public immutable weth;
+    address private immutable WETH;
 
     /// @notice Counter for generating unique order IDs
     /// @dev Starts at 0, increments by 1 for each new order
@@ -38,17 +38,30 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     /// @dev Non-existent orders return default struct with maker=address(0) and active=false
     mapping(uint256 orderId => Order order) public orders;
 
+    /// @notice Sets the canonical WETH address for this deployment
+    /// @param _weth Address of the WETH contract (must be a deployed contract)
     constructor(
         address _weth
     ) {
-        if (_weth == address(0)) revert ZeroAddress();
-        if (_weth.code.length == 0) revert NotAContract(_weth);
-        weth = _weth;
+        if (_weth == address(0)) {
+            revert ZeroAddress();
+        }
+        if (_weth.code.length == 0) {
+            revert NotAContract(_weth);
+        }
+        WETH = _weth;
     }
 
     /// @notice Accept ETH only from WETH contract (for withdraw callbacks)
     receive() external payable {
-        if (msg.sender != weth) revert NotWETH(weth, msg.sender);
+        if (msg.sender != WETH) {
+            revert NotWETH(WETH, msg.sender);
+        }
+    }
+
+    /// @inheritdoc ISwapboard
+    function weth() external view returns (address) {
+        return WETH;
     }
 
     /// @inheritdoc ISwapboard
@@ -60,13 +73,27 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         address tokenB,
         uint256 amountB
     ) external nonReentrant returns (uint256 orderId) {
-        if (tokenA == address(0)) revert ZeroAddress();
-        if (tokenB == address(0)) revert ZeroAddress();
-        if (amountA == 0) revert ZeroAmount();
-        if (amountB == 0) revert ZeroAmount();
-        if (tokenA == tokenB) revert SameToken();
-        if (tokenA.code.length == 0) revert NotAContract(tokenA);
-        if (tokenB.code.length == 0) revert NotAContract(tokenB);
+        if (tokenA == address(0)) {
+            revert ZeroAddress();
+        }
+        if (tokenB == address(0)) {
+            revert ZeroAddress();
+        }
+        if (amountA == 0) {
+            revert ZeroAmount();
+        }
+        if (amountB == 0) {
+            revert ZeroAmount();
+        }
+        if (tokenA == tokenB) {
+            revert SameToken();
+        }
+        if (tokenA.code.length == 0) {
+            revert NotAContract(tokenA);
+        }
+        if (tokenB.code.length == 0) {
+            revert NotAContract(tokenB);
+        }
 
         uint256 balanceBefore = IERC20(tokenA).balanceOf(address(this));
         IERC20(tokenA).safeTransferFrom(msg.sender, address(this), amountA);
@@ -79,7 +106,9 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             if (received != amountA) {
                 revert BalanceMismatch(amountA, received);
             }
-            orderId = nextOrderId++;
+            orderId = nextOrderId;
+
+            ++nextOrderId;
         }
 
         orders[orderId] = Order({
@@ -100,13 +129,19 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         uint256 orderId,
         uint256 deadline
     ) external nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) revert DeadlineExpired();
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
+        }
 
         Order storage order = orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!active) revert OrderNotActive(orderId);
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!active) {
+            revert OrderNotActive(orderId);
+        }
 
         order.active = false;
 
@@ -127,9 +162,15 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         Order storage order = orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!active) revert OrderNotActive(orderId);
-        if (msg.sender != maker) revert NotMaker(orderId, msg.sender, maker);
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!active) {
+            revert OrderNotActive(orderId);
+        }
+        if (msg.sender != maker) {
+            revert NotMaker(orderId, msg.sender, maker);
+        }
 
         order.active = false;
 
@@ -145,28 +186,40 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         address tokenB,
         uint256 amountB
     ) external payable nonReentrant returns (uint256 orderId) {
-        if (msg.value == 0) revert ZeroETH();
-        if (tokenB == address(0)) revert ZeroAddress();
-        if (amountB == 0) revert ZeroAmount();
-        if (tokenB == weth) revert SameToken();
-        if (tokenB.code.length == 0) revert NotAContract(tokenB);
+        if (msg.value == 0) {
+            revert ZeroETH();
+        }
+        if (tokenB == address(0)) {
+            revert ZeroAddress();
+        }
+        if (amountB == 0) {
+            revert ZeroAmount();
+        }
+        if (tokenB == WETH) {
+            revert SameToken();
+        }
+        if (tokenB.code.length == 0) {
+            revert NotAContract(tokenB);
+        }
 
-        IWETH(weth).deposit{value: msg.value}();
+        IWETH(WETH).deposit{value: msg.value}();
 
         unchecked {
-            orderId = nextOrderId++;
+            orderId = nextOrderId;
+
+            ++nextOrderId;
         }
 
         orders[orderId] = Order({
             maker: msg.sender,
             active: true,
-            tokenA: weth,
+            tokenA: WETH,
             amountA: msg.value,
             tokenB: tokenB,
             amountB: amountB
         });
 
-        emit OrderCreated(orderId, msg.sender, weth, msg.value, tokenB, amountB);
+        emit OrderCreated(orderId, msg.sender, WETH, msg.value, tokenB, amountB);
     }
 
     /// @inheritdoc ISwapboard
@@ -174,23 +227,33 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         uint256 orderId,
         uint256 deadline
     ) external payable nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) revert DeadlineExpired();
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
+        }
 
         Order storage order = orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!active) revert OrderNotActive(orderId);
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!active) {
+            revert OrderNotActive(orderId);
+        }
 
         uint256 amountB = order.amountB;
 
-        if (order.tokenB != weth) revert NotWETH(weth, order.tokenB);
-        if (msg.value != amountB) revert ETHAmountMismatch(amountB, msg.value);
+        if (order.tokenB != WETH) {
+            revert NotWETH(WETH, order.tokenB);
+        }
+        if (msg.value != amountB) {
+            revert ETHAmountMismatch(amountB, msg.value);
+        }
 
         order.active = false;
 
-        IWETH(weth).deposit{value: msg.value}();
-        IERC20(weth).safeTransfer(maker, amountB);
+        IWETH(WETH).deposit{value: msg.value}();
+        IERC20(WETH).safeTransfer(maker, amountB);
 
         IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
 
@@ -204,22 +267,33 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         Order storage order = orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!active) revert OrderNotActive(orderId);
-        if (msg.sender != maker) revert NotMaker(orderId, msg.sender, maker);
-        if (order.tokenA != weth) revert NotWETH(weth, order.tokenA);
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!active) {
+            revert OrderNotActive(orderId);
+        }
+        if (msg.sender != maker) {
+            revert NotMaker(orderId, msg.sender, maker);
+        }
+        if (order.tokenA != WETH) {
+            revert NotWETH(WETH, order.tokenA);
+        }
 
         uint256 amountA = order.amountA;
 
         order.active = false;
 
-        IWETH(weth).withdraw(amountA);
+        IWETH(WETH).withdraw(amountA);
 
         bool success;
+        // solhint-disable-next-line no-inline-assembly
         assembly {
             success := call(gas(), maker, amountA, 0, 0, 0, 0)
         }
-        if (!success) revert ETHTransferFailed(maker);
+        if (!success) {
+            revert ETHTransferFailed(maker);
+        }
 
         emit OrderCanceled(orderId);
     }
@@ -229,14 +303,22 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         uint256 orderId,
         uint256 deadline
     ) external nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) revert DeadlineExpired();
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
+        }
 
         Order storage order = orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) revert OrderNotFound(orderId);
-        if (!active) revert OrderNotActive(orderId);
-        if (order.tokenA != weth) revert NotWETH(weth, order.tokenA);
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!active) {
+            revert OrderNotActive(orderId);
+        }
+        if (order.tokenA != WETH) {
+            revert NotWETH(WETH, order.tokenA);
+        }
 
         uint256 amountA = order.amountA;
 
@@ -244,13 +326,16 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         IERC20(order.tokenB).safeTransferFrom(msg.sender, maker, order.amountB);
 
-        IWETH(weth).withdraw(amountA);
+        IWETH(WETH).withdraw(amountA);
 
         bool success;
+        // solhint-disable-next-line no-inline-assembly
         assembly {
             success := call(gas(), caller(), amountA, 0, 0, 0, 0)
         }
-        if (!success) revert ETHTransferFailed(msg.sender);
+        if (!success) {
+            revert ETHTransferFailed(msg.sender);
+        }
 
         emit OrderFilled(orderId, msg.sender);
     }

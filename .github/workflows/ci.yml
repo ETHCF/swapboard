@@ -14,7 +14,7 @@ jobs:
     name: Contract Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -24,20 +24,24 @@ jobs:
           cache: true
 
       - name: Check formatting
-        working-directory: contracts
-        run: forge fmt --check
+        run: make fmt-check
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Lint contracts
+        run: make lint
 
       - name: Build contracts
-        working-directory: contracts
-        run: forge build --sizes
+        run: make build-contracts
 
       - name: Run tests
-        working-directory: contracts
-        run: forge test -vvv
+        run: make test-contracts
 
       - name: Run coverage
-        working-directory: contracts
-        run: forge coverage --report summary --report lcov
+        run: make coverage
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
@@ -49,15 +53,15 @@ jobs:
     name: Subgraph Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v6
         with:
           version: 8
 
@@ -66,7 +70,7 @@ jobs:
         run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
 
       - name: Cache pnpm dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.STORE_PATH }}
           key: ${{ runner.os }}-pnpm-subgraph-${{ hashFiles('subgraph/pnpm-lock.yaml') }}
@@ -93,12 +97,12 @@ jobs:
     name: Frontend Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Install dependencies
         working-directory: frontend
@@ -112,7 +116,7 @@ jobs:
     name: Security Checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 

@@ -1,18 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity ^0.8.33;
+pragma solidity 0.8.33;
+
+// solhint-disable use-natspec
 
 import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
-
-/// @notice Contract that rejects ETH transfers
-contract ETHRejecter {
-    receive() external payable {
-        revert("no ETH");
-    }
-}
+import {ETHRejecter} from "./mocks/ETHRejecter.sol";
 
 /// @notice Unit tests for Swapboard native ETH support
 contract SwapboardETHTest is Test {
@@ -24,9 +20,10 @@ contract SwapboardETHTest is Test {
     address public maker = address(0x1);
     address public taker = address(0x2);
 
-    uint256 constant ETH_AMOUNT = 1 ether;
-    uint256 constant TOKEN_AMOUNT = 3000e6;
+    uint256 private constant ETH_AMOUNT = 1 ether;
+    uint256 private constant TOKEN_AMOUNT = 3000e6;
 
+    /// @notice Deploys fixtures for each test
     function setUp() public {
         weth = new MockWETH();
         board = new Swapboard(address(weth));
@@ -41,6 +38,7 @@ contract SwapboardETHTest is Test {
 
     // ============ createOrderWithEth ============
 
+    /// @notice Tests createOrderWithEth
     function test_createOrderWithEth() public {
         vm.prank(maker);
         uint256 orderId = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
@@ -56,6 +54,7 @@ contract SwapboardETHTest is Test {
         assertEq(board.nextOrderId(), 1);
     }
 
+    /// @notice Tests createOrderWithEth wethBalance
     function test_createOrderWithEth_wethBalance() public {
         uint256 wethBefore = weth.balanceOf(address(board));
 
@@ -65,6 +64,7 @@ contract SwapboardETHTest is Test {
         assertEq(weth.balanceOf(address(board)), wethBefore + ETH_AMOUNT);
     }
 
+    /// @notice Tests createOrderWithEth event
     function test_createOrderWithEth_event() public {
         vm.expectEmit(true, true, false, true);
         emit ISwapboard.OrderCreated(
@@ -75,36 +75,42 @@ contract SwapboardETHTest is Test {
         board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
     }
 
+    /// @notice Tests createOrderWithEth revert zeroETH
     function test_createOrderWithEth_revert_zeroETH() public {
         vm.prank(maker);
         vm.expectRevert(ISwapboard.ZeroETH.selector);
         board.createOrderWithEth{value: 0}(address(token), TOKEN_AMOUNT);
     }
 
+    /// @notice Tests createOrderWithEth revert zeroAddress
     function test_createOrderWithEth_revert_zeroAddress() public {
         vm.prank(maker);
         vm.expectRevert(ISwapboard.ZeroAddress.selector);
         board.createOrderWithEth{value: ETH_AMOUNT}(address(0), TOKEN_AMOUNT);
     }
 
+    /// @notice Tests createOrderWithEth revert zeroAmount
     function test_createOrderWithEth_revert_zeroAmount() public {
         vm.prank(maker);
         vm.expectRevert(ISwapboard.ZeroAmount.selector);
         board.createOrderWithEth{value: ETH_AMOUNT}(address(token), 0);
     }
 
+    /// @notice Tests createOrderWithEth revert sameToken
     function test_createOrderWithEth_revert_sameToken() public {
         vm.prank(maker);
         vm.expectRevert(ISwapboard.SameToken.selector);
         board.createOrderWithEth{value: ETH_AMOUNT}(address(weth), TOKEN_AMOUNT);
     }
 
+    /// @notice Tests createOrderWithEth revert notAContract
     function test_createOrderWithEth_revert_notAContract() public {
         vm.prank(maker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotAContract.selector, address(0xDEAD)));
         board.createOrderWithEth{value: ETH_AMOUNT}(address(0xDEAD), TOKEN_AMOUNT);
     }
 
+    /// @notice Tests createOrderWithEth sequentialIds
     function test_createOrderWithEth_sequentialIds() public {
         vm.startPrank(maker);
         uint256 id0 = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
@@ -117,6 +123,7 @@ contract SwapboardETHTest is Test {
 
     // ============ fillOrderWithEth ============
 
+    /// @notice Tests fillOrderWithEth
     function test_fillOrderWithEth() public {
         // Maker creates order: sells token, wants WETH
         vm.startPrank(maker);
@@ -136,6 +143,7 @@ contract SwapboardETHTest is Test {
         assertEq(token.balanceOf(taker), takerTokenBefore + TOKEN_AMOUNT);
     }
 
+    /// @notice Tests fillOrderWithEth event
     function test_fillOrderWithEth_event() public {
         vm.startPrank(maker);
         token.approve(address(board), TOKEN_AMOUNT);
@@ -149,6 +157,7 @@ contract SwapboardETHTest is Test {
         board.fillOrderWithEth{value: ETH_AMOUNT}(orderId, 0);
     }
 
+    /// @notice Tests fillOrderWithEth revert notWETH
     function test_fillOrderWithEth_revert_notWETH() public {
         // Order wants tokenB, not WETH
         vm.startPrank(maker);
@@ -163,6 +172,7 @@ contract SwapboardETHTest is Test {
         board.fillOrderWithEth{value: 1 ether}(orderId, 0);
     }
 
+    /// @notice Tests fillOrderWithEth revert amountMismatch tooLow
     function test_fillOrderWithEth_revert_amountMismatch_tooLow() public {
         vm.startPrank(maker);
         token.approve(address(board), TOKEN_AMOUNT);
@@ -178,6 +188,7 @@ contract SwapboardETHTest is Test {
         board.fillOrderWithEth{value: ETH_AMOUNT - 1}(orderId, 0);
     }
 
+    /// @notice Tests fillOrderWithEth revert amountMismatch tooHigh
     function test_fillOrderWithEth_revert_amountMismatch_tooHigh() public {
         vm.startPrank(maker);
         token.approve(address(board), TOKEN_AMOUNT);
@@ -193,12 +204,14 @@ contract SwapboardETHTest is Test {
         board.fillOrderWithEth{value: ETH_AMOUNT + 1}(orderId, 0);
     }
 
+    /// @notice Tests fillOrderWithEth revert orderNotFound
     function test_fillOrderWithEth_revert_orderNotFound() public {
         vm.prank(taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
         board.fillOrderWithEth{value: ETH_AMOUNT}(999, 0);
     }
 
+    /// @notice Tests fillOrderWithEth revert orderNotActive
     function test_fillOrderWithEth_revert_orderNotActive() public {
         vm.startPrank(maker);
         token.approve(address(board), TOKEN_AMOUNT);
@@ -217,6 +230,7 @@ contract SwapboardETHTest is Test {
 
     // ============ cancelOrderUnwrap ============
 
+    /// @notice Tests cancelOrderUnwrap
     function test_cancelOrderUnwrap() public {
         vm.prank(maker);
         uint256 orderId = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
@@ -232,6 +246,7 @@ contract SwapboardETHTest is Test {
         assertEq(weth.balanceOf(address(board)), 0);
     }
 
+    /// @notice Tests cancelOrderUnwrap event
     function test_cancelOrderUnwrap_event() public {
         vm.prank(maker);
         uint256 orderId = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
@@ -243,6 +258,7 @@ contract SwapboardETHTest is Test {
         board.cancelOrderUnwrap(orderId);
     }
 
+    /// @notice Tests cancelOrderUnwrap revert notWETH
     function test_cancelOrderUnwrap_revert_notWETH() public {
         // Create a regular ERC20 order
         vm.startPrank(maker);
@@ -257,6 +273,7 @@ contract SwapboardETHTest is Test {
         board.cancelOrderUnwrap(orderId);
     }
 
+    /// @notice Tests cancelOrderUnwrap revert notMaker
     function test_cancelOrderUnwrap_revert_notMaker() public {
         vm.prank(maker);
         uint256 orderId = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
@@ -266,12 +283,14 @@ contract SwapboardETHTest is Test {
         board.cancelOrderUnwrap(orderId);
     }
 
+    /// @notice Tests cancelOrderUnwrap revert orderNotFound
     function test_cancelOrderUnwrap_revert_orderNotFound() public {
         vm.prank(maker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
         board.cancelOrderUnwrap(999);
     }
 
+    /// @notice Tests cancelOrderUnwrap revert orderNotActive
     function test_cancelOrderUnwrap_revert_orderNotActive() public {
         vm.prank(maker);
         uint256 orderId = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
@@ -284,6 +303,7 @@ contract SwapboardETHTest is Test {
         board.cancelOrderUnwrap(orderId);
     }
 
+    /// @notice Tests cancelOrderUnwrap revert ethTransferFailed
     function test_cancelOrderUnwrap_revert_ethTransferFailed() public {
         ETHRejecter rejecter = new ETHRejecter();
         vm.deal(address(rejecter), 10 ether);
@@ -300,6 +320,7 @@ contract SwapboardETHTest is Test {
 
     // ============ fillOrderUnwrap ============
 
+    /// @notice Tests fillOrderUnwrap
     function test_fillOrderUnwrap() public {
         // Maker creates WETH order
         vm.prank(maker);
@@ -320,6 +341,7 @@ contract SwapboardETHTest is Test {
         assertEq(weth.balanceOf(address(board)), 0);
     }
 
+    /// @notice Tests fillOrderUnwrap event
     function test_fillOrderUnwrap_event() public {
         vm.prank(maker);
         uint256 orderId = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
@@ -333,6 +355,7 @@ contract SwapboardETHTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests fillOrderUnwrap revert notWETH
     function test_fillOrderUnwrap_revert_notWETH() public {
         // Create a regular ERC20 order (tokenA is not WETH)
         vm.startPrank(maker);
@@ -347,12 +370,14 @@ contract SwapboardETHTest is Test {
         board.fillOrderUnwrap(orderId, 0);
     }
 
+    /// @notice Tests fillOrderUnwrap revert orderNotFound
     function test_fillOrderUnwrap_revert_orderNotFound() public {
         vm.prank(taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
         board.fillOrderUnwrap(999, 0);
     }
 
+    /// @notice Tests fillOrderUnwrap revert orderNotActive
     function test_fillOrderUnwrap_revert_orderNotActive() public {
         vm.prank(maker);
         uint256 orderId = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
@@ -367,6 +392,7 @@ contract SwapboardETHTest is Test {
         board.fillOrderUnwrap(orderId, 0);
     }
 
+    /// @notice Tests fillOrderUnwrap revert ethTransferFailed
     function test_fillOrderUnwrap_revert_ethTransferFailed() public {
         vm.prank(maker);
         uint256 orderId = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
@@ -386,6 +412,7 @@ contract SwapboardETHTest is Test {
 
     // ============ receive ============
 
+    /// @notice Tests receive reverts when ETH is sent by a non-WETH caller
     function test_receive_revert_nonWETH() public {
         vm.prank(maker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotWETH.selector, address(weth), maker));
@@ -397,6 +424,7 @@ contract SwapboardETHTest is Test {
 
     // ============ Cross-function interop ============
 
+    /// @notice Tests createWithEth fillNormal
     function test_createWithEth_fillNormal() public {
         // Create with ETH, fill with normal fillOrder (taker gets WETH)
         vm.prank(maker);
@@ -412,6 +440,7 @@ contract SwapboardETHTest is Test {
         assertEq(weth.balanceOf(taker), takerWethBefore + ETH_AMOUNT);
     }
 
+    /// @notice Tests createWithEth cancelNormal
     function test_createWithEth_cancelNormal() public {
         // Create with ETH, cancel with normal cancelOrder (maker gets WETH)
         vm.prank(maker);
@@ -425,6 +454,7 @@ contract SwapboardETHTest is Test {
         assertEq(weth.balanceOf(maker), makerWethBefore + ETH_AMOUNT);
     }
 
+    /// @notice Tests createNormal fillWithEth
     function test_createNormal_fillWithEth() public {
         // Create normal order wanting WETH, fill with ETH
         vm.startPrank(maker);
@@ -442,6 +472,7 @@ contract SwapboardETHTest is Test {
         assertEq(token.balanceOf(taker), takerTokenBefore + TOKEN_AMOUNT);
     }
 
+    /// @notice Tests createWithEth fillUnwrap
     function test_createWithEth_fillUnwrap() public {
         // Full ETH round-trip: maker deposits ETH, taker receives ETH
         vm.prank(maker);
@@ -458,6 +489,7 @@ contract SwapboardETHTest is Test {
         assertEq(weth.balanceOf(address(board)), 0);
     }
 
+    /// @notice Tests createWithEth cancelUnwrap
     function test_createWithEth_cancelUnwrap() public {
         // Full ETH round-trip: maker deposits ETH, maker cancels and gets ETH back
         uint256 makerEthBefore = maker.balance;
@@ -474,6 +506,7 @@ contract SwapboardETHTest is Test {
         assertEq(weth.balanceOf(address(board)), 0);
     }
 
+    /// @notice Tests multipleETHOrders
     function test_multipleETHOrders() public {
         vm.startPrank(maker);
         uint256 id0 = board.createOrderWithEth{value: 1 ether}(address(token), TOKEN_AMOUNT);
@@ -505,6 +538,7 @@ contract SwapboardETHTest is Test {
 
     // ============ Fuzz tests ============
 
+    /// @notice Fuzz tests createOrderWithEth
     function testFuzz_createOrderWithEth(
         uint256 ethAmount,
         uint256 amountB
@@ -524,6 +558,7 @@ contract SwapboardETHTest is Test {
         assertEq(weth.balanceOf(address(board)), ethAmount);
     }
 
+    /// @notice Fuzz tests fillOrderWithEth
     function testFuzz_fillOrderWithEth(
         uint256 tokenAmount,
         uint256 ethAmount
@@ -549,6 +584,7 @@ contract SwapboardETHTest is Test {
         assertEq(token.balanceOf(taker), takerTokenBefore + tokenAmount);
     }
 
+    /// @notice Fuzz tests cancelOrderUnwrap
     function testFuzz_cancelOrderUnwrap(
         uint256 ethAmount
     ) public {
@@ -566,6 +602,7 @@ contract SwapboardETHTest is Test {
         assertEq(maker.balance, makerEthBefore + ethAmount);
     }
 
+    /// @notice Tests fillOrderWithEth revert deadlineExpired
     function test_fillOrderWithEth_revert_deadlineExpired() public {
         vm.startPrank(maker);
         token.approve(address(board), TOKEN_AMOUNT);
@@ -579,6 +616,7 @@ contract SwapboardETHTest is Test {
         board.fillOrderWithEth{value: ETH_AMOUNT}(orderId, 999);
     }
 
+    /// @notice Tests fillOrderUnwrap revert deadlineExpired
     function test_fillOrderUnwrap_revert_deadlineExpired() public {
         vm.prank(maker);
         uint256 orderId = board.createOrderWithEth{value: ETH_AMOUNT}(address(token), TOKEN_AMOUNT);
@@ -592,6 +630,7 @@ contract SwapboardETHTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Fuzz tests fillOrderUnwrap
     function testFuzz_fillOrderUnwrap(
         uint256 ethAmount,
         uint256 tokenAmount

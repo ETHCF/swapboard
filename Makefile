@@ -1,4 +1,4 @@
-.PHONY: all build test clean install fmt lint
+.PHONY: all build build-contracts test test-contracts clean install fmt fmt-check lint coverage
 
 all: build test
 
@@ -7,11 +7,15 @@ install:
 	cd contracts && forge install
 	cd subgraph && pnpm install
 	cd e2e && pnpm install
+	cd frontend && pnpm install
 
 # Build all
-build:
-	cd contracts && forge build
+build: lint build-contracts
 	cd subgraph && pnpm build
+
+# Build contracts only
+build-contracts:
+	cd contracts && forge build --sizes
 
 # Run all tests
 test:
@@ -19,9 +23,13 @@ test:
 	cd subgraph && pnpm test
 	cd e2e && pnpm test
 
+# Run contract tests only
+test-contracts:
+	cd contracts && forge test -vvv
+
 # Run contract tests with coverage
 coverage:
-	cd contracts && forge coverage --report lcov
+	cd contracts && forge coverage --report summary --report lcov
 
 # Format code
 fmt:
@@ -30,6 +38,11 @@ fmt:
 # Check formatting
 fmt-check:
 	cd contracts && forge fmt --check
+
+# Lint contracts (forge lint + solhint)
+lint:
+	cd contracts && forge lint
+	cd contracts && npx --yes solhint 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 
 # Clean build artifacts
 clean:
@@ -69,15 +82,18 @@ serve:
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  install      - Install all dependencies"
-	@echo "  build        - Build contracts and subgraph"
-	@echo "  test         - Run all tests"
-	@echo "  coverage     - Run contract tests with coverage"
-	@echo "  fmt          - Format Solidity code"
-	@echo "  fmt-check    - Check Solidity formatting"
-	@echo "  clean        - Clean build artifacts"
-	@echo "  anvil        - Start local Anvil node"
-	@echo "  deploy-local - Deploy to local Anvil"
-	@echo "  snapshot     - Generate gas snapshot"
-	@echo "  slither      - Run Slither analysis"
-	@echo "  serve        - Start frontend dev server"
+	@echo "  install         - Install all dependencies"
+	@echo "  build           - Lint, then build contracts and subgraph"
+	@echo "  build-contracts - Build contracts only"
+	@echo "  test            - Run all tests"
+	@echo "  test-contracts  - Run contract tests only"
+	@echo "  coverage        - Run contract tests with coverage"
+	@echo "  fmt             - Format Solidity code"
+	@echo "  fmt-check       - Check Solidity formatting"
+	@echo "  lint            - Lint Solidity (forge lint + solhint)"
+	@echo "  clean           - Clean build artifacts"
+	@echo "  anvil           - Start local Anvil node"
+	@echo "  deploy-local    - Deploy to local Anvil"
+	@echo "  snapshot        - Generate gas snapshot"
+	@echo "  slither         - Run Slither analysis"
+	@echo "  serve           - Start frontend dev server"

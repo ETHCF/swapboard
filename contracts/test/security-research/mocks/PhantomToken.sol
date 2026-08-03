@@ -3,16 +3,13 @@ pragma solidity 0.8.33;
 
 // solhint-disable use-natspec
 
-/// @title MockPausable
-/// @notice Mock ERC20 with pause functionality
-contract MockPausable {
-    error Paused();
-
-    string public name = "Pausable Token";
-    string public symbol = "PAUSE";
+/// @title PhantomToken
+/// @notice Token that lies about transfers - returns true but doesn't transfer
+contract PhantomToken {
+    string public name = "Phantom Token";
+    string public symbol = "PHANTOM";
     uint8 public decimals = 18;
     uint256 public totalSupply;
-    bool public paused;
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -22,21 +19,6 @@ contract MockPausable {
 
     // solhint-disable-next-line gas-indexed-events
     event Approval(address indexed owner, address indexed spender, uint256 amount);
-
-    modifier whenNotPaused() {
-        if (paused) {
-            revert Paused();
-        }
-        _;
-    }
-
-    function pause() external {
-        paused = true;
-    }
-
-    function unpause() external {
-        paused = false;
-    }
 
     function mint(
         address to,
@@ -57,27 +39,19 @@ contract MockPausable {
     }
 
     function transfer(
-        address to,
-        uint256 amount
-    ) external whenNotPaused returns (bool) {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(msg.sender, to, amount);
+        address,
+        uint256
+    ) external pure returns (bool) {
+        // Lies about transfer - returns true but doesn't transfer
         return true;
     }
 
     function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) external whenNotPaused returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
-        if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
-        }
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(from, to, amount);
+        address,
+        address,
+        uint256
+    ) external pure returns (bool) {
+        // Lies about transfer - returns true but doesn't transfer
         return true;
     }
 }
