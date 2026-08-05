@@ -42,6 +42,16 @@ const {
   decodeContractError,
   parseContractError,
   validateConfig,
+  NATIVE_ETH,
+  isNativeEth,
+  chunkArray,
+  resolveSelectionMode,
+  isSamePair,
+  canSelectOrder,
+  getShiftRangeIds,
+  computeReceiveFromFill,
+  computeFillFromReceive,
+  summarizeFillBatch,
 } = require("./lib");
 
 // ============================================================================
@@ -1931,5 +1941,388 @@ describe("validateConfig", () => {
     );
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
+  });
+});
+
+// ============================================================================
+// V2: Native ETH
+// ============================================================================
+
+describe("isNativeEth", () => {
+  // MUTATION: Compare without lowercasing
+  // BREAKS: Checksummed sentinel from the UI stops matching a lowercased one
+  test("matches the sentinel regardless of case", () => {
+    expect(isNativeEth(NATIVE_ETH)).toBe(true);
+    expect(isNativeEth(NATIVE_ETH.toLowerCase())).toBe(true);
+    expect(isNativeEth(NATIVE_ETH.toUpperCase())).toBe(true);
+  });
+
+  // MUTATION: Treat any address as native ETH
+  // BREAKS: WETH orders lose their contract link and approval step
+  test("rejects other addresses", () => {
+    expect(isNativeEth("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")).toBe(false);
+    expect(isNativeEth("0x0000000000000000000000000000000000000000")).toBe(false);
+  });
+
+  // MUTATION: Skip the type guard
+  // BREAKS: Throws on an order with a missing token address
+  test("rejects non-strings", () => {
+    expect(isNativeEth(null)).toBe(false);
+    expect(isNativeEth(undefined)).toBe(false);
+    expect(isNativeEth(123)).toBe(false);
+  });
+});
+
+// ============================================================================
+// V2: Batching
+// ============================================================================
+
+describe("chunkArray", () => {
+  // MUTATION: Off-by-one on chunk size
+  // BREAKS: A transaction exceeds the gas limit and reverts
+  test("splits into chunks of exactly the requested size", () => {
+    expect(chunkArray([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+  });
+
+  // MUTATION: Drop the trailing partial chunk
+  // BREAKS: Orders silently never get filled
+  test("keeps the remainder", () => {
+    expect(chunkArray([1, 2, 3, 4, 5, 6, 7], 3).flat()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  test("returns a single chunk when it fits", () => {
+    expect(chunkArray([1, 2, 3], 10)).toEqual([[1, 2, 3]]);
+  });
+
+  test("returns no chunks for an empty list", () => {
+    expect(chunkArray([], 5)).toEqual([]);
+  });
+
+  // MUTATION: Allow size 0
+  // BREAKS: Infinite loop hangs the tab
+  test("rejects unusable sizes", () => {
+    expect(chunkArray([1, 2, 3], 0)).toEqual([]);
+    expect(chunkArray([1, 2, 3], -1)).toEqual([]);
+    expect(chunkArray([1, 2, 3], 1.5)).toEqual([]);
+  });
+
+  test("rejects non-arrays", () => {
+    expect(chunkArray(null, 5)).toEqual([]);
+    expect(chunkArray("abc", 5)).toEqual([]);
+  });
+});
+
+// ============================================================================
+// V2: Multi-select rules
+// ============================================================================
+
+const USER = "0xAAAAaaaAAAAaaAAAaAAaAaaAaaAaaAAAaaAaAAaA";
+const OTHER = "0xBBBbbbBBbbbBBBbBbbbbbBBbBbbBBBbBBbBbbBBb";
+
+function makeOrder(overrides) {
+  return Object.assign(
+    {
+      orderId: "1",
+      maker: OTHER,
+      active: true,
+      amountA: "1000",
+      amountB: "2000",
+      tokenA: { address: "0xAAA0000000000000000000000000000000000001", symbol: "A", decimals: 18 },
+      tokenB: { address: "0xBBB0000000000000000000000000000000000002", symbol: "B", decimals: 18 },
+    },
+    overrides
+  );
+}
+
+describe("resolveSelectionMode", () => {
+  // MUTATION: Compare addresses without lowercasing
+  // BREAKS: Own orders classified as other people's -> Fill All on your own order
+  test("classifies own orders case-insensitively", () => {
+    const order = makeOrder({ maker: USER.toLowerCase() });
+    expect(resolveSelectionMode(order, USER)).toBe("own");
+  });
+
+  test("classifies other makers' orders", () => {
+    expect(resolveSelectionMode(makeOrder(), USER)).toBe("other");
+  });
+
+  // MUTATION: Return "own" when disconnected
+  // BREAKS: Disconnected user offered [Cancel All] on strangers' orders
+  test("treats every order as someone else's when disconnected", () => {
+    expect(resolveSelectionMode(makeOrder({ maker: USER }), null)).toBe("other");
+  });
+
+  test("returns null for an unusable order", () => {
+    expect(resolveSelectionMode(null, USER)).toBe(null);
+    expect(resolveSelectionMode({}, USER)).toBe(null);
+  });
+});
+
+describe("isSamePair", () => {
+  test("matches identical pairs case-insensitively", () => {
+    const a = makeOrder();
+    const b = makeOrder({
+      orderId: "2",
+      tokenA: { address: a.tokenA.address.toLowerCase(), symbol: "A", decimals: 18 },
+      tokenB: { address: a.tokenB.address.toUpperCase(), symbol: "B", decimals: 18 },
+    });
+    expect(isSamePair(a, b)).toBe(true);
+  });
+
+  // MUTATION: Ignore direction
+  // BREAKS: A reversed pair joins the batch, so totals and price are nonsense
+  test("treats a reversed pair as different", () => {
+    const a = makeOrder();
+    const b = makeOrder({ orderId: "2", tokenA: a.tokenB, tokenB: a.tokenA });
+    expect(isSamePair(a, b)).toBe(false);
+  });
+
+  test("returns false when token data is missing", () => {
+    expect(isSamePair(makeOrder(), null)).toBe(false);
+    expect(isSamePair(makeOrder(), { tokenA: null, tokenB: null })).toBe(false);
+  });
+});
+
+describe("canSelectOrder", () => {
+  // MUTATION: Allow closed orders
+  // BREAKS: Batch includes unfillable orders and wastes gas
+  test("rejects closed orders", () => {
+    expect(canSelectOrder(makeOrder({ active: false }), null, USER)).toBe(false);
+  });
+
+  test("allows any open order as the first pick", () => {
+    expect(canSelectOrder(makeOrder(), null, USER)).toBe(true);
+    expect(canSelectOrder(makeOrder({ maker: USER }), null, USER)).toBe(true);
+  });
+
+  test("allows re-selecting the anchor itself", () => {
+    const anchor = makeOrder();
+    expect(canSelectOrder(anchor, anchor, USER)).toBe(true);
+  });
+
+  // MUTATION: Permit mixing own and other orders
+  // BREAKS: [Fill All] and [Cancel All] both apply and the batch is ambiguous
+  test("refuses to mix own orders with other makers' orders", () => {
+    const mine = makeOrder({ orderId: "1", maker: USER });
+    const theirs = makeOrder({ orderId: "2", maker: OTHER });
+    expect(canSelectOrder(theirs, mine, USER)).toBe(false);
+    expect(canSelectOrder(mine, theirs, USER)).toBe(false);
+  });
+
+  // MUTATION: Enforce the pair check on own orders too
+  // BREAKS: Cancel All can't span pairs, which the spec allows
+  test("allows own orders across different pairs", () => {
+    const mine = makeOrder({ orderId: "1", maker: USER });
+    const otherPair = makeOrder({
+      orderId: "2",
+      maker: USER,
+      tokenA: { address: "0xCCC0000000000000000000000000000000000003", symbol: "C", decimals: 6 },
+    });
+    expect(canSelectOrder(otherPair, mine, USER)).toBe(true);
+  });
+
+  // MUTATION: Skip the pair check on other makers' orders
+  // BREAKS: Fill All batches mixed pairs, so one approval can't cover it
+  test("locks other makers' orders to a single pair", () => {
+    const anchor = makeOrder({ orderId: "1" });
+    const samePair = makeOrder({ orderId: "2" });
+    const otherPair = makeOrder({
+      orderId: "3",
+      tokenB: { address: "0xCCC0000000000000000000000000000000000003", symbol: "C", decimals: 6 },
+    });
+    expect(canSelectOrder(samePair, anchor, USER)).toBe(true);
+    expect(canSelectOrder(otherPair, anchor, USER)).toBe(false);
+  });
+
+  test("rejects a missing order", () => {
+    expect(canSelectOrder(null, null, USER)).toBe(false);
+  });
+});
+
+describe("getShiftRangeIds", () => {
+  const orders = [
+    makeOrder({ orderId: "1" }),
+    makeOrder({ orderId: "2" }),
+    makeOrder({ orderId: "3", active: false }),
+    makeOrder({ orderId: "4", maker: USER }),
+    makeOrder({ orderId: "5" }),
+  ];
+
+  // MUTATION: Exclusive range
+  // BREAKS: The shift-clicked row itself is left unselected
+  test("includes both endpoints", () => {
+    expect(getShiftRangeIds(orders, "1", "2", orders[0], USER)).toEqual(["1", "2"]);
+  });
+
+  // MUTATION: Only walk forwards
+  // BREAKS: Shift-clicking upwards selects nothing
+  test("works in either direction", () => {
+    expect(getShiftRangeIds(orders, "5", "1", orders[0], USER)).toEqual(
+      getShiftRangeIds(orders, "1", "5", orders[0], USER)
+    );
+  });
+
+  // MUTATION: Skip the per-order validity check
+  // BREAKS: Closed and own orders get swept into a Fill All batch
+  test("skips orders that fail the selection rules", () => {
+    expect(getShiftRangeIds(orders, "1", "5", orders[0], USER)).toEqual(["1", "2", "5"]);
+  });
+
+  test("returns nothing when an endpoint is not on screen", () => {
+    expect(getShiftRangeIds(orders, "1", "99", orders[0], USER)).toEqual([]);
+    expect(getShiftRangeIds(orders, "99", "1", orders[0], USER)).toEqual([]);
+  });
+
+  test("returns nothing for a non-array", () => {
+    expect(getShiftRangeIds(null, "1", "2", null, USER)).toEqual([]);
+  });
+});
+
+// ============================================================================
+// V2: Partial fill math
+// ============================================================================
+
+describe("computeReceiveFromFill", () => {
+  const order = { amountA: "1000", amountB: "2000" };
+
+  // MUTATION: Round up instead of down
+  // BREAKS: Taker receives more than the maker priced, and the fill reverts
+  test("rounds down in the maker's favour", () => {
+    // 3 * 1000 / 2000 = 1.5 -> 1
+    expect(computeReceiveFromFill(order, 3n)).toBe(1n);
+  });
+
+  test("scales proportionally", () => {
+    expect(computeReceiveFromFill(order, 1000n)).toBe(500n);
+  });
+
+  // MUTATION: Return a scaled value past the remainder
+  // BREAKS: UI promises more than the order holds
+  test("caps at the full remaining amount", () => {
+    expect(computeReceiveFromFill(order, 2000n)).toBe(1000n);
+    expect(computeReceiveFromFill(order, 9999n)).toBe(1000n);
+  });
+
+  test("returns zero for a zero or negative fill", () => {
+    expect(computeReceiveFromFill(order, 0n)).toBe(0n);
+    expect(computeReceiveFromFill(order, -5n)).toBe(0n);
+  });
+
+  // MUTATION: Divide without guarding
+  // BREAKS: Division by zero on a fully filled order
+  test("returns zero when nothing is wanted", () => {
+    expect(computeReceiveFromFill({ amountA: "1000", amountB: "0" }, 100n)).toBe(0n);
+  });
+});
+
+describe("computeFillFromReceive", () => {
+  const order = { amountA: "1000", amountB: "2000" };
+
+  test("inverts an exact proportion", () => {
+    expect(computeFillFromReceive(order, 500n)).toEqual({
+      fillAmountB: 1000n,
+      actualAmountA: 500n,
+    });
+  });
+
+  // MUTATION: Round the payment down
+  // BREAKS: Taker receives less than they asked for
+  test("rounds the payment up so the receive target is met", () => {
+    // want 1 of 1000 for 2000 -> 2 exactly; want 1 at 3:2 needs rounding up
+    const odd = { amountA: "3", amountB: "2" };
+    const result = computeFillFromReceive(odd, 1n);
+    expect(result.fillAmountB).toBe(1n);
+    expect(result.actualAmountA).toBe(1n);
+  });
+
+  // MUTATION: Let the payment exceed the order
+  // BREAKS: Overpayment on a full fill
+  test("caps at the full order when asking for everything or more", () => {
+    expect(computeFillFromReceive(order, 1000n)).toEqual({
+      fillAmountB: 2000n,
+      actualAmountA: 1000n,
+    });
+    expect(computeFillFromReceive(order, 5000n)).toEqual({
+      fillAmountB: 2000n,
+      actualAmountA: 1000n,
+    });
+  });
+
+  test("returns zero for a zero or negative request", () => {
+    expect(computeFillFromReceive(order, 0n)).toEqual({ fillAmountB: 0n, actualAmountA: 0n });
+    expect(computeFillFromReceive(order, -1n)).toEqual({ fillAmountB: 0n, actualAmountA: 0n });
+  });
+
+  test("returns zero on an empty order", () => {
+    expect(computeFillFromReceive({ amountA: "0", amountB: "0" }, 10n)).toEqual({
+      fillAmountB: 0n,
+      actualAmountA: 0n,
+    });
+  });
+
+  // MUTATION: Report the requested amount rather than the contract's
+  // BREAKS: Confirmation shows an amount the contract won't deliver
+  test("reports what the contract will actually transfer", () => {
+    const result = computeFillFromReceive({ amountA: "1000", amountB: "3" }, 500n);
+    expect(result.actualAmountA).toBe(
+      computeReceiveFromFill({ amountA: "1000", amountB: "3" }, result.fillAmountB)
+    );
+  });
+});
+
+describe("summarizeFillBatch", () => {
+  const pair = {
+    tokenA: { address: "0xA", symbol: "A", decimals: 18 },
+    tokenB: { address: "0xB", symbol: "B", decimals: 18 },
+  };
+  const batch = [
+    Object.assign({ amountA: "1000000000000000000", amountB: "2000000000000000000" }, pair),
+    Object.assign({ amountA: "3000000000000000000", amountB: "6000000000000000000" }, pair),
+  ];
+
+  // MUTATION: Sum only the first order
+  // BREAKS: Confirmation understates what the user is about to spend
+  test("sums both sides across the batch", () => {
+    const result = summarizeFillBatch(batch);
+    expect(result.count).toBe(2);
+    expect(result.totalSend).toBe(8000000000000000000n);
+    expect(result.totalReceive).toBe(4000000000000000000n);
+  });
+
+  // MUTATION: Average the per-order prices instead of dividing the totals
+  // BREAKS: Average price misreports a batch of unequal sizes
+  test("prices the batch as a whole", () => {
+    expect(summarizeFillBatch(batch).avgPrice).toBe(2);
+  });
+
+  // MUTATION: Ignore decimals
+  // BREAKS: Price is off by orders of magnitude on mixed-decimal pairs
+  test("accounts for differing token decimals", () => {
+    const mixed = [
+      {
+        amountA: "1000000000000000000", // 1.0 (18dp)
+        amountB: "3000000", // 3.0 (6dp)
+        tokenA: { address: "0xA", symbol: "A", decimals: 18 },
+        tokenB: { address: "0xB", symbol: "B", decimals: 6 },
+      },
+    ];
+    expect(summarizeFillBatch(mixed).avgPrice).toBe(3);
+  });
+
+  test("returns an empty summary for no orders", () => {
+    expect(summarizeFillBatch([])).toEqual({
+      count: 0,
+      totalSend: 0n,
+      totalReceive: 0n,
+      avgPrice: null,
+    });
+    expect(summarizeFillBatch(null).count).toBe(0);
+  });
+
+  // MUTATION: Divide without guarding
+  // BREAKS: NaN price shown when there is nothing to receive
+  test("reports no price when there is nothing to receive", () => {
+    const empty = [Object.assign({ amountA: "0", amountB: "100" }, pair)];
+    expect(summarizeFillBatch(empty).avgPrice).toBe(null);
   });
 });

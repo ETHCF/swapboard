@@ -67,13 +67,15 @@ async function runTests() {
   }
 
   async function getOrderIds() {
+    // Column 1 is the selection checkbox and column 2 is the action cell, so
+    // the trade ID lives in column 3.
     return page.$$eval("#order-table tr", (rows) => {
       return rows
         .map((row) => {
-          const firstCell = row.querySelector("td:first-child");
-          return firstCell ? firstCell.textContent.trim() : null;
+          const idCell = row.querySelector("td:nth-child(3)");
+          return idCell ? idCell.textContent.trim() : null;
         })
-        .filter((id) => id !== null && id !== "No orders found");
+        .filter((id) => id !== null && id !== "" && id !== "No orders found");
     });
   }
 
@@ -90,11 +92,11 @@ async function runTests() {
       () => {
         const rows = document.querySelectorAll("#order-table tr");
         if (rows.length === 0) return false;
-        const firstCell = rows[0]?.querySelector("td");
-        if (!firstCell) return false;
-        const text = firstCell.textContent || "";
+        // Match on the whole row: the first cell is now the selection
+        // checkbox, whose text is always empty.
+        const text = rows[0].textContent || "";
         // Wait until we have real data (not loading, not "no orders")
-        return !text.includes("Loading") && !text.includes("No orders") && rows.length > 0;
+        return !text.includes("Loading") && !text.includes("No orders");
       },
       { timeout: 5000 }
     );
@@ -105,7 +107,7 @@ async function runTests() {
   async function selectToken(selectId, tokenAddress) {
     await page.select(selectId, tokenAddress);
     await page.waitForFunction(
-      () => !document.querySelector("#order-table tr td")?.textContent.includes("Loading"),
+      () => !document.querySelector("#order-table tr")?.textContent.includes("Loading"),
       { timeout: 3000 }
     );
     // Extra delay to ensure data is rendered
@@ -277,36 +279,39 @@ async function runTests() {
     console.log("\n--- Order Data Accuracy ---");
 
     // Verify first row has valid data structure
-    // Column order: [0] Buy btn, [1] Trade ID, [2] Maker, [3] Offered Token, [4] Offered Size, [5] Wanted Token, [6] Wanted Size, [7] USD Val, [8] Price
+    // Column order: [0] Select, [1] Fill/Cancel btn, [2] Trade ID, [3] Maker,
+    // [4] Offered Token, [5] Offered Size, [6] Wanted Token, [7] Wanted Size,
+    // [8] USD Val, [9] Price
     const firstRow = await page.$$eval("#order-table tr:first-child td", (cells) =>
       cells.map((c) => c.textContent.trim())
     );
 
     // Trade ID column now includes share button, extract just the number
-    const tradeIdMatch = firstRow[1].match(/^(\d+)/);
+    const tradeIdMatch = firstRow[2].match(/^(\d+)/);
     test(
       "First order has numeric ID",
       tradeIdMatch !== null,
-      `Expected numeric ID, got "${firstRow[1]}"`
+      `Expected numeric ID, got "${firstRow[2]}"`
     );
 
     test(
       "First order has valid offered token symbol",
-      firstRow[3] && firstRow[3].length > 0 && firstRow[3] !== "undefined",
-      `Got "${firstRow[3]}"`
+      firstRow[4] && firstRow[4].length > 0 && firstRow[4] !== "undefined",
+      `Got "${firstRow[4]}"`
     );
 
     test(
       "First order has valid wanting token symbol",
-      firstRow[5] && firstRow[5].length > 0 && firstRow[5] !== "undefined",
-      `Got "${firstRow[5]}"`
+      firstRow[6] && firstRow[6].length > 0 && firstRow[6] !== "undefined",
+      `Got "${firstRow[6]}"`
     );
 
-    // Verify amount is formatted (contains numbers and possibly commas/decimals)
+    // Verify amount starts with a formatted number. A partially filled v2
+    // order appends an "of <original> left" hint after it.
     test(
       "First order offered amount is formatted number",
-      /^[\d,]+\.?\d*$/.test(firstRow[4]),
-      `Got "${firstRow[4]}"`
+      /^[\d,]+\.?\d*/.test(firstRow[5]),
+      `Got "${firstRow[5]}"`
     );
 
     // ==================== TABLE STRUCTURE ====================
@@ -316,16 +321,99 @@ async function runTests() {
       "#order-table tr:first-child td",
       (cells) => cells.length
     );
-    test("Order table has 9 columns", columnCount === 9, `Expected 9 columns, got ${columnCount}`);
+    test(
+      "Order table has 10 columns",
+      columnCount === 10,
+      `Expected 10 columns, got ${columnCount}`
+    );
 
     const headers = await page.$$eval("thead th", (ths) => ths.map((t) => t.textContent.trim()));
     test(
       "Table headers are correct",
-      headers.length === 9 &&
-        headers[1].includes("Trade ID") &&
-        headers[2].includes("Maker") &&
-        headers[3].includes("Offered"),
+      headers.length === 10 &&
+        headers[2].includes("Trade ID") &&
+        headers[3].includes("Maker") &&
+        headers[4].includes("Offered"),
       `Got headers: ${headers.join(", ")}`
+    );
+
+    // ==================== V2: MULTI-SELECT ====================
+    console.log("\n--- V2 Multi-select ---");
+
+    const rowCount = await page.$$eval("#order-table tr", (rows) => rows.length);
+    const checkboxCount = await page.$$eval(
+      "#order-table td.select-col input[type=checkbox]",
+      (boxes) => boxes.length
+    );
+    test(
+      "Every order row has a selection checkbox",
+      checkboxCount === rowCount,
+      `Expected ${rowCount} checkboxes, got ${checkboxCount}`
+    );
+
+    const barHiddenBefore = await page.$eval("#selection-bar", (el) =>
+      el.classList.contains("hidden")
+    );
+    test("Selection bar is hidden with nothing selected", barHiddenBefore === true);
+
+    await page.click("#order-table tr:first-child td.select-col input[type=checkbox]");
+    await new Promise((r) => setTimeout(r, 200));
+
+    const selectionState = await page.evaluate(() => ({
+      hidden: document.querySelector("#selection-bar").classList.contains("hidden"),
+      count: document.querySelector("#selection-count").textContent,
+      fillHidden: document.querySelector("#batch-fill-btn").classList.contains("hidden"),
+    }));
+    test(
+      "Selecting an order reveals [Fill All]",
+      selectionState.hidden === false &&
+        selectionState.count.startsWith("1 order") &&
+        selectionState.fillHidden === false,
+      `Got ${JSON.stringify(selectionState)}`
+    );
+
+    await page.click("#selection-clear");
+    await new Promise((r) => setTimeout(r, 200));
+    const barHiddenAfter = await page.$eval("#selection-bar", (el) =>
+      el.classList.contains("hidden")
+    );
+    test("[Clear] empties the selection", barHiddenAfter === true);
+
+    // ==================== V2: BATCH CREATE ====================
+    console.log("\n--- V2 Batch create ---");
+
+    // The Sell Tokens button only appears once a wallet is connected, so open
+    // the modal directly to exercise the form.
+    await page.evaluate(() => document.querySelector("#sell-modal").classList.remove("hidden"));
+
+    const createRowCount = await page.$$eval("#create-rows .create-row", (rows) => rows.length);
+    test(
+      "Sell Tokens form starts with one order row",
+      createRowCount === 1,
+      `Got ${createRowCount}`
+    );
+
+    await page.click("#add-sell-btn");
+    await new Promise((r) => setTimeout(r, 100));
+    const afterAdd = await page.$$eval("#create-rows .create-row", (rows) => rows.length);
+    test("[Add Sell] appends an order row", afterAdd === 2, `Got ${afterAdd}`);
+
+    await page.click("#create-rows .create-row:last-child .create-row-remove");
+    await new Promise((r) => setTimeout(r, 100));
+    const afterRemove = await page.$$eval("#create-rows .create-row", (rows) => rows.length);
+    test("Row [x] removes an order row", afterRemove === 1, `Got ${afterRemove}`);
+
+    // Native ETH selection pins the address field to the sentinel and locks it
+    await page.click('#create-rows .create-row [data-eth-for="tokenA"]');
+    await new Promise((r) => setTimeout(r, 100));
+    const ethField = await page.$eval('#create-rows .create-row [data-field="tokenA"]', (el) => ({
+      value: el.value,
+      readOnly: el.readOnly,
+    }));
+    test(
+      "[ETH] selects native ETH and locks the address field",
+      ethField.value.toLowerCase() === "0x" + "e".repeat(40) && ethField.readOnly === true,
+      `Got ${JSON.stringify(ethField)}`
     );
   } catch (e) {
     console.error("\nTest execution error:", e.message);

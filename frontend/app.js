@@ -18,8 +18,22 @@
   "use strict";
 
   // Import shared utilities from lib.js (loaded before app.js)
-  const { escapeHtml, isValidAddress, truncateAddress, formatUsd, formatAmount } =
-    window.SwapboardLib || {};
+  const {
+    escapeHtml,
+    isValidAddress,
+    truncateAddress,
+    formatUsd,
+    formatAmount,
+    // V2 helpers
+    NATIVE_ETH,
+    isNativeEth,
+    chunkArray,
+    resolveSelectionMode,
+    canSelectOrder,
+    getShiftRangeIds,
+    computeFillFromReceive,
+    summarizeFillBatch,
+  } = window.SwapboardLib || {};
 
   // ============================================================================
   // Configuration
@@ -43,6 +57,11 @@
     DEBOUNCE_DELAY: 500,
     // Show market deviation percentage (vs CoinGecko prices)
     SHOW_MARKET_DEVIATION: false,
+    // v2 batch limits: the most orders that fit in a single transaction.
+    // Seeded conservatively; retune once real gas numbers land.
+    MAX_BATCH_FILL: 15,
+    MAX_BATCH_CANCEL: 25,
+    MAX_BATCH_CREATE: 10,
   };
 
   const EXPECTED_CHAIN_ID = 1;
@@ -181,11 +200,16 @@
     return addr.toLowerCase() === cachedWethAddress;
   }
 
-  // Create form state for validation
-  const createFormState = {
-    tokenA: { info: null, balance: null },
-    tokenB: { info: null, balance: null },
-  };
+  /**
+   * Order IDs currently ticked in the order table.
+   * Deliberately in-memory: unlike the watchlist, a selection is a transient
+   * intent to act, not a preference worth surviving a reload.
+   * @type {Set<string>}
+   */
+  const selectedOrderIds = new Set();
+
+  /** Order ID of the last plain (non-shift) checkbox click, for shift ranges. */
+  let selectionAnchorId = null;
 
   const tokenCache = new Map();
   const ensCache = new Map();
@@ -566,41 +590,6 @@
   }
 
   /**
-   * Estimates gas cost for a transaction and formats it for display.
-   * @param {Object} txParams - Transaction parameters for estimation
-   * @returns {Promise<{gas: string, eth: string, usd: string}|null>} Formatted gas costs or null on error
-   */
-  async function estimateGasCost(txParams) {
-    if (!provider) return null;
-
-    try {
-      const [gasEstimate, feeData] = await Promise.all([
-        provider.estimateGas(txParams),
-        provider.getFeeData(),
-      ]);
-
-      const gasPrice = feeData.gasPrice || feeData.maxFeePerGas;
-      if (!gasPrice) return null;
-
-      const gasCostWei = gasEstimate * gasPrice;
-      const gasCostEth = Number(gasCostWei) / 1e18;
-
-      // Get ETH price for USD estimate
-      const ethPrice = getTokenPrice("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-      const gasCostUsd = ethPrice ? gasCostEth * ethPrice : null;
-
-      return {
-        gas: gasEstimate.toString(),
-        eth: gasCostEth < 0.0001 ? gasCostEth.toExponential(2) : gasCostEth.toFixed(6),
-        usd: gasCostUsd ? formatUsd(gasCostUsd) : "$--",
-      };
-    } catch (e) {
-      console.error("Gas estimation error:", e);
-      return null;
-    }
-  }
-
-  /**
    * Toggles notifications on/off.
    */
   async function toggleNotifications() {
@@ -653,9 +642,8 @@
    * @returns {Array} Matching tokens
    */
   function getEthToken() {
-    if (!cachedWethAddress) return null;
     return {
-      address: cachedWethAddress,
+      address: NATIVE_ETH,
       symbol: "ETH",
       name: "Ether",
       decimals: 18,
@@ -1496,12 +1484,18 @@
     for (let i = 0; i < count; i++) {
       const tr = document.createElement("tr");
 
-      // Column 0: Action (empty)
+      // Column 0: Select (empty)
+      const tdSelect = document.createElement("td");
+      tdSelect.className = "select-col";
+      tdSelect.dataset.label = "";
+      tr.appendChild(tdSelect);
+
+      // Column 1: Action (empty)
       const tdAction = document.createElement("td");
       tdAction.dataset.label = "";
       tr.appendChild(tdAction);
 
-      // Column 1: Trade ID
+      // Column 2: Trade ID
       const tdId = document.createElement("td");
       tdId.dataset.label = "Trade ID";
       const skelId = document.createElement("span");
@@ -1573,8 +1567,15 @@
     const modal = $("#modal");
     $("#modal-title").textContent = title;
 
+    // Body may be a plain string or a built-up DOM node (batch summaries and
+    // the partial-fill controls need structure, not just text).
     const bodyEl = $("#modal-body");
-    bodyEl.textContent = body;
+    bodyEl.textContent = "";
+    if (body instanceof Node) {
+      bodyEl.appendChild(body);
+    } else {
+      bodyEl.textContent = body;
+    }
 
     // Add gas estimate if available
     if (gasEstimate) {
@@ -1583,7 +1584,13 @@
       gasDiv.appendChild(document.createElement("br"));
       gasDiv.appendChild(
         document.createTextNode(
-          "Estimated gas: " + gasEstimate.gas + " (~" + gasEstimate.eth + " ETH / " + gasEstimate.usd + ")"
+          "Estimated gas: " +
+            gasEstimate.gas +
+            " (~" +
+            gasEstimate.eth +
+            " ETH / " +
+            gasEstimate.usd +
+            ")"
         )
       );
       bodyEl.appendChild(gasDiv);
@@ -1606,6 +1613,47 @@
 
     $("#modal-confirm").addEventListener("click", confirmHandler);
     $("#modal-cancel").addEventListener("click", cancelHandler);
+  }
+
+  /**
+   * Renders "<amount> <symbol>" into an order-modal row.
+   *
+   * Links to CoinGecko and offers the contract address where there is one;
+   * native ETH gets neither. When the order is partly filled, the original
+   * amount is appended so the remaining figure has context.
+   *
+   * @param {HTMLElement} el - Row value element to populate
+   * @param {Object} token - Token with {address, symbol, decimals}
+   * @param {bigint} amount - Remaining amount in base units
+   * @param {string|undefined} original - Original amount in base units
+   */
+  function fillOrderModalAmount(el, token, amount, original) {
+    el.textContent = "";
+    const decimals = token.decimals || 18;
+    const text = formatAmount(amount, decimals) + " " + token.symbol;
+
+    if (isNativeEth(token.address)) {
+      el.textContent = text;
+    } else {
+      const coinGeckoId = COINGECKO_ID_MAP[token.address.toLowerCase()];
+      if (coinGeckoId) {
+        const link = document.createElement("a");
+        link.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
+        link.target = "_blank";
+        link.textContent = text;
+        el.appendChild(link);
+      } else {
+        el.textContent = text;
+      }
+      el.appendChild(createCopyButton(token.address));
+    }
+
+    if (original !== null && original !== undefined && BigInt(original) > amount) {
+      const hint = document.createElement("span");
+      hint.className = "partial-progress";
+      hint.textContent = "of " + formatAmount(original, decimals) + " left";
+      el.appendChild(hint);
+    }
   }
 
   /**
@@ -1659,39 +1707,15 @@
 
     // Offered
     const offeredEl = $("#order-modal-offered");
-    offeredEl.textContent = "";
     const tokenADecimals = order.tokenA.decimals || 18;
     const amountA = BigInt(order.amountA);
-    const formattedAmountA = formatAmount(amountA, tokenADecimals);
-    const tokenAId = COINGECKO_ID_MAP[order.tokenA.address.toLowerCase()];
-    if (tokenAId) {
-      const tokenALink = document.createElement("a");
-      tokenALink.href = "https://www.coingecko.com/en/coins/" + tokenAId;
-      tokenALink.target = "_blank";
-      tokenALink.textContent = formattedAmountA + " " + order.tokenA.symbol;
-      offeredEl.appendChild(tokenALink);
-    } else {
-      offeredEl.textContent = formattedAmountA + " " + order.tokenA.symbol;
-    }
-    offeredEl.appendChild(createCopyButton(order.tokenA.address));
+    fillOrderModalAmount(offeredEl, order.tokenA, amountA, order.originalAmountA);
 
     // Wanted
     const wantedEl = $("#order-modal-wanted");
-    wantedEl.textContent = "";
     const tokenBDecimals = order.tokenB.decimals || 18;
     const amountB = BigInt(order.amountB);
-    const formattedAmountB = formatAmount(amountB, tokenBDecimals);
-    const tokenBId = COINGECKO_ID_MAP[order.tokenB.address.toLowerCase()];
-    if (tokenBId) {
-      const tokenBLink = document.createElement("a");
-      tokenBLink.href = "https://www.coingecko.com/en/coins/" + tokenBId;
-      tokenBLink.target = "_blank";
-      tokenBLink.textContent = formattedAmountB + " " + order.tokenB.symbol;
-      wantedEl.appendChild(tokenBLink);
-    } else {
-      wantedEl.textContent = formattedAmountB + " " + order.tokenB.symbol;
-    }
-    wantedEl.appendChild(createCopyButton(order.tokenB.address));
+    fillOrderModalAmount(wantedEl, order.tokenB, amountB, order.originalAmountB);
 
     // USD Value
     const usdEl = $("#order-modal-usd");
@@ -1885,6 +1909,11 @@
    * @returns {Promise<{address: string, symbol: string, name: string, decimals: number|null}>}
    */
   async function fetchTokenInfo(address) {
+    // Native ETH has no contract to read from.
+    if (isNativeEth(address)) {
+      return { address: NATIVE_ETH, symbol: "ETH", name: "Ether", decimals: 18 };
+    }
+
     const lowerAddr = address.toLowerCase();
     if (tokenCache.has(lowerAddr)) {
       return tokenCache.get(lowerAddr);
@@ -1900,9 +1929,7 @@
       const safeName = String(name).slice(0, 100);
       const decimalsNum = Number(decimals);
       const safeDecimals =
-        Number.isInteger(decimalsNum) && decimalsNum >= 0 && decimalsNum <= 77
-          ? decimalsNum
-          : null;
+        Number.isInteger(decimalsNum) && decimalsNum >= 0 && decimalsNum <= 77 ? decimalsNum : null;
       const info = { address, symbol: safeSymbol, name: safeName, decimals: safeDecimals };
       if (safeDecimals !== null) {
         tokenCache.set(lowerAddr, info);
@@ -1958,35 +1985,6 @@
     }
   }
 
-  /**
-   * Polls the subgraph until an order's active status changes.
-   * Used after fill/cancel to wait for indexing before refreshing UI.
-   * @param {string} orderId - The order ID to check
-   * @param {boolean} expectedActive - The expected active status after the change
-   * @param {number} maxAttempts - Maximum polling attempts (default 10)
-   * @param {number} interval - Polling interval in ms (default 1500)
-   */
-  async function waitForOrderUpdate(orderId, expectedActive, maxAttempts = 10, interval = 1500) {
-    for (let i = 0; i < maxAttempts; i++) {
-      const data = await querySubgraph(
-        `
-        query {
-          order(id: "${orderId}") {
-            active
-          }
-        }
-      `,
-        {},
-        true
-      ); // silent mode - don't show error toasts during polling
-      if (data && data.order && data.order.active === expectedActive) {
-        return true;
-      }
-      await new Promise((resolve) => setTimeout(resolve, interval));
-    }
-    return false;
-  }
-
   async function loadStats() {
     const [statsData, tokenData] = await Promise.all([
       querySubgraph(`
@@ -2037,9 +2035,7 @@
         totalUsd += volume * price;
       }
 
-      $("#stat-volume").textContent = hasPrice
-        ? "$" + formatNumber(Math.round(totalUsd))
-        : "N/A";
+      $("#stat-volume").textContent = hasPrice ? "$" + formatNumber(Math.round(totalUsd)) : "N/A";
     } else {
       $("#stat-volume").textContent = "N/A";
     }
@@ -2179,6 +2175,9 @@
           maker
           amountA
           amountB
+          originalAmountA
+          originalAmountB
+          partialFill
           active
           taker
           createdAt
@@ -2201,11 +2200,24 @@
       cachedOrders = [];
     } else {
       cachedOrders = data.orders;
-      // Display WETH as ETH
       for (const o of cachedOrders) {
+        // Display WETH as ETH. Native-ETH orders already carry the ETH symbol;
+        // they keep no address, which is how the two stay distinguishable.
         if (isWeth(o.tokenA.address)) o.tokenA.symbol = "ETH";
         if (isWeth(o.tokenB.address)) o.tokenB.symbol = "ETH";
+        // Treat a missing partialFill flag as opted out, so anything the v2
+        // subgraph doesn't vouch for behaves like a v1 all-or-nothing order.
+        o.partialFill = o.partialFill === true;
       }
+    }
+
+    // A background auto-refresh keeps the selection (only stale IDs are
+    // dropped); any deliberate reload — filter, page, wallet, post-transaction
+    // — resets it, since the user is looking at a different set of orders.
+    if (silent) {
+      pruneSelection();
+    } else {
+      clearSelection(false);
     }
 
     // Check watched orders for status changes
@@ -2258,6 +2270,204 @@
     return cachedOrders.find((o) => o.orderId === orderId) || null;
   }
 
+  // ============================================================================
+  // Selection (multi-select)
+  // ============================================================================
+
+  /**
+   * Returns the selected orders, in display order.
+   * @returns {Object[]}
+   */
+  function getSelectedOrders() {
+    return sortOrders(cachedOrders).filter((o) => selectedOrderIds.has(o.orderId));
+  }
+
+  /**
+   * The order that anchors the selection rules — the first one still selected,
+   * in display order. Every other order must be compatible with it.
+   * @returns {Object|null}
+   */
+  function getSelectionAnchor() {
+    return getSelectedOrders()[0] || null;
+  }
+
+  /**
+   * Empties the selection and refreshes the table.
+   * @param {boolean} [rerender=true] - Whether to re-render rows
+   */
+  function clearSelection(rerender = true) {
+    if (selectedOrderIds.size === 0 && !selectionAnchorId) return;
+    selectedOrderIds.clear();
+    selectionAnchorId = null;
+    if (rerender) renderOrders();
+  }
+
+  /**
+   * Drops selected IDs that are no longer on screen (page change, refresh,
+   * filter change) so the selection never references invisible orders.
+   */
+  function pruneSelection() {
+    const visible = new Set(cachedOrders.map((o) => o.orderId));
+    for (const id of [...selectedOrderIds]) {
+      if (!visible.has(id)) selectedOrderIds.delete(id);
+    }
+    if (selectionAnchorId && !visible.has(selectionAnchorId)) {
+      selectionAnchorId = null;
+    }
+  }
+
+  /**
+   * Handles a checkbox click, including shift-click range selection.
+   * @param {Object} order - Order whose row was clicked
+   * @param {boolean} shiftKey - Whether shift was held
+   */
+  function toggleOrderSelection(order, shiftKey) {
+    const sorted = sortOrders(cachedOrders);
+
+    if (shiftKey && selectionAnchorId && selectionAnchorId !== order.orderId) {
+      const ids = getShiftRangeIds(
+        sorted,
+        selectionAnchorId,
+        order.orderId,
+        getSelectionAnchor(),
+        userAddress
+      );
+      for (const id of ids) selectedOrderIds.add(id);
+    } else if (selectedOrderIds.has(order.orderId)) {
+      selectedOrderIds.delete(order.orderId);
+      if (selectionAnchorId === order.orderId) selectionAnchorId = null;
+    } else {
+      selectedOrderIds.add(order.orderId);
+      selectionAnchorId = order.orderId;
+    }
+
+    renderOrders();
+  }
+
+  /**
+   * Selects every open order the connected wallet made on this page,
+   * surfacing [Cancel All]. Only reachable from the My Orders filter.
+   */
+  function selectAllOwnOrders() {
+    if (!userAddress) return;
+
+    selectedOrderIds.clear();
+    for (const order of sortOrders(cachedOrders)) {
+      if (order.active && resolveSelectionMode(order, userAddress) === "own") {
+        selectedOrderIds.add(order.orderId);
+      }
+    }
+    selectionAnchorId = null;
+    renderOrders();
+  }
+
+  /**
+   * Syncs the selection bar to the current selection.
+   *
+   * Shown from one order onward rather than two: ticking a single box and
+   * seeing nothing appear reads as broken, and both batch actions work fine
+   * with a single order.
+   */
+  function renderSelectionBar() {
+    const bar = $("#selection-bar");
+    const selectAllBtn = $("#select-all-orders");
+    const fillBtn = $("#batch-fill-btn");
+    const cancelBtn = $("#batch-cancel-btn");
+
+    // [Select All] belongs to the My Orders view, where Cancel All is the point.
+    selectAllBtn.classList.toggle("hidden", !(currentFilters.myOrders && userAddress));
+
+    const count = selectedOrderIds.size;
+    if (count === 0) {
+      bar.classList.toggle("hidden", !(currentFilters.myOrders && userAddress));
+      $("#selection-count").textContent = "0 selected";
+      fillBtn.classList.add("hidden");
+      cancelBtn.classList.add("hidden");
+      return;
+    }
+
+    bar.classList.remove("hidden");
+    $("#selection-count").textContent = count + (count === 1 ? " order" : " orders") + " selected";
+
+    const isOwn = resolveSelectionMode(getSelectionAnchor(), userAddress) === "own";
+    fillBtn.classList.toggle("hidden", isOwn);
+    cancelBtn.classList.toggle("hidden", !isOwn);
+  }
+
+  /**
+   * Builds a token cell for the order table.
+   *
+   * Native ETH has no contract, so it renders as bare text with no CoinGecko
+   * link, copy button, or address tooltip. That absence is also what tells a
+   * native-ETH order apart from a WETH order, which still shows its address.
+   *
+   * @param {Object} token - Token with {address, symbol}
+   * @param {string} label - Mobile card label
+   * @returns {HTMLTableCellElement}
+   */
+  function buildTokenCell(token, label) {
+    const td = document.createElement("td");
+    td.dataset.label = label;
+
+    if (isNativeEth(token.address)) {
+      const span = document.createElement("span");
+      span.textContent = token.symbol;
+      span.title = "Native ETH";
+      td.appendChild(span);
+      return td;
+    }
+
+    const wrap = document.createElement("span");
+    wrap.style.whiteSpace = "nowrap";
+
+    const coinGeckoId = COINGECKO_ID_MAP[token.address.toLowerCase()];
+    if (coinGeckoId) {
+      const link = document.createElement("a");
+      link.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = token.symbol;
+      wrap.appendChild(link);
+    } else {
+      const span = document.createElement("span");
+      span.textContent = token.symbol;
+      wrap.appendChild(span);
+    }
+
+    wrap.appendChild(createCopyButton(token.address));
+    td.appendChild(wrap);
+    td.title = token.address;
+    return td;
+  }
+
+  /**
+   * Builds an amount cell for the order table.
+   *
+   * v2 amounts are what is *left* to fill, so a partially filled order also
+   * shows what it started at.
+   *
+   * @param {string} remaining - Remaining amount in base units
+   * @param {string|undefined} original - Original amount in base units
+   * @param {number} decimals - Token decimals
+   * @param {string} label - Mobile card label
+   * @returns {HTMLTableCellElement}
+   */
+  function buildAmountCell(remaining, original, decimals, label) {
+    const td = document.createElement("td");
+    td.dataset.label = label;
+    td.appendChild(document.createTextNode(formatAmount(remaining, decimals)));
+
+    if (original !== null && original !== undefined && BigInt(original) > BigInt(remaining)) {
+      const hint = document.createElement("span");
+      hint.className = "partial-progress";
+      hint.textContent = "of " + formatAmount(original, decimals) + " left";
+      hint.title = "Partially filled";
+      td.appendChild(hint);
+    }
+
+    return td;
+  }
+
   function renderOrders() {
     const tbody = $("#order-table");
     tbody.textContent = "";
@@ -2265,15 +2475,17 @@
     if (cachedOrders.length === 0) {
       const tr = document.createElement("tr");
       const td = document.createElement("td");
-      td.colSpan = 9;
+      td.colSpan = 10;
       td.textContent = "No orders found";
       tr.appendChild(td);
       tbody.appendChild(tr);
       updatePagination(0);
+      renderSelectionBar();
       return;
     }
 
     const sortedOrders = sortOrders(cachedOrders);
+    const selectionAnchor = getSelectionAnchor();
 
     for (const order of sortedOrders) {
       const tr = document.createElement("tr");
@@ -2333,7 +2545,31 @@
       }
 
       // Build row with links
-      // Column 0: Action button (Fill for others, Cancel for own) or status
+      // Column 0: Selection checkbox. Disabled when the order can't join the
+      // current selection (closed, or it would mix own/other orders or pairs).
+      const tdSelect = document.createElement("td");
+      tdSelect.className = "select-col";
+      tdSelect.dataset.label = "";
+      const selectBox = document.createElement("input");
+      selectBox.type = "checkbox";
+      selectBox.checked = selectedOrderIds.has(order.orderId);
+      selectBox.disabled =
+        !selectBox.checked && !canSelectOrder(order, selectionAnchor, userAddress);
+      selectBox.title = selectBox.disabled
+        ? "Can't mix your own orders with other makers' orders, or different pairs when filling"
+        : "Select order #" + order.orderId;
+      // Suppress the browser's shift-click text selection across rows.
+      selectBox.addEventListener("mousedown", (e) => {
+        if (e.shiftKey) e.preventDefault();
+      });
+      selectBox.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleOrderSelection(order, e.shiftKey);
+      });
+      tdSelect.appendChild(selectBox);
+      tr.appendChild(tdSelect);
+
+      // Column 1: Action button (Fill for others, Cancel for own) or status
       const tdAction = document.createElement("td");
       tdAction.dataset.label = "";
       if (order.active) {
@@ -2385,7 +2621,7 @@
       }
       tr.appendChild(tdAction);
 
-      // Column 1: Trade ID (clickable to open detail modal)
+      // Column 2: Trade ID (clickable to open detail modal)
       const tdId = document.createElement("td");
       tdId.dataset.label = "Trade ID";
       const idLink = document.createElement("a");
@@ -2405,7 +2641,7 @@
         tr.id = "order-" + order.orderId;
       }
 
-      // Column 2: Maker (link to Etherscan + copy, show ENS if available)
+      // Column 3: Maker (link to Etherscan + copy, show ENS if available)
       const tdSeller = document.createElement("td");
       tdSeller.dataset.label = "Maker";
       const sellerWrap = document.createElement("span");
@@ -2422,72 +2658,30 @@
       tdSeller.appendChild(sellerWrap);
       tr.appendChild(tdSeller);
 
-      // Column 3: Offered Token (link to CoinGecko + copy)
-      const tdTokenA = document.createElement("td");
-      tdTokenA.dataset.label = "Offered";
-      const tokenAWrap = document.createElement("span");
-      tokenAWrap.style.whiteSpace = "nowrap";
-      const tokenAId = COINGECKO_ID_MAP[order.tokenA.address.toLowerCase()];
-      if (tokenAId) {
-        const tokenALink = document.createElement("a");
-        tokenALink.href = "https://www.coingecko.com/en/coins/" + tokenAId;
-        tokenALink.target = "_blank";
-        tokenALink.rel = "noopener noreferrer";
-        tokenALink.textContent = order.tokenA.symbol;
-        tokenAWrap.appendChild(tokenALink);
-      } else {
-        const tokenASpan = document.createElement("span");
-        tokenASpan.textContent = order.tokenA.symbol;
-        tokenAWrap.appendChild(tokenASpan);
-      }
-      tokenAWrap.appendChild(createCopyButton(order.tokenA.address));
-      tdTokenA.appendChild(tokenAWrap);
-      tdTokenA.title = order.tokenA.address;
-      tr.appendChild(tdTokenA);
+      // Column 4: Offered Token (link to CoinGecko + copy; bare text for ETH)
+      tr.appendChild(buildTokenCell(order.tokenA, "Offered"));
 
-      // Column 4: Sell Size
-      const tdAmountA = document.createElement("td");
-      tdAmountA.dataset.label = "Offered Size";
-      tdAmountA.textContent = formatAmount(order.amountA, tokenADecimals);
-      tr.appendChild(tdAmountA);
+      // Column 5: Offered Size (remaining, for v2 partial fills)
+      tr.appendChild(
+        buildAmountCell(order.amountA, order.originalAmountA, tokenADecimals, "Offered Size")
+      );
 
-      // Column 5: Wanted Token (link to CoinGecko + copy)
-      const tdTokenB = document.createElement("td");
-      tdTokenB.dataset.label = "Wanted";
-      const tokenBWrap = document.createElement("span");
-      tokenBWrap.style.whiteSpace = "nowrap";
-      const tokenBId = COINGECKO_ID_MAP[order.tokenB.address.toLowerCase()];
-      if (tokenBId) {
-        const tokenBLink = document.createElement("a");
-        tokenBLink.href = "https://www.coingecko.com/en/coins/" + tokenBId;
-        tokenBLink.target = "_blank";
-        tokenBLink.rel = "noopener noreferrer";
-        tokenBLink.textContent = order.tokenB.symbol;
-        tokenBWrap.appendChild(tokenBLink);
-      } else {
-        const tokenBSpan = document.createElement("span");
-        tokenBSpan.textContent = order.tokenB.symbol;
-        tokenBWrap.appendChild(tokenBSpan);
-      }
-      tokenBWrap.appendChild(createCopyButton(order.tokenB.address));
-      tdTokenB.appendChild(tokenBWrap);
-      tdTokenB.title = order.tokenB.address;
-      tr.appendChild(tdTokenB);
+      // Column 6: Wanted Token (link to CoinGecko + copy; bare text for ETH)
+      tr.appendChild(buildTokenCell(order.tokenB, "Wanted"));
 
-      // Column 6: Wanted Size
-      const tdAmountB = document.createElement("td");
-      tdAmountB.dataset.label = "Wanted Size";
-      tdAmountB.textContent = formatAmount(order.amountB, tokenBDecimals);
-      tr.appendChild(tdAmountB);
+      // Column 7: Wanted Size (remaining, for v2 partial fills)
+      tr.appendChild(
+        buildAmountCell(order.amountB, order.originalAmountB, tokenBDecimals, "Wanted Size")
+      );
 
-      // Column 7: USD Val (nowrap to keep $ and value on same line)
+      // Column 8: USD Val (nowrap to keep $ and value on same line)
       const tdUsd = document.createElement("td");
       tdUsd.dataset.label = "USD Val";
       tdUsd.textContent = usdVal;
       tdUsd.style.whiteSpace = "nowrap";
       tr.appendChild(tdUsd);
 
-      // Column 8: Price (clickable to invert ratio) + market deviation
+      // Column 9: Price (clickable to invert ratio) + market deviation
       const tdPrice = document.createElement("td");
       tdPrice.dataset.label = "Price";
       const priceSpan = document.createElement("span");
@@ -2529,6 +2723,7 @@
       tbody.appendChild(tr);
     }
     updatePagination(sortedOrders.length);
+    renderSelectionBar();
 
     // Scroll to highlighted order if present
     if (highlightedOrderId) {
@@ -2548,6 +2743,267 @@
   }
 
   // ============================================================================
+  // V2 CONNECTOR — DUMMY IMPLEMENTATION
+  // ============================================================================
+  //
+  // !!! NONE OF THIS TALKS TO A CHAIN. !!!
+  //
+  // The Swapboard v2 contracts are not deployed. The v2 interface lives in the
+  // unmerged PR #4 (ETHCF/swapboard, branch `z0r0z:partial`), which adds:
+  //
+  //   struct CreateOrderParams { address tokenA; uint256 amountA;
+  //                              address tokenB; uint256 amountB; bool partialFill; }
+  //
+  //   createOrder(tokenA, amountA, tokenB, amountB, partialFill) -> uint256
+  //   createOrders(CreateOrderParams[])                          -> uint256[]
+  //   fillOrder(orderId, deadline, fillAmountB)
+  //   fillOrders(orderIds[], deadline, fillAmountsB[])
+  //   tryFillOrders(orderIds[], deadline, fillAmountsB[])        -> bool[]
+  //   cancelOrders(orderIds[])
+  //   cancelOrdersUnwrap(orderIds[])
+  //
+  // Every method below mirrors one of those signatures exactly, logs the
+  // arguments it *would* submit, waits a beat, and resolves as if it succeeded.
+  // Swapping in real `contract.<method>(...)` calls should therefore require no
+  // changes above this layer.
+  //
+  // Because the stubs are inert, order rows do NOT change state after a
+  // simulated fill or cancel — loadOrders() re-reads unchanged data.
+  //
+  // --- Native ETH ---------------------------------------------------------
+  //
+  // Native ETH is never routed through the ERC20 path. Anywhere the user
+  // *sends* ETH, msg.value has to carry it, so v2 gets a dedicated payable
+  // entry point and this connector calls it directly:
+  //
+  //   createOrderWithEth(tokenB, amountB, partialFill)            payable
+  //   createOrdersWithEth(CreateOrderParams[])                    payable
+  //   fillOrderWithEth(orderId, deadline)                         payable
+  //   tryFillOrdersWithEth(orderIds[], deadline, fillAmountsB[])  payable -> bool[]
+  //
+  // Anywhere the user only *receives* ETH — filling or cancelling an order
+  // that offers native ETH — no special call is needed: the contract already
+  // escrows ETH and pays it straight out, so the plain method is correct.
+  //
+  // WETH is unrelated to any of this and keeps its own v1 wrap/unwrap
+  // variants (fillOrderUnwrap, cancelOrderUnwrap).
+  //
+  // Two things went away with the v1 call sites and come back with the real
+  // contracts, rather than being faked here:
+  //   * gas estimates in the confirmation modal — these need a real ABI to
+  //     encode against, and an invented number is worse than none.
+  //   * waitForOrderUpdate() subgraph polling after a transaction — with inert
+  //     stubs it would only ever time out.
+  // ============================================================================
+
+  /** Simulated per-transaction confirmation delay, in milliseconds. */
+  const V2_SIM_DELAY_MS = 700;
+
+  let v2TxCounter = 0;
+
+  /**
+   * Logs a stubbed contract call with its decoded arguments.
+   * @param {string} method - Contract method name
+   * @param {Object} args - Arguments that would be encoded
+   */
+  function logV2Call(method, args) {
+    console.info("[V2-DUMMY] " + method, args);
+  }
+
+  /**
+   * Produces a deterministic-looking fake transaction hash.
+   * @returns {string} 0x-prefixed 64-character hex string
+   */
+  function fakeTxHash() {
+    v2TxCounter += 1;
+    return "0x" + v2TxCounter.toString(16).padStart(64, "0");
+  }
+
+  /**
+   * Resolves a stubbed transaction after a simulated confirmation delay.
+   * Shaped like an ethers TransactionResponse so call sites read normally.
+   * @param {string} method - Contract method name (for logging)
+   * @param {Object} args - Arguments that would be encoded
+   * @param {*} [result] - Value to attach to the receipt
+   * @returns {Promise<{hash: string, wait: function(): Promise<Object>}>}
+   */
+  async function v2Send(method, args, result) {
+    logV2Call(method, args);
+    const hash = fakeTxHash();
+    return {
+      hash,
+      result,
+      wait: async () => {
+        await new Promise((resolve) => setTimeout(resolve, V2_SIM_DELAY_MS));
+        logV2Call(method + " -> confirmed", { hash, result });
+        return { hash, status: 1, logs: [], result };
+      },
+    };
+  }
+
+  /** Encodes a CreateOrderParams struct for logging. */
+  function toCreateParams(p) {
+    return {
+      tokenA: p.tokenA,
+      amountA: p.amountA.toString(),
+      tokenB: p.tokenB,
+      amountB: p.amountB.toString(),
+      partialFill: p.partialFill,
+    };
+  }
+
+  const V2 = {
+    /** @see ISwapboard.createOrder — offered token is an ERC20 */
+    createOrder(tokenA, amountA, tokenB, amountB, partialFill) {
+      return v2Send("createOrder", {
+        tokenA,
+        amountA: amountA.toString(),
+        tokenB,
+        amountB: amountB.toString(),
+        partialFill,
+      });
+    },
+
+    /**
+     * @see ISwapboard.createOrderWithEth
+     * Offers native ETH: the offered amount rides in msg.value, so tokenA is
+     * implicit and never passed.
+     */
+    createOrderWithEth(tokenB, amountB, partialFill, value) {
+      return v2Send("createOrderWithEth", {
+        tokenB,
+        amountB: amountB.toString(),
+        partialFill,
+        value: value.toString(),
+      });
+    },
+
+    /** @see ISwapboard.createOrders — every offered token is an ERC20 */
+    createOrders(params) {
+      return v2Send("createOrders", { params: params.map(toCreateParams) });
+    },
+
+    /**
+     * @see ISwapboard.createOrdersWithEth
+     * Every order in the batch offers native ETH; msg.value is their total.
+     */
+    createOrdersWithEth(params, value) {
+      return v2Send("createOrdersWithEth", {
+        params: params.map(toCreateParams),
+        value: value.toString(),
+      });
+    },
+
+    /** @see ISwapboard.fillOrder — fillAmountB of 0 means "fill the remainder" */
+    fillOrder(orderId, deadline, fillAmountB) {
+      return v2Send("fillOrder", {
+        orderId,
+        deadline,
+        fillAmountB: fillAmountB.toString(),
+      });
+    },
+
+    /**
+     * @see ISwapboard.fillOrderWithEth
+     * Pays with native ETH. msg.value *is* the fill amount, so there is no
+     * separate fillAmountB argument.
+     */
+    fillOrderWithEth(orderId, deadline, value) {
+      return v2Send("fillOrderWithEth", { orderId, deadline, value: value.toString() });
+    },
+
+    /** @see ISwapboard.fillOrderUnwrap — taker receives native ETH */
+    fillOrderUnwrap(orderId, deadline, fillAmountB) {
+      return v2Send("fillOrderUnwrap", {
+        orderId,
+        deadline,
+        fillAmountB: fillAmountB.toString(),
+      });
+    },
+
+    /** @see ISwapboard.cancelOrder */
+    cancelOrder(orderId) {
+      return v2Send("cancelOrder", { orderId });
+    },
+
+    /** @see ISwapboard.cancelOrderUnwrap — maker receives native ETH */
+    cancelOrderUnwrap(orderId) {
+      return v2Send("cancelOrderUnwrap", { orderId });
+    },
+
+    /** @see ISwapboard.fillOrders */
+    fillOrders(orderIds, deadline, fillAmountsB) {
+      return v2Send("fillOrders", {
+        orderIds,
+        deadline,
+        fillAmountsB: fillAmountsB.map(String),
+      });
+    },
+
+    /**
+     * @see ISwapboard.tryFillOrders
+     * Skips orders that are no longer fillable instead of reverting the batch.
+     * The stub reports every order as filled.
+     */
+    tryFillOrders(orderIds, deadline, fillAmountsB) {
+      const filled = orderIds.map(() => true);
+      return v2Send(
+        "tryFillOrders",
+        { orderIds, deadline, fillAmountsB: fillAmountsB.map(String) },
+        filled
+      );
+    },
+
+    /**
+     * @see ISwapboard.tryFillOrdersWithEth
+     * Batch equivalent of fillOrderWithEth: msg.value covers the whole batch,
+     * and the contract refunds whatever the skipped orders did not consume.
+     */
+    tryFillOrdersWithEth(orderIds, deadline, fillAmountsB, value) {
+      const filled = orderIds.map(() => true);
+      return v2Send(
+        "tryFillOrdersWithEth",
+        {
+          orderIds,
+          deadline,
+          fillAmountsB: fillAmountsB.map(String),
+          value: value.toString(),
+        },
+        filled
+      );
+    },
+
+    /** @see ISwapboard.cancelOrders */
+    cancelOrders(orderIds) {
+      return v2Send("cancelOrders", { orderIds });
+    },
+
+    /** @see ISwapboard.cancelOrdersUnwrap */
+    cancelOrdersUnwrap(orderIds) {
+      return v2Send("cancelOrdersUnwrap", { orderIds });
+    },
+
+    /**
+     * Ensures the Swapboard contract can move `total` of `tokenAddress`.
+     * Batched: one approval covers every order in the batch using that token.
+     * @param {string} tokenAddress - ERC20 address (native ETH needs no approval)
+     * @param {bigint} total - Total amount the batch will move
+     * @returns {Promise<boolean>} True if an approval transaction was sent
+     */
+    async ensureAllowance(tokenAddress, total) {
+      if (isNativeEth(tokenAddress)) return false;
+      logV2Call("ERC20.allowance", { token: tokenAddress, owner: userAddress });
+      const tx = await v2Send("ERC20.approve", {
+        token: tokenAddress,
+        spender: CONFIG.CONTRACT_ADDRESS,
+        amount: total.toString(),
+      });
+      await tx.wait();
+      return true;
+    },
+  };
+
+  // ============================================================================
   // Order Actions
   // ============================================================================
 
@@ -2555,119 +3011,201 @@
    * Handles the fill order flow: confirms with user, approves tokens, fills.
    * @param {Object} order - Order object from subgraph
    */
-  async function handleFillOrder(order) {
-    // Auto-route to ETH variants when WETH is involved
-    if (isWeth(order.tokenB.address)) {
-      return handleFillOrderWithEth(order);
+  /**
+   * Builds the partial-fill controls for the fill confirmation.
+   *
+   * The user types how much of the offered token they want to receive; the
+   * amount they pay is derived from it. Presets are percentages of what is
+   * *left* on the order, so they stay meaningful on a partly filled order.
+   *
+   * @param {Object} order - Order being filled
+   * @param {function(bigint): void} onChange - Called with the new fillAmountB
+   * @returns {HTMLElement}
+   */
+  function buildPartialFillControls(order, onChange) {
+    const remainingA = BigInt(order.amountA);
+    const wrap = document.createElement("div");
+    wrap.className = "partial-fill-controls";
+
+    const label = document.createElement("label");
+    label.textContent = "Receive (" + order.tokenA.symbol + "):";
+    wrap.appendChild(label);
+
+    const inputRow = document.createElement("div");
+    inputRow.className = "partial-fill-input-row";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = formatAmount(remainingA, order.tokenA.decimals);
+    inputRow.appendChild(input);
+    wrap.appendChild(inputRow);
+
+    const presets = document.createElement("div");
+    presets.className = "partial-fill-presets";
+    wrap.appendChild(presets);
+
+    const send = document.createElement("div");
+    send.className = "partial-fill-send";
+    wrap.appendChild(send);
+
+    /**
+     * Recomputes the payment for a desired receive amount and reports it.
+     * @param {bigint} receive - Desired amount of the offered token
+     * @param {boolean} writeBack - Whether to rewrite the input box
+     */
+    function update(receive, writeBack) {
+      const { fillAmountB, actualAmountA } = computeFillFromReceive(order, receive);
+
+      input.classList.toggle("input-error", fillAmountB === 0n);
+      if (writeBack) {
+        input.value = formatAmount(actualAmountA, order.tokenA.decimals);
+      }
+
+      send.textContent =
+        "You send: " + formatAmount(fillAmountB, order.tokenB.decimals) + " " + order.tokenB.symbol;
+
+      onChange(fillAmountB);
     }
-    if (isWeth(order.tokenA.address)) {
-      return handleFillOrderUnwrap(order);
-    }
 
-    if (!signer) {
-      showToast("Connect wallet first", "error");
-      return;
-    }
-
-    const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
-    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
-
-    const deadline = Math.floor(Date.now() / 1000) + 300;
-
-    // Estimate gas cost
-    showToast("Estimating gas...");
-    let gasEstimate = null;
-    try {
-      const txData = contract.interface.encodeFunctionData("fillOrder", [order.orderId, deadline]);
-      gasEstimate = await estimateGasCost({
-        from: userAddress,
-        to: CONFIG.CONTRACT_ADDRESS,
-        data: txData,
+    for (const percent of [25, 50, 75, 100]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "quick-amt-btn";
+      btn.textContent = percent + "%";
+      btn.addEventListener("click", () => {
+        for (const other of presets.children) other.classList.remove("active");
+        btn.classList.add("active");
+        update((remainingA * BigInt(percent)) / 100n, true);
       });
-    } catch (e) {
-      console.error("Gas estimation failed:", e);
+      presets.appendChild(btn);
     }
+    presets.lastChild.classList.add("active");
 
-    showModal(
-      "Fill Order #" + order.orderId,
-      `You will send ${amountBStr} ${order.tokenB.symbol} and receive ${amountAStr} ${order.tokenA.symbol} in return.`,
-      async () => {
-        try {
-          const isLocal =
-            window.location.hostname === "localhost" ||
-            window.location.hostname === "127.0.0.1" ||
-            window.location.protocol === "file:";
+    input.addEventListener("input", () => {
+      for (const other of presets.children) other.classList.remove("active");
+      const parsed = parseAmount(input.value, order.tokenA.decimals);
+      update(parsed === null ? 0n : parsed, false);
+    });
 
-          if (!isLocal) {
-            showToast("Checking allowance...", "info", true);
-            const tokenContract = new ethers.Contract(order.tokenB.address, ERC20_ABI, signer);
-            const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
-            const amountB = BigInt(order.amountB);
-
-            if (allowance < amountB) {
-              showToast("Approve tokens in wallet...", "info", true);
-              const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountB);
-              showToast("Waiting for approval tx...", "info", true);
-              await approveTx.wait();
-              showToast("Approval confirmed");
-            }
-          }
-
-          showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrder(order.orderId, deadline);
-          showToast("Waiting for tx confirmation...", "info", true);
-          await tx.wait();
-          showToast("Order filled! Syncing...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
-          loadOrders();
-          loadStats();
-          showToast("Order filled!", "success");
-        } catch (e) {
-          console.error("Fill error:", e);
-          showToast("Fill failed: " + parseContractError(e), "error");
-        }
-      },
-      gasEstimate
-    );
+    update(remainingA, false);
+    return wrap;
   }
 
-  async function handleCancelOrder(order) {
-    // Auto-route to ETH variant when tokenA is WETH
-    if (isWeth(order.tokenA.address)) {
-      return handleCancelOrderUnwrap(order);
-    }
-
+  /**
+   * Fills a single order, optionally in part.
+   *
+   * Routing follows how each side has to settle:
+   *   - wanted token is native ETH -> fillOrderWithEth (payable, no approval)
+   *   - wanted token is WETH       -> fillOrderWithEth, so the taker can pay
+   *                                   in ETH rather than wrapping first
+   *   - offered token is WETH      -> fillOrderUnwrap, so the taker is paid
+   *                                   in ETH rather than WETH
+   *   - otherwise                  -> approve + fillOrder
+   *
+   * An order offering *native* ETH needs no special call: the contract already
+   * escrows ETH and pays it straight out, so plain fillOrder is correct.
+   *
+   * A fillAmountB equal to the full remainder is submitted as 0, which the
+   * contract reads as "fill the entire remaining order".
+   *
+   * @param {Object} order - Order to fill
+   */
+  async function handleFillOrder(order) {
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
 
-    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
+    const payWithEth = isNativeEth(order.tokenB.address) || isWeth(order.tokenB.address);
+    const unwrapToEth = isWeth(order.tokenA.address);
+    const remainingB = BigInt(order.amountB);
 
-    // Estimate gas cost
-    showToast("Estimating gas...");
-    let gasEstimate = null;
-    try {
-      const txData = contract.interface.encodeFunctionData("cancelOrder", [order.orderId]);
-      gasEstimate = await estimateGasCost({
-        from: userAddress,
-        to: CONFIG.CONTRACT_ADDRESS,
-        data: txData,
-      });
-    } catch (e) {
-      console.error("Gas estimation failed:", e);
+    const body = document.createElement("div");
+    const summary = document.createElement("div");
+    summary.textContent =
+      `You will send ${formatAmount(order.amountB, order.tokenB.decimals)} ${order.tokenB.symbol} ` +
+      `and receive ${formatAmount(order.amountA, order.tokenA.decimals)} ${order.tokenA.symbol} in return.`;
+    body.appendChild(summary);
+
+    // Orders that opted out of partial fill are all-or-nothing, so there is
+    // nothing to choose and the controls stay off.
+    let fillAmountB = remainingB;
+    if (order.partialFill) {
+      body.appendChild(
+        buildPartialFillControls(order, (amount) => {
+          fillAmountB = amount;
+        })
+      );
     }
+
+    showModal("Fill Order #" + order.orderId, body, async () => {
+      try {
+        if (fillAmountB <= 0n) {
+          showToast("Enter an amount to fill", "error");
+          return;
+        }
+
+        const deadline = Math.floor(Date.now() / 1000) + 300;
+        // 0 means "fill the remainder" on-chain; send it when the user hasn't
+        // scaled the order down, so a race that partially fills it first
+        // doesn't turn into a revert.
+        const fillArg = fillAmountB >= remainingB ? 0n : fillAmountB;
+
+        let tx;
+        if (payWithEth) {
+          // Paying in ETH: the amount rides in msg.value, so nothing to approve.
+          showToast("Confirm fill in wallet...", "info", true);
+          tx = await V2.fillOrderWithEth(order.orderId, deadline, fillAmountB);
+        } else {
+          showToast("Checking allowance...", "info", true);
+          await V2.ensureAllowance(order.tokenB.address, fillAmountB);
+
+          showToast("Confirm fill in wallet...", "info", true);
+          tx = unwrapToEth
+            ? await V2.fillOrderUnwrap(order.orderId, deadline, fillArg)
+            : await V2.fillOrder(order.orderId, deadline, fillArg);
+        }
+
+        showToast("Waiting for tx confirmation...", "info", true);
+        await tx.wait();
+        showToast("Order filled! Syncing...", "success", true);
+        loadOrders();
+        loadStats();
+        showToast("Order filled!", "success");
+      } catch (e) {
+        console.error("Fill error:", e);
+        showToast("Fill failed: " + parseContractError(e), "error");
+      }
+    });
+  }
+
+  /**
+   * Cancels a single order, returning the remaining offered amount to the maker.
+   *
+   * Orders offering WETH unwrap so the maker gets native ETH back. Orders
+   * offering native ETH need no special call — the escrow is already ETH.
+   *
+   * @param {Object} order - Order to cancel
+   */
+  async function handleCancelOrder(order) {
+    if (!signer) {
+      showToast("Connect wallet first", "error");
+      return;
+    }
+
+    const unwrap = isWeth(order.tokenA.address);
+    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
 
     showModal(
       "Cancel Order #" + order.orderId,
       `Your ${amountAStr} ${order.tokenA.symbol} will be returned to your wallet.`,
       async () => {
         try {
-          showToast("Cancelling order...");
-          const tx = await contract.cancelOrder(order.orderId);
+          showToast("Cancelling order...", "info", true);
+          const tx = unwrap
+            ? await V2.cancelOrderUnwrap(order.orderId)
+            : await V2.cancelOrder(order.orderId);
           await tx.wait();
           showToast("Order cancelled! Updating...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
           loadOrders();
           loadStats();
           showToast("Order cancelled!", "success");
@@ -2675,333 +3213,868 @@
           console.error("Cancel error:", e);
           showToast("Cancel failed: " + parseContractError(e), "error");
         }
-      },
-      gasEstimate
+      }
     );
   }
 
-  async function handleFillOrderWithEth(order) {
+  // ============================================================================
+  // Batch Order Actions (Fill All / Cancel All)
+  // ============================================================================
+
+  /**
+   * Builds one line of a batch confirmation list.
+   * @param {string} id - Order ID
+   * @param {string} text - Description of the swap or refund
+   * @returns {HTMLElement}
+   */
+  function buildBatchItem(id, text) {
+    const item = document.createElement("div");
+    item.className = "batch-summary-item";
+
+    const idSpan = document.createElement("span");
+    idSpan.className = "batch-summary-id";
+    idSpan.textContent = "#" + id;
+    item.appendChild(idSpan);
+
+    const textSpan = document.createElement("span");
+    textSpan.textContent = text;
+    item.appendChild(textSpan);
+
+    return item;
+  }
+
+  /**
+   * Adds a labelled total row to a batch summary.
+   * @param {HTMLElement} parent - Totals container
+   * @param {string} label - Row label
+   * @param {string} value - Row value
+   * @param {boolean} [emphasis=false] - Render as the headline figure
+   */
+  function appendTotalRow(parent, label, value, emphasis = false) {
+    const row = document.createElement("div");
+    if (emphasis) row.className = "batch-summary-emphasis";
+
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = label;
+    row.appendChild(labelSpan);
+
+    const valueSpan = document.createElement("span");
+    valueSpan.textContent = value;
+    row.appendChild(valueSpan);
+
+    parent.appendChild(row);
+  }
+
+  /**
+   * Adds a note explaining how many transactions a batch will take.
+   * @param {HTMLElement} parent - Container to append to
+   * @param {number} count - Number of orders
+   * @param {number} perTx - Maximum orders per transaction
+   */
+  function appendBatchTxNote(parent, count, perTx) {
+    const txCount = Math.ceil(count / perTx);
+    if (txCount <= 1) return;
+
+    const note = document.createElement("div");
+    note.className = "batch-summary-note";
+    note.textContent = `Too many orders for one transaction — this will be split into ${txCount} transactions of up to ${perTx} orders each.`;
+    parent.appendChild(note);
+  }
+
+  /**
+   * Runs a batch across as many transactions as it takes, reporting progress.
+   *
+   * @param {Array[]} chunks - Orders/IDs grouped one group per transaction
+   * @param {string} verb - Present participle for the progress toast ("Filling")
+   * @param {function(Array, number): Promise<*>} send - Submits one chunk
+   * @returns {Promise<number>} Number of orders processed
+   */
+  async function runBatchTransactions(chunks, verb, send) {
+    let processed = 0;
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const remaining = chunks.length - i - 1;
+      const progress =
+        chunks.length > 1
+          ? ` (transaction ${i + 1} of ${chunks.length}, ${remaining} remaining)`
+          : "";
+
+      showToast(`${verb} ${chunk.length} orders${progress}...`, "info", true);
+      const tx = await send(chunk, i);
+      await tx.wait();
+      processed += chunk.length;
+    }
+
+    return processed;
+  }
+
+  /**
+   * Fills every selected order.
+   *
+   * Selection rules guarantee a single token pair, so one approval covers the
+   * whole batch and the totals in the confirmation are meaningful. Orders are
+   * filled to their full remaining amount (fillAmountB of 0); partial fill is
+   * intentionally not offered for batches.
+   */
+  async function fillSelectedOrders() {
+    const orders = getSelectedOrders();
+    if (orders.length === 0) return;
+
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
 
-    const amountBStr = formatAmount(order.amountB, 18);
-    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
+    const { tokenA, tokenB } = orders[0];
+    const totals = summarizeFillBatch(orders);
+    const sendStr = formatAmount(totals.totalSend, tokenB.decimals);
+    const receiveStr = formatAmount(totals.totalReceive, tokenA.decimals);
+    // Same routing as a single fill: pay in ETH for a native-ETH or WETH
+    // wanted token, otherwise approve the ERC20.
+    const payWithEth = isNativeEth(tokenB.address) || isWeth(tokenB.address);
 
-    const deadline = Math.floor(Date.now() / 1000) + 300;
+    const body = document.createElement("div");
+    body.className = "batch-summary";
 
-    showToast("Estimating gas...");
-    let gasEstimate = null;
-    try {
-      const txData = contract.interface.encodeFunctionData("fillOrderWithEth", [order.orderId, deadline]);
-      gasEstimate = await estimateGasCost({
-        from: userAddress,
-        to: CONFIG.CONTRACT_ADDRESS,
-        data: txData,
-        value: BigInt(order.amountB),
-      });
-    } catch (e) {
-      console.error("Gas estimation failed:", e);
+    const list = document.createElement("div");
+    list.className = "batch-summary-list";
+    for (const order of orders) {
+      list.appendChild(
+        buildBatchItem(
+          order.orderId,
+          `${formatAmount(order.amountB, tokenB.decimals)} ${tokenB.symbol} → ` +
+            `${formatAmount(order.amountA, tokenA.decimals)} ${tokenA.symbol}`
+        )
+      );
+    }
+    body.appendChild(list);
+
+    const totalsEl = document.createElement("div");
+    totalsEl.className = "batch-summary-totals";
+    appendTotalRow(totalsEl, "Orders", String(totals.count));
+    appendTotalRow(
+      totalsEl,
+      "Average price",
+      totals.avgPrice === null
+        ? "N/A"
+        : `${formatRatio(totals.avgPrice)} ${tokenB.symbol}/${tokenA.symbol}`
+    );
+    appendTotalRow(totalsEl, "You send", `${sendStr} ${tokenB.symbol}`, true);
+    appendTotalRow(totalsEl, "You receive", `${receiveStr} ${tokenA.symbol}`, true);
+    body.appendChild(totalsEl);
+
+    if (payWithEth) {
+      const note = document.createElement("div");
+      note.className = "batch-summary-note";
+      note.textContent =
+        "Paid in ETH, so no token approval is needed. Anything the skipped orders don't use is refunded.";
+      body.appendChild(note);
     }
 
-    showModal(
-      "Fill Order #" + order.orderId + " with ETH",
-      `You will send ${amountBStr} ETH and receive ${amountAStr} ${order.tokenA.symbol} in return.`,
-      async () => {
-        try {
-          showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrderWithEth(order.orderId, deadline, {
-            value: BigInt(order.amountB),
-          });
-          showToast("Waiting for tx confirmation...", "info", true);
-          await tx.wait();
-          showToast("Order filled! Syncing...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
-          loadOrders();
-          loadStats();
-          showToast("Order filled!", "success");
-        } catch (e) {
-          console.error("Fill error:", e);
-          showToast("Fill failed: " + parseContractError(e), "error");
+    const skipNote = document.createElement("div");
+    skipNote.className = "batch-summary-note";
+    skipNote.textContent =
+      "Orders that are no longer fillable when the transaction lands are skipped; the rest still fill.";
+    body.appendChild(skipNote);
+
+    appendBatchTxNote(body, orders.length, CONFIG.MAX_BATCH_FILL);
+
+    showModal(`Fill ${orders.length} Orders`, body, async () => {
+      try {
+        if (!payWithEth) {
+          showToast("Checking allowance...", "info", true);
+          await V2.ensureAllowance(tokenB.address, totals.totalSend);
         }
-      },
-      gasEstimate
-    );
+
+        const deadline = Math.floor(Date.now() / 1000) + 300;
+        const chunks = chunkArray(orders, CONFIG.MAX_BATCH_FILL);
+
+        const filled = await runBatchTransactions(chunks, "Filling", (chunk) => {
+          const ids = chunk.map((o) => o.orderId);
+          // fillAmountB of 0 means "fill the entire remaining amount", which
+          // is also what finishes off already partially filled orders.
+          const amounts = chunk.map(() => 0n);
+
+          if (!payWithEth) return V2.tryFillOrders(ids, deadline, amounts);
+
+          // Paying in ETH: msg.value covers this chunk, and the contract
+          // refunds whatever any skipped orders leave unspent.
+          const chunkValue = chunk.reduce((sum, o) => sum + BigInt(o.amountB), 0n);
+          return V2.tryFillOrdersWithEth(ids, deadline, amounts, chunkValue);
+        });
+
+        clearSelection(false);
+        showToast(`Filled ${filled} orders! Syncing...`, "success", true);
+        loadOrders();
+        loadStats();
+        showToast(`Filled ${filled} orders!`, "success");
+      } catch (e) {
+        console.error("Batch fill error:", e);
+        showToast("Fill failed: " + parseContractError(e), "error");
+      }
+    });
   }
 
-  async function handleFillOrderUnwrap(order) {
+  /**
+   * Cancels every selected order.
+   *
+   * Own orders may span different pairs, so totals are grouped per offered
+   * token. Orders offering WETH are routed to cancelOrdersUnwrap so the maker
+   * gets native ETH back, matching the single-order behaviour.
+   */
+  async function cancelSelectedOrders() {
+    const orders = getSelectedOrders();
+    if (orders.length === 0) return;
+
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
 
-    const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
-    const amountAStr = formatAmount(order.amountA, 18);
+    const body = document.createElement("div");
+    body.className = "batch-summary";
 
-    const deadline = Math.floor(Date.now() / 1000) + 300;
+    const list = document.createElement("div");
+    list.className = "batch-summary-list";
+    const refunds = new Map();
+    for (const order of orders) {
+      const { symbol, decimals } = order.tokenA;
+      list.appendChild(
+        buildBatchItem(order.orderId, `${formatAmount(order.amountA, decimals)} ${symbol} returned`)
+      );
 
-    showToast("Estimating gas...");
-    let gasEstimate = null;
-    try {
-      const txData = contract.interface.encodeFunctionData("fillOrderUnwrap", [order.orderId, deadline]);
-      gasEstimate = await estimateGasCost({
-        from: userAddress,
-        to: CONFIG.CONTRACT_ADDRESS,
-        data: txData,
+      const existing = refunds.get(symbol);
+      refunds.set(symbol, {
+        decimals,
+        total: (existing ? existing.total : 0n) + BigInt(order.amountA),
       });
-    } catch (e) {
-      console.error("Gas estimation failed:", e);
+    }
+    body.appendChild(list);
+
+    const totalsEl = document.createElement("div");
+    totalsEl.className = "batch-summary-totals";
+    appendTotalRow(totalsEl, "Orders", String(orders.length));
+    for (const [symbol, { decimals, total }] of refunds) {
+      appendTotalRow(totalsEl, "Returned", `${formatAmount(total, decimals)} ${symbol}`, true);
+    }
+    body.appendChild(totalsEl);
+
+    appendBatchTxNote(body, orders.length, CONFIG.MAX_BATCH_CANCEL);
+
+    showModal(`Cancel ${orders.length} Orders`, body, async () => {
+      try {
+        // Split by settlement type first so each transaction is homogeneous,
+        // then by batch size.
+        // Only WETH needs unwrapping; a native-ETH order already escrows ETH.
+        const needsUnwrap = (o) => isWeth(o.tokenA.address);
+        const unwrap = orders.filter(needsUnwrap);
+        const plain = orders.filter((o) => !needsUnwrap(o));
+
+        let cancelled = 0;
+        cancelled += await runBatchTransactions(
+          chunkArray(plain, CONFIG.MAX_BATCH_CANCEL),
+          "Cancelling",
+          (chunk) => V2.cancelOrders(chunk.map((o) => o.orderId))
+        );
+        cancelled += await runBatchTransactions(
+          chunkArray(unwrap, CONFIG.MAX_BATCH_CANCEL),
+          "Cancelling",
+          (chunk) => V2.cancelOrdersUnwrap(chunk.map((o) => o.orderId))
+        );
+
+        clearSelection(false);
+        showToast(`Cancelled ${cancelled} orders! Updating...`, "success", true);
+        loadOrders();
+        loadStats();
+        showToast(`Cancelled ${cancelled} orders!`, "success");
+      } catch (e) {
+        console.error("Batch cancel error:", e);
+        showToast("Cancel failed: " + parseContractError(e), "error");
+      }
+    });
+  }
+
+  // ============================================================================
+  // Sell Tokens form (batch create)
+  // ============================================================================
+  //
+  // The form is a list of order rows cloned from #create-row-template. Fields
+  // are addressed by [data-field] scoped to their row rather than by global id,
+  // so several orders can go out in one createOrders() transaction.
+
+  /**
+   * Finds a field inside a create-order row.
+   * @param {HTMLElement} row - A .create-row element
+   * @param {string} name - data-field value
+   * @returns {HTMLElement}
+   */
+  function rowField(row, name) {
+    return row.querySelector('[data-field="' + name + '"]');
+  }
+
+  /**
+   * Returns every create-order row, in form order.
+   * @returns {HTMLElement[]}
+   */
+  function getCreateRows() {
+    return Array.from(document.querySelectorAll("#create-rows .create-row"));
+  }
+
+  /**
+   * Per-row token metadata and balances, keyed by the row element so removing
+   * a row disposes of its state automatically.
+   * @type {WeakMap<HTMLElement, {tokenA: Object, tokenB: Object}>}
+   */
+  const rowStates = new WeakMap();
+
+  /**
+   * Returns (creating if needed) the validation state for a row.
+   * @param {HTMLElement} row - A .create-row element
+   * @returns {{tokenA: {info: ?Object, balance: ?bigint}, tokenB: {info: ?Object, balance: ?bigint}}}
+   */
+  function getRowState(row) {
+    if (!rowStates.has(row)) {
+      rowStates.set(row, {
+        tokenA: { info: null, balance: null },
+        tokenB: { info: null, balance: null },
+      });
+    }
+    return rowStates.get(row);
+  }
+
+  /**
+   * Validates an amount field against the row's token metadata and balance.
+   * @param {HTMLElement} row - A .create-row element
+   * @param {"tokenA"|"tokenB"} side - Which side of the order
+   * @returns {boolean} True when the amount is usable
+   */
+  function validateRowAmount(row, side) {
+    const input = rowField(row, side === "tokenA" ? "amountA" : "amountB");
+    const state = getRowState(row)[side];
+
+    let errorSpan = input.parentNode.querySelector(".amount-error");
+    if (!errorSpan) {
+      errorSpan = document.createElement("span");
+      errorSpan.className = "amount-error";
+      input.parentNode.appendChild(errorSpan);
     }
 
-    showModal(
-      "Fill Order #" + order.orderId + " (receive ETH)",
-      `You will send ${amountBStr} ${order.tokenB.symbol} and receive ${amountAStr} ETH in return.`,
-      async () => {
-        try {
-          const isLocal =
-            window.location.hostname === "localhost" ||
-            window.location.hostname === "127.0.0.1" ||
-            window.location.protocol === "file:";
+    const value = input.value.trim();
+    if (!value || !state.info) {
+      input.classList.remove("input-error");
+      errorSpan.textContent = "";
+      return true;
+    }
 
-          if (!isLocal) {
-            showToast("Checking allowance...", "info", true);
-            const tokenContract = new ethers.Contract(order.tokenB.address, ERC20_ABI, signer);
-            const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
-            const amountB = BigInt(order.amountB);
+    const amount = parseAmount(value, state.info.decimals);
+    if (amount === null) {
+      input.classList.add("input-error");
+      errorSpan.textContent = "Invalid amount";
+      return false;
+    }
 
-            if (allowance < amountB) {
-              showToast("Approve tokens in wallet...", "info", true);
-              const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountB);
-              showToast("Waiting for approval tx...", "info", true);
-              await approveTx.wait();
-              showToast("Approval confirmed");
-            }
-          }
+    // Only the offered side is spent, so only it can exceed a balance.
+    if (side === "tokenA" && state.balance !== null && amount > state.balance) {
+      input.classList.add("input-error");
+      errorSpan.textContent = "Exceeds balance";
+      return false;
+    }
 
-          showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrderUnwrap(order.orderId, deadline);
-          showToast("Waiting for tx confirmation...", "info", true);
-          await tx.wait();
-          showToast("Order filled! Syncing...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
-          loadOrders();
-          loadStats();
-          showToast("Order filled!", "success");
-        } catch (e) {
-          console.error("Fill error:", e);
-          showToast("Fill failed: " + parseContractError(e), "error");
-        }
-      },
-      gasEstimate
+    if (amount === 0n && value !== "0") {
+      input.classList.add("input-error");
+      errorSpan.textContent = "Amount too small";
+      return false;
+    }
+
+    input.classList.remove("input-error");
+    errorSpan.textContent = "";
+    return true;
+  }
+
+  /**
+   * Shows the implied price for a row once both amounts are filled in.
+   * @param {HTMLElement} row - A .create-row element
+   */
+  function updateRowPriceDisplay(row) {
+    const priceInfo = rowField(row, "price-info");
+    const state = getRowState(row);
+    const amountA = parseFloat(rowField(row, "amountA").value.trim());
+    const amountB = parseFloat(rowField(row, "amountB").value.trim());
+
+    priceInfo.textContent = "";
+    if (isNaN(amountA) || isNaN(amountB) || amountA <= 0 || amountB <= 0) return;
+
+    const symbolA = state.tokenA.info ? state.tokenA.info.symbol : "Token A";
+    const symbolB = state.tokenB.info ? state.tokenB.info.symbol : "Token B";
+    const trim = (n) => n.toFixed(6).replace(/\.?0+$/, "");
+
+    priceInfo.appendChild(
+      document.createTextNode("1 " + symbolB + " = " + trim(amountA / amountB) + " " + symbolA)
+    );
+    priceInfo.appendChild(document.createElement("br"));
+    priceInfo.appendChild(
+      document.createTextNode("1 " + symbolA + " = " + trim(amountB / amountA) + " " + symbolB)
     );
   }
 
-  async function handleCancelOrderUnwrap(order) {
-    if (!signer) {
-      showToast("Connect wallet first", "error");
+  /**
+   * Renders quick-amount buttons (25/50/75/100% of balance) for a row side.
+   * @param {HTMLElement} row - A .create-row element
+   * @param {"tokenA"|"tokenB"} side - Which side of the order
+   * @param {bigint} balance - Available balance in base units
+   * @param {number} decimals - Token decimals
+   */
+  function renderRowQuickAmounts(row, side, balance, decimals) {
+    const container = rowField(row, "quick-amounts-A");
+    if (!container || side !== "tokenA") return;
+
+    container.textContent = "";
+    if (balance <= 0n) return;
+
+    const amountInput = rowField(row, "amountA");
+    for (const percent of [25, 50, 75, 100]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "quick-amt-btn";
+      btn.textContent = percent + "%";
+      btn.addEventListener("click", () => {
+        amountInput.value = formatAmount(((balance * BigInt(percent)) / 100n).toString(), decimals);
+        amountInput.dispatchEvent(new Event("input"));
+      });
+      container.appendChild(btn);
+    }
+  }
+
+  /**
+   * Renders the resolved token metadata line under a token input.
+   * @param {HTMLElement} infoEl - The [data-field="tokenX-info"] element
+   * @param {Object} info - Token info from fetchTokenInfo
+   */
+  function renderTokenInfoLine(infoEl, info) {
+    infoEl.textContent = "";
+
+    if (isNativeEth(info.address)) {
+      infoEl.appendChild(document.createTextNode("ETH (18 decimals) — native, no contract"));
       return;
     }
 
-    const amountAStr = formatAmount(order.amountA, 18);
+    const coinGeckoId = COINGECKO_ID_MAP[info.address.toLowerCase()];
+    if (coinGeckoId) {
+      const link = document.createElement("a");
+      link.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = info.symbol;
+      link.title = "Verify on CoinGecko";
+      infoEl.appendChild(link);
+      infoEl.appendChild(document.createTextNode(" (" + info.decimals + " decimals) "));
 
-    showToast("Estimating gas...");
-    let gasEstimate = null;
-    try {
-      const txData = contract.interface.encodeFunctionData("cancelOrderUnwrap", [order.orderId]);
-      gasEstimate = await estimateGasCost({
-        from: userAddress,
-        to: CONFIG.CONTRACT_ADDRESS,
-        data: txData,
-      });
-    } catch (e) {
-      console.error("Gas estimation failed:", e);
+      const verifyLink = document.createElement("a");
+      verifyLink.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
+      verifyLink.target = "_blank";
+      verifyLink.rel = "noopener noreferrer";
+      verifyLink.textContent = "[verify]";
+      verifyLink.className = "verify-link";
+      infoEl.appendChild(verifyLink);
+      return;
     }
 
-    showModal(
-      "Cancel Order #" + order.orderId + " (receive ETH)",
-      `Your ${amountAStr} ETH will be returned to your wallet.`,
-      async () => {
-        try {
-          showToast("Cancelling order...");
-          const tx = await contract.cancelOrderUnwrap(order.orderId);
-          await tx.wait();
-          showToast("Order cancelled! Updating...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
-          loadOrders();
-          loadStats();
-          showToast("Order cancelled!", "success");
-        } catch (e) {
-          console.error("Cancel error:", e);
-          showToast("Cancel failed: " + parseContractError(e), "error");
-        }
-      },
-      gasEstimate
-    );
+    infoEl.appendChild(document.createTextNode(info.symbol + " (" + info.decimals + " decimals) "));
+    const warnSpan = document.createElement("span");
+    warnSpan.className = "token-warning";
+    warnSpan.textContent = "[unknown token]";
+    warnSpan.title = "This token is not in our verified list. Double-check the address.";
+    infoEl.appendChild(warnSpan);
   }
 
+  /**
+   * Loads and displays the connected wallet's balance for a row side.
+   * Native ETH reads the account balance; everything else reads balanceOf.
+   * @param {HTMLElement} row - A .create-row element
+   * @param {"tokenA"|"tokenB"} side - Which side of the order
+   * @param {Object} info - Token info from fetchTokenInfo
+   */
+  async function loadRowBalance(row, side, info) {
+    const balanceEl = rowField(row, side + "-balance");
+    if (!userAddress || !provider) return;
+
+    try {
+      const balance = isNativeEth(info.address)
+        ? await provider.getBalance(userAddress)
+        : await new ethers.Contract(info.address, ERC20_ABI, provider).balanceOf(userAddress);
+
+      getRowState(row)[side].balance = balance;
+      balanceEl.textContent = "Balance: " + formatAmount(balance.toString(), info.decimals);
+
+      validateRowAmount(row, side);
+      renderRowQuickAmounts(row, side, balance, info.decimals);
+    } catch (e) {
+      console.error("Balance fetch error:", e);
+    }
+  }
+
+  /**
+   * Wires a row's token address field: debounced metadata lookup, balance
+   * fetch, and state bookkeeping.
+   * @param {HTMLElement} row - A .create-row element
+   * @param {"tokenA"|"tokenB"} side - Which side of the order
+   */
+  function setupRowTokenField(row, side) {
+    const input = rowField(row, side);
+    const infoEl = rowField(row, side + "-info");
+    const balanceEl = rowField(row, side + "-balance");
+    let timeout = null;
+
+    input.addEventListener("input", () => {
+      clearTimeout(timeout);
+      rowField(row, "price-info").textContent = "";
+
+      const addr = input.value.trim();
+      const state = getRowState(row)[side];
+
+      // Keep [ETH] lit when ETH arrives via the autocomplete rather than the
+      // button, so the two entry points agree.
+      row
+        .querySelector('[data-eth-for="' + side + '"]')
+        .classList.toggle("active", isNativeEth(addr));
+
+      if (!isValidAddress(addr)) {
+        infoEl.textContent = addr ? "Invalid address" : "";
+        balanceEl.textContent = "";
+        renderRowQuickAmounts(row, side, 0n, 18);
+        state.info = null;
+        state.balance = null;
+        return;
+      }
+
+      timeout = setTimeout(async () => {
+        infoEl.textContent = "Loading...";
+        balanceEl.textContent = "";
+
+        const info = await fetchTokenInfo(addr);
+        if (info.decimals == null) {
+          infoEl.textContent = "";
+          const warnSpan = document.createElement("span");
+          warnSpan.className = "token-warning";
+          warnSpan.textContent = "Could not read token decimals — cannot use this token";
+          infoEl.appendChild(warnSpan);
+          state.info = null;
+          state.balance = null;
+          return;
+        }
+
+        if (isWeth(addr)) {
+          info.symbol = "ETH";
+          info.name = "Ether";
+        }
+
+        state.info = info;
+        state.balance = null;
+        renderTokenInfoLine(infoEl, info);
+        await loadRowBalance(row, side, info);
+      }, CONFIG.DEBOUNCE_DELAY);
+    });
+  }
+
+  /**
+   * Toggles a row side between native ETH and a pasted contract address.
+   *
+   * Native ETH has no contract, so selecting it pins the field to the sentinel
+   * and locks it; clicking again hands the field back to the user.
+   *
+   * @param {HTMLElement} row - A .create-row element
+   * @param {"tokenA"|"tokenB"} side - Which side of the order
+   */
+  function toggleRowNativeEth(row, side) {
+    const input = rowField(row, side);
+    const btn = row.querySelector('[data-eth-for="' + side + '"]');
+    const enabling = !isNativeEth(input.value.trim());
+
+    input.value = enabling ? NATIVE_ETH : "";
+    input.readOnly = enabling;
+    input.classList.toggle("input-native-eth", enabling);
+    btn.classList.toggle("active", enabling);
+
+    input.dispatchEvent(new Event("input"));
+  }
+
+  /**
+   * Renumbers rows and syncs the [Add Sell] button to the batch limit.
+   */
+  function refreshCreateRows() {
+    const rows = getCreateRows();
+
+    rows.forEach((row, i) => {
+      row.querySelector(".create-row-label").textContent =
+        rows.length > 1 ? "Order " + (i + 1) + " of " + rows.length : "";
+    });
+
+    const atLimit = rows.length >= CONFIG.MAX_BATCH_CREATE;
+    $("#add-sell-btn").disabled = atLimit;
+    $("#create-limit-note").textContent = atLimit
+      ? "Limit reached — " + CONFIG.MAX_BATCH_CREATE + " orders per transaction"
+      : "";
+    $("#create-btn").textContent =
+      rows.length > 1 ? "Create " + rows.length + " Orders" : "Create Order";
+  }
+
+  /**
+   * Appends a fresh order row to the Sell Tokens form.
+   * @returns {HTMLElement|null} The new row, or null at the batch limit
+   */
+  function addCreateRow() {
+    if (getCreateRows().length >= CONFIG.MAX_BATCH_CREATE) return null;
+
+    const row = $("#create-row-template").content.firstElementChild.cloneNode(true);
+
+    for (const side of ["tokenA", "tokenB"]) {
+      setupRowTokenField(row, side);
+      row.querySelector('[data-eth-for="' + side + '"]').addEventListener("click", () => {
+        toggleRowNativeEth(row, side);
+      });
+    }
+
+    rowField(row, "amountA").addEventListener("input", () => {
+      updateRowPriceDisplay(row);
+      validateRowAmount(row, "tokenA");
+    });
+    rowField(row, "amountB").addEventListener("input", () => {
+      updateRowPriceDisplay(row);
+      validateRowAmount(row, "tokenB");
+    });
+
+    row.querySelector(".create-row-remove").addEventListener("click", () => {
+      if (getCreateRows().length <= 1) return;
+      row.remove();
+      refreshCreateRows();
+    });
+
+    $("#create-rows").appendChild(row);
+
+    // Safe to attach before the Uniswap list has loaded: the selector reads it
+    // lazily, on input.
+    createTokenSelector(rowField(row, "tokenA"));
+    createTokenSelector(rowField(row, "tokenB"));
+
+    refreshCreateRows();
+    return row;
+  }
+
+  /**
+   * Clears the Sell Tokens form back to a single empty row.
+   */
+  function resetCreateForm() {
+    $("#create-rows").textContent = "";
+    addCreateRow();
+  }
+
+  /**
+   * Reads and validates every row into contract-ready CreateOrderParams.
+   * @returns {Promise<Object[]|null>} Params array, or null if anything is invalid
+   */
+  async function collectCreateParams() {
+    const rows = getCreateRows();
+    const params = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const label = rows.length > 1 ? "Order " + (i + 1) + ": " : "";
+
+      const tokenAAddr = rowField(row, "tokenA").value.trim();
+      const tokenBAddr = rowField(row, "tokenB").value.trim();
+      const amountAStr = rowField(row, "amountA").value.trim();
+      const amountBStr = rowField(row, "amountB").value.trim();
+
+      if (!tokenAAddr || !tokenBAddr || !amountAStr || !amountBStr) {
+        showToast(label + "Fill in all fields", "error");
+        return null;
+      }
+      if (!isValidAddress(tokenAAddr) || !isValidAddress(tokenBAddr)) {
+        showToast(label + "Invalid token address format", "error");
+        return null;
+      }
+      if (tokenAAddr.toLowerCase() === tokenBAddr.toLowerCase()) {
+        showToast(label + "Offered and wanted token must differ", "error");
+        return null;
+      }
+
+      const tokenA = await fetchTokenInfo(tokenAAddr);
+      const tokenB = await fetchTokenInfo(tokenBAddr);
+      if (isWeth(tokenAAddr)) tokenA.symbol = "ETH";
+      if (isWeth(tokenBAddr)) tokenB.symbol = "ETH";
+
+      if (tokenA.decimals == null || tokenB.decimals == null) {
+        showToast(
+          label + "Could not read decimals — check that both token addresses are correct",
+          "error"
+        );
+        return null;
+      }
+
+      const amountA = parseAmount(amountAStr, tokenA.decimals);
+      const amountB = parseAmount(amountBStr, tokenB.decimals);
+      if (amountA === null || amountB === null) {
+        showToast(label + "Invalid amount", "error");
+        return null;
+      }
+      if (amountA === 0n || amountB === 0n) {
+        showToast(label + "Amounts must be greater than 0", "error");
+        return null;
+      }
+
+      const state = getRowState(row);
+      if (state.tokenA.balance !== null && amountA > state.tokenA.balance) {
+        showToast(label + "Insufficient balance for offered token", "error");
+        return null;
+      }
+
+      params.push({
+        tokenA: tokenAAddr,
+        amountA,
+        tokenB: tokenBAddr,
+        amountB,
+        // The checkbox is the opt-out, so partial fills are the default.
+        partialFill: !rowField(row, "no-partial").checked,
+        tokenAInfo: tokenA,
+        tokenBInfo: tokenB,
+        amountAStr,
+        amountBStr,
+      });
+    }
+
+    return params;
+  }
+
+  /**
+   * Creates every order in the Sell Tokens form.
+   *
+   * Approvals are grouped by offered token, so a batch selling the same token
+   * across several rows approves once for the combined amount.
+   */
   async function handleCreateOrder() {
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
 
-    const tokenAAddr = $("#create-tokenA").value.trim();
-    const tokenBAddr = $("#create-tokenB").value.trim();
-    const amountAStr = $("#create-amountA").value.trim();
-    const amountBStr = $("#create-amountB").value.trim();
+    const params = await collectCreateParams();
+    if (!params) return;
 
-    if (!tokenAAddr || !tokenBAddr || !amountAStr || !amountBStr) {
-      showToast("Fill in all fields", "error");
-      return;
-    }
+    const body = document.createElement("div");
+    body.className = "batch-summary";
 
-    if (!isValidAddress(tokenAAddr) || !isValidAddress(tokenBAddr)) {
-      showToast("Invalid token address format", "error");
-      return;
-    }
-
-    const useEth = isWeth(tokenAAddr);
-
-    try {
-      const tokenA = await fetchTokenInfo(tokenAAddr);
-      if (useEth) tokenA.symbol = "ETH";
-      const tokenB = await fetchTokenInfo(tokenBAddr);
-
-      if (tokenA.decimals == null) {
-        showToast(
-          `Could not read decimals for ${tokenAAddr}. Please check that the token address is correct`,
-          "error",
-        );
-        return;
-      }
-      if (tokenB.decimals == null) {
-        showToast(
-          `Could not read decimals for ${tokenBAddr}. Please check that the token address is correct`,
-          "error",
-        );
-        return;
-      }
-
-      let amountA, amountB;
-      try {
-        amountA = parseAmount(amountAStr, tokenA.decimals);
-        amountB = parseAmount(amountBStr, tokenB.decimals);
-      } catch (e) {
-        showToast(e.message, "error");
-        return;
-      }
-
-      if (amountA === 0n || amountB === 0n) {
-        showToast("Amounts must be greater than 0", "error");
-        return;
-      }
-
-      // Check balance for offered token
-      if (createFormState.tokenA.balance !== null && amountA > createFormState.tokenA.balance) {
-        showToast("Insufficient balance for offered token", "error");
-        return;
-      }
-
-      showModal(
-        "Create Order",
-        `Sell ${amountAStr} ${tokenA.symbol} for ${amountBStr} ${tokenB.symbol}`,
-        async () => {
-          const createBtn = $("#create-btn");
-          const originalText = createBtn.textContent;
-          createBtn.disabled = true;
-          setTextWithDots(createBtn, "Processing");
-
-          try {
-            let receipt;
-
-            if (useEth) {
-              setTextWithDots(createBtn, "Creating");
-              showToast("Confirm order in wallet...", "info", true);
-              const tx = await contract.createOrderWithEth(tokenBAddr, amountB, {
-                value: amountA,
-              });
-              showToast("Waiting for tx confirmation...", "info", true);
-              receipt = await tx.wait();
-            } else {
-              // Verify token contract exists on this network
-              const code = await provider.getCode(tokenAAddr);
-              if (code === "0x") {
-                showToast("Token contract not found on this network", "error");
-                createBtn.disabled = false;
-                createBtn.textContent = originalText;
-                return;
-              }
-
-              showToast("Checking allowance...", "info", true);
-              const tokenContract = new ethers.Contract(tokenAAddr, ERC20_ABI, signer);
-              const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
-
-              if (allowance < amountA) {
-                setTextWithDots(createBtn, "Approving");
-                showToast("Approve tokens in wallet...", "info", true);
-                const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountA);
-                showToast("Waiting for approval tx...", "info", true);
-                await approveTx.wait();
-                showToast("Approval confirmed");
-              }
-
-              setTextWithDots(createBtn, "Creating");
-              showToast("Confirm order in wallet...", "info", true);
-              const tx = await contract.createOrder(tokenAAddr, amountA, tokenBAddr, amountB);
-              showToast("Waiting for tx confirmation...", "info", true);
-              receipt = await tx.wait();
-            }
-            showToast("Order created! Updating...", "success", true);
-
-            // Save tokens to recent list
-            addRecentToken(tokenAAddr, tokenA.symbol);
-            addRecentToken(tokenBAddr, tokenB.symbol);
-
-            $("#create-tokenA").value = "";
-            $("#create-tokenB").value = "";
-            $("#create-amountA").value = "";
-            $("#create-amountB").value = "";
-            $("#tokenA-info").textContent = "";
-            $("#tokenB-info").textContent = "";
-            $("#tokenA-balance").textContent = "";
-            $("#tokenB-balance").textContent = "";
-            $("#price-info").textContent = "";
-            $("#sell-modal").classList.add("hidden");
-
-            // Get order ID from event and wait for subgraph to index
-            const orderCreatedEvent = receipt.logs
-              .map((log) => {
-                try {
-                  return contract.interface.parseLog(log);
-                } catch {
-                  return null;
-                }
-              })
-              .find((parsed) => parsed && parsed.name === "OrderCreated");
-            if (orderCreatedEvent) {
-              const newOrderId = orderCreatedEvent.args.orderId.toString();
-              await waitForOrderUpdate(newOrderId, true, 15, 2000);
-            } else {
-              // Fallback: wait a bit for indexing
-              await new Promise((resolve) => setTimeout(resolve, 5000));
-            }
-            loadOrders();
-            loadStats();
-            showToast("Order created!", "success");
-          } catch (e) {
-            console.error("Create error:", e);
-            showToast("Create failed: " + parseContractError(e), "error");
-          } finally {
-            createBtn.disabled = false;
-            createBtn.textContent = originalText;
-          }
-        }
+    const list = document.createElement("div");
+    list.className = "batch-summary-list";
+    params.forEach((p, i) => {
+      list.appendChild(
+        buildBatchItem(
+          String(i + 1),
+          `Sell ${p.amountAStr} ${p.tokenAInfo.symbol} for ${p.amountBStr} ${p.tokenBInfo.symbol}` +
+            (p.partialFill ? "" : " (no partial fills)")
+        )
       );
-    } catch (e) {
-      console.error("Token info error:", e);
-      showToast("Failed to load token info", "error");
+    });
+    body.appendChild(list);
+
+    // Orders offering native ETH go out through the payable entry point, so
+    // they are submitted separately from the ERC20 ones.
+    const ethParams = params.filter((p) => isNativeEth(p.tokenA));
+    const erc20Params = params.filter((p) => !isNativeEth(p.tokenA));
+
+    if (ethParams.length > 0 && erc20Params.length > 0) {
+      const note = document.createElement("div");
+      note.className = "batch-summary-note";
+      note.textContent =
+        `${ethParams.length} of these offer ETH and settle through a separate ` +
+        "call, so this takes one more transaction than a token-only batch.";
+      body.appendChild(note);
     }
+
+    appendBatchTxNote(body, erc20Params.length, CONFIG.MAX_BATCH_CREATE);
+    appendBatchTxNote(body, ethParams.length, CONFIG.MAX_BATCH_CREATE);
+
+    showModal(
+      params.length > 1 ? `Create ${params.length} Orders` : "Create Order",
+      body,
+      async () => {
+        const createBtn = $("#create-btn");
+        const originalText = createBtn.textContent;
+        createBtn.disabled = true;
+        setTextWithDots(createBtn, "Processing");
+
+        try {
+          // One approval per distinct offered token, covering every row using it.
+          const totals = new Map();
+          for (const p of params) {
+            if (isNativeEth(p.tokenA)) continue;
+            totals.set(p.tokenA, (totals.get(p.tokenA) || 0n) + p.amountA);
+          }
+
+          for (const [token, total] of totals) {
+            setTextWithDots(createBtn, "Approving");
+            showToast("Checking allowance...", "info", true);
+            await V2.ensureAllowance(token, total);
+          }
+
+          setTextWithDots(createBtn, "Creating");
+
+          await runBatchTransactions(
+            chunkArray(erc20Params, CONFIG.MAX_BATCH_CREATE),
+            "Creating",
+            (chunk) =>
+              chunk.length === 1
+                ? V2.createOrder(
+                    chunk[0].tokenA,
+                    chunk[0].amountA,
+                    chunk[0].tokenB,
+                    chunk[0].amountB,
+                    chunk[0].partialFill
+                  )
+                : V2.createOrders(chunk)
+          );
+
+          // Offering native ETH means the amount rides in msg.value, so these
+          // go through the payable variant with no tokenA argument.
+          await runBatchTransactions(
+            chunkArray(ethParams, CONFIG.MAX_BATCH_CREATE),
+            "Creating",
+            (chunk) => {
+              const value = chunk.reduce((sum, p) => sum + p.amountA, 0n);
+              return chunk.length === 1
+                ? V2.createOrderWithEth(
+                    chunk[0].tokenB,
+                    chunk[0].amountB,
+                    chunk[0].partialFill,
+                    value
+                  )
+                : V2.createOrdersWithEth(chunk, value);
+            }
+          );
+
+          showToast("Orders created! Updating...", "success", true);
+          for (const p of params) {
+            addRecentToken(p.tokenA, p.tokenAInfo.symbol);
+            addRecentToken(p.tokenB, p.tokenBInfo.symbol);
+          }
+
+          resetCreateForm();
+          $("#sell-modal").classList.add("hidden");
+          loadOrders();
+          loadStats();
+          showToast(
+            params.length > 1 ? `Created ${params.length} orders!` : "Order created!",
+            "success"
+          );
+        } catch (e) {
+          console.error("Create error:", e);
+          showToast("Create failed: " + parseContractError(e), "error");
+        } finally {
+          createBtn.disabled = false;
+          createBtn.textContent = originalText;
+        }
+      }
+    );
   }
 
   // ============================================================================
@@ -3451,212 +4524,6 @@
     showWalletModal();
   }
 
-  function setupTokenInfoFetch(inputId, infoId, balanceId, quickAmountsId) {
-    const input = $(inputId);
-    let timeout = null;
-    let currentTokenInfo = null;
-
-    input.addEventListener("input", () => {
-      clearTimeout(timeout);
-      const addr = input.value.trim();
-
-      if (!isValidAddress(addr)) {
-        $(infoId).textContent = addr ? "Invalid address" : "";
-        if (balanceId) $(balanceId).textContent = "";
-        if (quickAmountsId) $(quickAmountsId).textContent = "";
-        currentTokenInfo = null;
-        return;
-      }
-
-      timeout = setTimeout(async () => {
-        $(infoId).textContent = "Loading...";
-        if (balanceId) $(balanceId).textContent = "";
-        if (quickAmountsId) $(quickAmountsId).textContent = "";
-
-        const info = await fetchTokenInfo(addr);
-        if (info.decimals == null) {
-          const infoEl = $(infoId);
-          infoEl.textContent = "";
-          const warnSpan = document.createElement("span");
-          warnSpan.className = "token-warning";
-          warnSpan.textContent = "Could not read token decimals — cannot use this token";
-          infoEl.appendChild(warnSpan);
-
-          const stateKey = inputId === "#create-tokenA" ? "tokenA" : "tokenB";
-          createFormState[stateKey].info = null;
-          createFormState[stateKey].balance = null;
-          currentTokenInfo = null;
-          return;
-        }
-        const addrIsWeth = isWeth(addr);
-        if (addrIsWeth) {
-          info.symbol = "ETH";
-          info.name = "Ether";
-        }
-        currentTokenInfo = info;
-
-        // Show token info with CoinGecko verification link if available
-        const infoEl = $(infoId);
-        infoEl.textContent = "";
-
-        const coinGeckoId = COINGECKO_ID_MAP[addr.toLowerCase()];
-        if (coinGeckoId) {
-          const link = document.createElement("a");
-          link.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
-          link.target = "_blank";
-          link.rel = "noopener noreferrer";
-          link.textContent = info.symbol;
-          link.title = "Verify on CoinGecko";
-          infoEl.appendChild(link);
-          infoEl.appendChild(document.createTextNode(" (" + info.decimals + " decimals) "));
-
-          const verifyLink = document.createElement("a");
-          verifyLink.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
-          verifyLink.target = "_blank";
-          verifyLink.rel = "noopener noreferrer";
-          verifyLink.textContent = "[verify]";
-          verifyLink.className = "verify-link";
-          infoEl.appendChild(verifyLink);
-        } else {
-          // Unknown token - show warning
-          const symbolSpan = document.createElement("span");
-          symbolSpan.textContent = info.symbol;
-          infoEl.appendChild(symbolSpan);
-          infoEl.appendChild(document.createTextNode(" (" + info.decimals + " decimals) "));
-
-          const warnSpan = document.createElement("span");
-          warnSpan.className = "token-warning";
-          warnSpan.textContent = "[unknown token]";
-          warnSpan.title = "This token is not in our verified list. Double-check the address.";
-          infoEl.appendChild(warnSpan);
-        }
-
-        // Store token info in form state
-        const stateKey = inputId === "#create-tokenA" ? "tokenA" : "tokenB";
-        createFormState[stateKey].info = info;
-        createFormState[stateKey].balance = null;
-
-        // Fetch balance if connected
-        if (balanceId && userAddress && provider) {
-          try {
-            const amountInputId =
-              inputId === "#create-tokenA" ? "#create-amountA" : "#create-amountB";
-
-            if (addrIsWeth && stateKey === "tokenA") {
-              // Show native ETH balance for offered WETH (will use createOrderWithEth)
-              const balance = await provider.getBalance(userAddress);
-              createFormState[stateKey].balance = balance;
-              const eth = ethers.formatEther(balance);
-              $(balanceId).textContent = "Balance: " + parseFloat(eth).toFixed(4) + " ETH";
-
-              validateAmountInput(amountInputId, stateKey);
-
-              if (quickAmountsId && balance > 0n) {
-                $(quickAmountsId).textContent = "";
-                [25, 50, 75, 100].forEach((pct) => {
-                  const btn = document.createElement("button");
-                  btn.type = "button";
-                  btn.textContent = pct + "%";
-                  btn.classList.add("quick-amt-btn");
-                  btn.addEventListener("click", () => {
-                    const amt = (balance * BigInt(pct)) / 100n;
-                    $(amountInputId).value = ethers.formatEther(amt);
-                    $(amountInputId).dispatchEvent(new Event("input"));
-                  });
-                  $(quickAmountsId).appendChild(btn);
-                });
-              }
-            } else {
-              const tokenContract = new ethers.Contract(addr, ERC20_ABI, provider);
-              const balance = await tokenContract.balanceOf(userAddress);
-              createFormState[stateKey].balance = balance;
-              const formatted = formatAmount(balance.toString(), info.decimals);
-              $(balanceId).textContent = "Balance: " + formatted;
-
-              validateAmountInput(amountInputId, stateKey);
-
-              // Add quick amount buttons
-              if (quickAmountsId && balance > 0n) {
-                $(quickAmountsId).textContent = "";
-                [25, 50, 75, 100].forEach((pct) => {
-                  const btn = document.createElement("button");
-                  btn.type = "button";
-                  btn.textContent = pct + "%";
-                  btn.classList.add("quick-amt-btn");
-                  btn.addEventListener("click", () => {
-                    const amt = (balance * BigInt(pct)) / 100n;
-                    $(amountInputId).value = formatAmount(amt.toString(), info.decimals);
-                    $(amountInputId).dispatchEvent(new Event("input"));
-                  });
-                  $(quickAmountsId).appendChild(btn);
-                });
-              }
-            }
-          } catch (e) {
-            console.error("Balance fetch error:", e);
-          }
-        }
-      }, CONFIG.DEBOUNCE_DELAY);
-    });
-
-    // Clear state when token address is cleared
-    input.addEventListener("input", () => {
-      if (!input.value.trim()) {
-        const stateKey = inputId === "#create-tokenA" ? "tokenA" : "tokenB";
-        createFormState[stateKey].info = null;
-        createFormState[stateKey].balance = null;
-      }
-    });
-  }
-
-  function validateAmountInput(amountInputId, stateKey) {
-    const input = $(amountInputId);
-    const state = createFormState[stateKey];
-    const errorSpanId = amountInputId + "-error";
-    let errorSpan = document.getElementById(errorSpanId.slice(1));
-
-    if (!errorSpan) {
-      errorSpan = document.createElement("span");
-      errorSpan.id = errorSpanId.slice(1);
-      errorSpan.className = "amount-error";
-      input.parentNode.appendChild(errorSpan);
-    }
-
-    const value = input.value.trim();
-    if (!value || !state.info) {
-      input.classList.remove("input-error");
-      errorSpan.textContent = "";
-      return true;
-    }
-
-    try {
-      const amount = parseAmount(value, state.info.decimals);
-
-      // Check if amount exceeds balance (only for tokenA - offered token)
-      if (stateKey === "tokenA" && state.balance !== null && amount > state.balance) {
-        input.classList.add("input-error");
-        errorSpan.textContent = "Exceeds balance";
-        return false;
-      }
-
-      if (amount === 0n && value !== "0") {
-        input.classList.add("input-error");
-        errorSpan.textContent = "Amount too small";
-        return false;
-      }
-
-      input.classList.remove("input-error");
-      errorSpan.textContent = "";
-      return true;
-    } catch (e) {
-      input.classList.add("input-error");
-      errorSpan.textContent = e.message.includes("decimals")
-        ? `Max ${state.info.decimals} decimals`
-        : "Invalid amount";
-      return false;
-    }
-  }
-
   async function resolveBuildInfo() {
     const REPO = "https://github.com/ETHCF/swapboard";
     const API = "https://api.github.com/repos/ETHCF/swapboard";
@@ -4056,6 +4923,28 @@
       loadOrders();
     });
 
+    // Selection bar
+    $("#select-all-orders").addEventListener("click", (e) => {
+      e.preventDefault();
+      selectAllOwnOrders();
+    });
+
+    $("#selection-clear").addEventListener("click", (e) => {
+      e.preventDefault();
+      clearSelection();
+    });
+
+    $("#batch-fill-btn").addEventListener("click", async (e) => {
+      e.preventDefault();
+      if (!userAddress) await connectWallet();
+      if (userAddress) fillSelectedOrders();
+    });
+
+    $("#batch-cancel-btn").addEventListener("click", (e) => {
+      e.preventDefault();
+      cancelSelectedOrders();
+    });
+
     $("#prev-page").addEventListener("click", () => {
       if (currentPage > 1) {
         currentPage--;
@@ -4134,62 +5023,14 @@
 
     $("#create-btn").addEventListener("click", handleCreateOrder);
 
-    setupTokenInfoFetch("#create-tokenA", "#tokenA-info", "#tokenA-balance", "#quick-amounts-A");
-    setupTokenInfoFetch("#create-tokenB", "#tokenB-info", "#tokenB-balance", null);
+    $("#add-sell-btn").addEventListener("click", addCreateRow);
 
-    // Add token selectors with Uniswap token list
-    fetchUniswapTokenList().then(() => {
-      createTokenSelector($("#create-tokenA"));
-      createTokenSelector($("#create-tokenB"));
-    });
+    // Start the Sell Tokens form with one empty order row
+    resetCreateForm();
 
-    // Price calculator - show price based on amounts
-    function updatePriceDisplay() {
-      const amountAStr = $("#create-amountA").value.trim();
-      const amountBStr = $("#create-amountB").value.trim();
-      const tokenASymbol = $("#tokenA-info").textContent.split(" ")[0] || "Token A";
-      const tokenBSymbol = $("#tokenB-info").textContent.split(" ")[0] || "Token B";
-
-      const amountA = parseFloat(amountAStr);
-      const amountB = parseFloat(amountBStr);
-
-      if (!isNaN(amountA) && !isNaN(amountB) && amountA > 0 && amountB > 0) {
-        const priceAPerB = amountA / amountB;
-        const priceBPerA = amountB / amountA;
-        const priceInfo = $("#price-info");
-        priceInfo.textContent = "";
-        priceInfo.appendChild(
-          document.createTextNode(
-            "1 " + tokenBSymbol + " = " + priceAPerB.toFixed(6).replace(/\.?0+$/, "") + " " + tokenASymbol
-          )
-        );
-        priceInfo.appendChild(document.createElement("br"));
-        priceInfo.appendChild(
-          document.createTextNode(
-            "1 " + tokenASymbol + " = " + priceBPerA.toFixed(6).replace(/\.?0+$/, "") + " " + tokenBSymbol
-          )
-        );
-      } else {
-        $("#price-info").textContent = "";
-      }
-    }
-
-    $("#create-amountA").addEventListener("input", () => {
-      updatePriceDisplay();
-      validateAmountInput("#create-amountA", "tokenA");
-    });
-    $("#create-amountB").addEventListener("input", () => {
-      updatePriceDisplay();
-      validateAmountInput("#create-amountB", "tokenB");
-    });
-
-    // Clear price info when tokens change
-    $("#create-tokenA").addEventListener("input", () => {
-      $("#price-info").textContent = "";
-    });
-    $("#create-tokenB").addEventListener("input", () => {
-      $("#price-info").textContent = "";
-    });
+    // Rows attach their own autocomplete in addCreateRow(); this just warms
+    // the token list they search against.
+    fetchUniswapTokenList();
 
     // Sortable column headers
     document.querySelectorAll("thead th.sortable").forEach((th) => {

@@ -18,11 +18,24 @@ const CONFIG = {
   REQUEST_TIMEOUT: 30000,
   DEBOUNCE_DELAY: 500,
   SHOW_MARKET_DEVIATION: false,
+  // v2 batch limits: the most orders that fit in a single transaction.
+  // Seeded conservatively; retune once real gas numbers land.
+  MAX_BATCH_FILL: 15,
+  MAX_BATCH_CANCEL: 25,
+  MAX_BATCH_CREATE: 10,
 };
 
 const EXPECTED_CHAIN_ID = 1;
 
+/**
+ * Sentinel address representing native ETH in v2 orders.
+ * Native ETH has no contract, so orders carry this well-known placeholder.
+ * @constant {string}
+ */
+const NATIVE_ETH = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+
 const COINGECKO_ID_MAP = {
+  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "ethereum",
   "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "weth",
   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "usd-coin",
   "0xdac17f958d2ee523a2206206994597c13d831ec7": "tether",
@@ -698,6 +711,209 @@ function validateConfig(config, isLocal) {
 }
 
 // ============================================================================
+// V2: Native ETH
+// ============================================================================
+
+/**
+ * Checks whether an address is the native ETH sentinel.
+ * @param {*} addr - Address to test
+ * @returns {boolean}
+ */
+function isNativeEth(addr) {
+  if (typeof addr !== "string") return false;
+  return addr.toLowerCase() === NATIVE_ETH.toLowerCase();
+}
+
+// ============================================================================
+// V2: Batching
+// ============================================================================
+
+/**
+ * Splits a list into fixed-size chunks, one per transaction.
+ * @param {Array} items - Items to split
+ * @param {number} size - Maximum chunk size
+ * @returns {Array[]} Array of chunks (empty when input is unusable)
+ */
+function chunkArray(items, size) {
+  if (!Array.isArray(items)) return [];
+  if (!Number.isInteger(size) || size < 1) return [];
+
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+// ============================================================================
+// V2: Multi-select rules
+// ============================================================================
+
+/**
+ * Classifies an order relative to the connected wallet.
+ * A selection is either all the user's own orders (-> Cancel All) or all
+ * orders made by other people (-> Fill All); the two can never be mixed.
+ * @param {Object} order - Order object
+ * @param {string|null} userAddress - Connected wallet address
+ * @returns {"own"|"other"|null} Selection mode, or null for an unusable order
+ */
+function resolveSelectionMode(order, userAddress) {
+  if (!order || typeof order.maker !== "string") return null;
+  if (!userAddress) return "other";
+  return order.maker.toLowerCase() === userAddress.toLowerCase() ? "own" : "other";
+}
+
+/**
+ * Checks whether two orders trade the same token pair, in the same direction.
+ * @param {Object} a - First order
+ * @param {Object} b - Second order
+ * @returns {boolean}
+ */
+function isSamePair(a, b) {
+  if (!a || !b || !a.tokenA || !a.tokenB || !b.tokenA || !b.tokenB) return false;
+  return (
+    a.tokenA.address.toLowerCase() === b.tokenA.address.toLowerCase() &&
+    a.tokenB.address.toLowerCase() === b.tokenB.address.toLowerCase()
+  );
+}
+
+/**
+ * Decides whether an order may join the current selection.
+ *
+ * Rules, all anchored on the first selected order:
+ *  1. Only open orders are selectable.
+ *  2. Own orders and other people's orders cannot be mixed.
+ *  3. Selecting other people's orders locks the selection to a single pair.
+ *  4. Selecting your own orders allows any mix of pairs.
+ *
+ * @param {Object} candidate - Order being considered
+ * @param {Object|null} firstSelected - First order in the selection, if any
+ * @param {string|null} userAddress - Connected wallet address
+ * @returns {boolean}
+ */
+function canSelectOrder(candidate, firstSelected, userAddress) {
+  if (!candidate || !candidate.active) return false;
+  if (!firstSelected) return true;
+  if (candidate.orderId === firstSelected.orderId) return true;
+
+  const anchorMode = resolveSelectionMode(firstSelected, userAddress);
+  if (resolveSelectionMode(candidate, userAddress) !== anchorMode) return false;
+
+  // Own orders map to Cancel All, which is pair-agnostic.
+  if (anchorMode === "own") return true;
+
+  // Fill All batches a single pair, so every order must match the anchor.
+  return isSamePair(candidate, firstSelected);
+}
+
+/**
+ * Returns the IDs of every selectable order between two rows, inclusive.
+ * Backs shift-click range selection over the currently rendered order list.
+ * @param {Object[]} sortedOrders - Orders in display order
+ * @param {string} anchorId - Order ID of the previous plain click
+ * @param {string} targetId - Order ID of the shift-clicked row
+ * @param {Object|null} firstSelected - First order in the selection, if any
+ * @param {string|null} userAddress - Connected wallet address
+ * @returns {string[]} Selectable order IDs in the range
+ */
+function getShiftRangeIds(sortedOrders, anchorId, targetId, firstSelected, userAddress) {
+  if (!Array.isArray(sortedOrders)) return [];
+
+  const from = sortedOrders.findIndex((o) => o.orderId === anchorId);
+  const to = sortedOrders.findIndex((o) => o.orderId === targetId);
+  if (from === -1 || to === -1) return [];
+
+  return sortedOrders
+    .slice(Math.min(from, to), Math.max(from, to) + 1)
+    .filter((o) => canSelectOrder(o, firstSelected, userAddress))
+    .map((o) => o.orderId);
+}
+
+// ============================================================================
+// V2: Partial fill math
+// ============================================================================
+
+/**
+ * Computes how much of the offered token a given fill amount buys.
+ *
+ * Mirrors the contract's `mulDiv(fillAmountB, amountA, amountB)`, which floors
+ * and therefore rounds in the maker's favour. `amountA`/`amountB` on a v2 order
+ * are the *remaining* amounts.
+ *
+ * @param {Object} order - Order with amountA/amountB in base units
+ * @param {string|bigint} fillAmountB - Amount of the wanted token being paid
+ * @returns {bigint} Amount of the offered token received
+ */
+function computeReceiveFromFill(order, fillAmountB) {
+  const amountA = BigInt(order.amountA);
+  const amountB = BigInt(order.amountB);
+  const fill = BigInt(fillAmountB);
+
+  if (amountB === 0n || fill <= 0n) return 0n;
+  if (fill >= amountB) return amountA;
+  return (fill * amountA) / amountB;
+}
+
+/**
+ * Inverts computeReceiveFromFill: given a desired receive amount, works out
+ * what must be paid.
+ *
+ * Rounds the payment up so the taker receives at least what they asked for,
+ * then re-floors to report the amount the contract will actually transfer
+ * (the two differ by at most one base unit).
+ *
+ * @param {Object} order - Order with amountA/amountB in base units
+ * @param {string|bigint} receiveAmountA - Desired amount of the offered token
+ * @returns {{fillAmountB: bigint, actualAmountA: bigint}}
+ */
+function computeFillFromReceive(order, receiveAmountA) {
+  const amountA = BigInt(order.amountA);
+  const amountB = BigInt(order.amountB);
+  let want = BigInt(receiveAmountA);
+  if (want < 0n) want = 0n;
+
+  if (amountA === 0n || amountB === 0n || want === 0n) {
+    return { fillAmountB: 0n, actualAmountA: 0n };
+  }
+  if (want >= amountA) {
+    return { fillAmountB: amountB, actualAmountA: amountA };
+  }
+
+  let fillAmountB = (want * amountB + amountA - 1n) / amountA;
+  if (fillAmountB > amountB) fillAmountB = amountB;
+
+  return { fillAmountB, actualAmountA: computeReceiveFromFill(order, fillAmountB) };
+}
+
+/**
+ * Aggregates a batch of same-pair orders for the Fill All confirmation.
+ * @param {Object[]} orders - Orders to be filled, all sharing a token pair
+ * @returns {{count: number, totalSend: bigint, totalReceive: bigint, avgPrice: number|null}}
+ *          avgPrice is wanted-token per offered-token, matching the table's Price column
+ */
+function summarizeFillBatch(orders) {
+  if (!Array.isArray(orders) || orders.length === 0) {
+    return { count: 0, totalSend: 0n, totalReceive: 0n, avgPrice: null };
+  }
+
+  let totalSend = 0n;
+  let totalReceive = 0n;
+  for (const order of orders) {
+    totalSend += BigInt(order.amountB);
+    totalReceive += BigInt(order.amountA);
+  }
+
+  let avgPrice = null;
+  if (totalReceive > 0n) {
+    const decimalsA = orders[0].tokenA.decimals;
+    const decimalsB = orders[0].tokenB.decimals;
+    avgPrice = (Number(totalSend) / Number(totalReceive)) * Math.pow(10, decimalsA - decimalsB);
+  }
+
+  return { count: orders.length, totalSend, totalReceive, avgPrice };
+}
+
+// ============================================================================
 // Exports
 // ============================================================================
 
@@ -712,6 +928,24 @@ if (typeof window !== "undefined") {
     // Formatting
     formatUsd,
     formatAmount,
+
+    // V2: native ETH
+    NATIVE_ETH,
+    isNativeEth,
+
+    // V2: batching
+    chunkArray,
+
+    // V2: multi-select rules
+    resolveSelectionMode,
+    isSamePair,
+    canSelectOrder,
+    getShiftRangeIds,
+
+    // V2: partial fill math
+    computeReceiveFromFill,
+    computeFillFromReceive,
+    summarizeFillBatch,
   };
 }
 
@@ -722,6 +956,7 @@ if (typeof module !== "undefined" && module.exports) {
     CONFIG,
     EXPECTED_CHAIN_ID,
     COINGECKO_ID_MAP,
+    NATIVE_ETH,
 
     // Utility functions
     escapeHtml,
@@ -774,5 +1009,22 @@ if (typeof module !== "undefined" && module.exports) {
 
     // Config validation
     validateConfig,
+
+    // V2: native ETH
+    isNativeEth,
+
+    // V2: batching
+    chunkArray,
+
+    // V2: multi-select rules
+    resolveSelectionMode,
+    isSamePair,
+    canSelectOrder,
+    getShiftRangeIds,
+
+    // V2: partial fill math
+    computeReceiveFromFill,
+    computeFillFromReceive,
+    summarizeFillBatch,
   };
 }

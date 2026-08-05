@@ -174,6 +174,19 @@
    * Real mainnet token addresses and metadata.
    * Using actual addresses makes the mock data feel authentic.
    */
+  /**
+   * Native ETH, as it appears in v2 orders: a sentinel address with no
+   * contract behind it. Kept out of TOKEN_REGISTRY so it can't change how the
+   * seeded generator picks token pairs.
+   * @constant {Object}
+   */
+  const NATIVE_ETH_TOKEN = {
+    address: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+    symbol: "ETH",
+    name: "Ether",
+    decimals: 18,
+  };
+
   const TOKEN_REGISTRY = [
     {
       address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
@@ -290,7 +303,7 @@
     } else if (token.symbol === "WBTC") {
       minHuman = 0.01;
       maxHuman = 5;
-    } else if (token.symbol === "WETH" || token.symbol === "stETH") {
+    } else if (token.symbol === "WETH" || token.symbol === "ETH" || token.symbol === "stETH") {
       minHuman = 0.1;
       maxHuman = 100;
     } else if (token.symbol === "PEPE" || token.symbol === "SHIB") {
@@ -326,8 +339,8 @@
         tokenBIndex = randInt(0, TOKEN_REGISTRY.length - 1);
       }
 
-      const tokenA = TOKEN_REGISTRY[tokenAIndex];
-      const tokenB = TOKEN_REGISTRY[tokenBIndex];
+      let tokenA = TOKEN_REGISTRY[tokenAIndex];
+      let tokenB = TOKEN_REGISTRY[tokenBIndex];
 
       // Determine order status
       const isActive = randPercent(MOCK_CONFIG.activePercent);
@@ -338,11 +351,42 @@
       const createdAt = now - randInt(60, 30 * 24 * 60 * 60);
       const closedAt = createdAt + randInt(300, 7 * 24 * 60 * 60);
 
+      // ---- v2 fields ----
+      // All of these are derived from the loop index rather than the PRNG, so
+      // the seeded stream — and with it the active/filled/cancelled split that
+      // test.js asserts on — stays exactly as it was.
+
+      // Some WETH legs become native ETH. Both are 18 decimals, so the
+      // generated amounts stay valid, and having both around is what lets you
+      // see the UI distinguish them (ETH renders with no contract address).
+      if (tokenA.symbol === "WETH" && i % 3 === 0) tokenA = NATIVE_ETH_TOKEN;
+      if (tokenB.symbol === "WETH" && i % 4 === 1) tokenB = NATIVE_ETH_TOKEN;
+
+      // Every fifth order opts out of partial fills.
+      const partialFill = i % 5 !== 0;
+
+      let amountA = generateAmount(tokenA);
+      let amountB = generateAmount(tokenB);
+      let originalAmountA = null;
+      let originalAmountB = null;
+
+      // A few open, partial-fill-enabled orders are already part-filled, so
+      // the remaining-amount display has something to show.
+      if (isActive && partialFill && i % 7 === 3) {
+        originalAmountA = amountA;
+        originalAmountB = amountB;
+        amountA = ((BigInt(amountA) * 40n) / 100n).toString();
+        amountB = ((BigInt(amountB) * 40n) / 100n).toString();
+      }
+
       orders.push({
         orderId: String(i),
         maker: randChoice(MAKER_ADDRESSES),
-        amountA: generateAmount(tokenA),
-        amountB: generateAmount(tokenB),
+        amountA,
+        amountB,
+        originalAmountA,
+        originalAmountB,
+        partialFill,
         active: isActive,
         taker: isFilled ? generateAddress(0x3000 + randInt(0, 20)) : null,
         createdAt: String(createdAt),
@@ -680,8 +724,11 @@
               return "0x" + symbolHex.padEnd(64, "0");
             }
             if (params?.[0]?.data?.startsWith("0x313ce567")) {
-              // decimals()
-              return "0x12"; // 18
+              // decimals() - 18, padded to a full 32-byte word. ethers cannot
+              // decode a bare "0x12", and decimals() is the one metadata call
+              // fetchTokenInfo does not swallow errors from, so a short value
+              // makes every order-creation attempt fail in mock mode.
+              return "0x" + (18).toString(16).padStart(64, "0");
             }
             return "0x0000000000000000000000000000000000000000000000000000000000000001";
 
