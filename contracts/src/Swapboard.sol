@@ -127,7 +127,14 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             amountB: amountB
         });
 
-        emit OrderCreated(orderId, msg.sender, tokenA, amountA, tokenB, amountB);
+        emit OrderCreated({
+            orderId: orderId,
+            maker: msg.sender,
+            tokenA: tokenA,
+            amountA: amountA,
+            tokenB: tokenB,
+            amountB: amountB
+        });
     }
 
     /// @inheritdoc ISwapboard
@@ -159,7 +166,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         // Transfer tokenA from contract to taker
         IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
 
-        emit OrderFilled(orderId, msg.sender);
+        emit OrderFilled({orderId: orderId, taker: msg.sender});
 
     }
 
@@ -184,7 +191,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         IERC20(order.tokenA).safeTransfer(maker, order.amountA);
 
-        emit OrderCanceled(orderId);
+        emit OrderCanceled({orderId: orderId});
     }
 
     /// @inheritdoc ISwapboard
@@ -227,7 +234,14 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             amountB: amountB
         });
 
-        emit OrderCreated(orderId, msg.sender, _WETH, msg.value, tokenB, amountB);
+        emit OrderCreated({
+            orderId: orderId,
+            maker: msg.sender,
+            tokenA: _WETH,
+            amountA: msg.value,
+            tokenB: tokenB,
+            amountB: amountB
+        });
     }
 
     /// @inheritdoc ISwapboard
@@ -265,7 +279,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
 
-        emit OrderFilled(orderId, msg.sender);
+        emit OrderFilled({orderId: orderId, taker: msg.sender});
     }
 
     /// @inheritdoc ISwapboard
@@ -303,7 +317,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             revert ETHTransferFailed(maker);
         }
 
-        emit OrderCanceled(orderId);
+        emit OrderCanceled({orderId: orderId});
     }
 
     /// @inheritdoc ISwapboard
@@ -345,7 +359,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             revert ETHTransferFailed(msg.sender);
         }
 
-        emit OrderFilled(orderId, msg.sender);
+        emit OrderFilled({orderId: orderId, taker: msg.sender});
     }
 
     /// @inheritdoc ISwapboard
