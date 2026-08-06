@@ -5,7 +5,7 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ISwapboard} from "./interfaces/ISwapboard.sol";
-import {IWETH} from "./interfaces/IWETH.sol";
+import {IWETH} from "./vendor/IWETH.sol";
 
 /// @title Swapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
