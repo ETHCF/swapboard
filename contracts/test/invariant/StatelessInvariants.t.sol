@@ -163,13 +163,13 @@ contract SwapboardStatelessInvariantTest is Test {
     ) public {
         n = bound(n, 1, 50);
 
-        uint256 prevId = _board.nextOrderId();
+        uint256 prevId = _board.getNextOrderId();
 
         for (uint256 i = 0; i < n; ++i) {
             vm.prank(_maker);
             _board.createOrder(address(_tokenA), 1 ether, address(_tokenB), 1 ether);
 
-            uint256 currentId = _board.nextOrderId();
+            uint256 currentId = _board.getNextOrderId();
             assertGt(currentId, prevId, "nextOrderId did not increase");
             prevId = currentId;
         }

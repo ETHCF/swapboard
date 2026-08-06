@@ -43,9 +43,57 @@ contract SwapboardTest is Test {
         _tokenB.mint(_taker, AMOUNT_B * 10);
     }
 
-    /// @notice Tests initial nextOrderId is zero
-    function test_initialState() public view {
-        assertEq(_board.nextOrderId(), 0);
+    // ========================================
+    // State variable getters (_WETH, _nextOrderId, _orders)
+    // ========================================
+
+    /// @notice getWeth returns the configured WETH address
+    function test_getWeth() public view {
+        assertEq(_board.getWeth(), address(_mockWeth));
+    }
+
+    /// @notice getNextOrderId starts at zero and increments on create
+    function test_getNextOrderId() public {
+        assertEq(_board.getNextOrderId(), 0);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        uint256 order0 = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        assertEq(order0, 0);
+        assertEq(_board.getNextOrderId(), 1);
+
+        uint256 order1 = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        vm.stopPrank();
+
+        assertEq(order1, 1);
+        assertEq(_board.getNextOrderId(), 2);
+    }
+
+    /// @notice getOrder returns full order details for an existing order
+    function test_getOrder() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        vm.stopPrank();
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, _maker);
+        assertEq(order.tokenA, address(_tokenA));
+        assertEq(order.amountA, AMOUNT_A);
+        assertEq(order.tokenB, address(_tokenB));
+        assertEq(order.amountB, AMOUNT_B);
+        assertTrue(order.active);
+    }
+
+    /// @notice getOrder returns empty defaults for a non-existent order
+    function test_getOrder_nonExistent() public view {
+        ISwapboard.Order memory order = _board.getOrder(999);
+        assertEq(order.maker, address(0));
+        assertEq(order.tokenA, address(0));
+        assertEq(order.amountA, 0);
+        assertEq(order.tokenB, address(0));
+        assertEq(order.amountB, 0);
+        assertFalse(order.active);
     }
 
     /// @notice Tests createOrder
@@ -57,7 +105,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         assertEq(orderId, 0);
-        assertEq(_board.nextOrderId(), 1);
+        assertEq(_board.getNextOrderId(), 1);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, _maker);
@@ -309,7 +357,7 @@ contract SwapboardTest is Test {
         assertEq(order0, 0);
         assertEq(order1, 1);
         assertEq(order2, 2);
-        assertEq(_board.nextOrderId(), 3);
+        assertEq(_board.getNextOrderId(), 3);
     }
 
     /// @notice Tests filling an order as both _maker and _taker

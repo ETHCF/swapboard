@@ -8,14 +8,14 @@ pragma solidity 0.8.33;
 contract MockBlacklist {
     error Blacklisted();
 
-    string public name = "Blacklist Token";
-    string public symbol = "BLACK";
-    uint8 public decimals = 18;
-    uint256 public totalSupply;
+    string private _name = "Blacklist Token";
+    string private _symbol = "BLACK";
+    uint8 private _decimals = 18;
+    uint256 private _totalSupply;
 
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-    mapping(address => bool) public isBlacklisted;
+    mapping(address => uint256) private _balanceOf;
+    mapping(address => mapping(address => uint256)) private _allowance;
+    mapping(address => bool) private _isBlacklisted;
 
     // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);
@@ -26,30 +26,65 @@ contract MockBlacklist {
     modifier notBlacklisted(
         address account
     ) {
-        if (isBlacklisted[account]) {
+        if (_isBlacklisted[account]) {
             revert Blacklisted();
         }
         _;
     }
 
+    function name() external view returns (string memory) {
+        return _name;
+    }
+
+    function symbol() external view returns (string memory) {
+        return _symbol;
+    }
+
+    function decimals() external view returns (uint8) {
+        return _decimals;
+    }
+
+    function totalSupply() external view returns (uint256) {
+        return _totalSupply;
+    }
+
+    function getIsBlacklisted(
+        address account
+    ) external view returns (bool) {
+        return _isBlacklisted[account];
+    }
+
+    function balanceOf(
+        address account
+    ) external view returns (uint256) {
+        return _balanceOf[account];
+    }
+
+    function allowance(
+        address owner,
+        address spender
+    ) external view returns (uint256) {
+        return _allowance[owner][spender];
+    }
+
     function blacklist(
         address account
     ) external {
-        isBlacklisted[account] = true;
+        _isBlacklisted[account] = true;
     }
 
     function unblacklist(
         address account
     ) external {
-        isBlacklisted[account] = false;
+        _isBlacklisted[account] = false;
     }
 
     function mint(
         address to,
         uint256 amount
     ) external {
-        totalSupply += amount;
-        balanceOf[to] += amount;
+        _totalSupply += amount;
+        _balanceOf[to] += amount;
         emit Transfer(address(0), to, amount);
     }
 
@@ -57,7 +92,7 @@ contract MockBlacklist {
         address spender,
         uint256 amount
     ) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
+        _allowance[msg.sender][spender] = amount;
         emit Approval(msg.sender, spender, amount);
         return true;
     }
@@ -66,8 +101,8 @@ contract MockBlacklist {
         address to,
         uint256 amount
     ) external notBlacklisted(msg.sender) notBlacklisted(to) returns (bool) {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
+        _balanceOf[msg.sender] -= amount;
+        _balanceOf[to] += amount;
         emit Transfer(msg.sender, to, amount);
         return true;
     }
@@ -77,12 +112,12 @@ contract MockBlacklist {
         address to,
         uint256 amount
     ) external notBlacklisted(from) notBlacklisted(to) returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
+        uint256 allowed = _allowance[from][msg.sender];
         if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
+            _allowance[from][msg.sender] = allowed - amount;
         }
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
+        _balanceOf[from] -= amount;
+        _balanceOf[to] += amount;
         emit Transfer(from, to, amount);
         return true;
     }

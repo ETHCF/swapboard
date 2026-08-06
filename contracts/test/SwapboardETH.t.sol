@@ -51,7 +51,7 @@ contract SwapboardETHTest is Test {
         assertEq(order.amountB, TOKEN_AMOUNT);
         assertTrue(order.active);
         assertEq(orderId, 0);
-        assertEq(_board.nextOrderId(), 1);
+        assertEq(_board.getNextOrderId(), 1);
     }
 
     /// @notice Tests createOrderWithEth wethBalance

@@ -7,13 +7,13 @@ contract MockWETH {
     error InsufficientWETH();
     error ETHTransferFailed();
 
-    string public name = "Wrapped Ether";
-    string public symbol = "WETH";
-    uint8 public decimals = 18;
-    uint256 public totalSupply;
+    string private _name = "Wrapped Ether";
+    string private _symbol = "WETH";
+    uint8 private _decimals = 18;
+    uint256 private _totalSupply;
 
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
+    mapping(address => uint256) private _balanceOf;
+    mapping(address => mapping(address => uint256)) private _allowance;
 
     // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);
@@ -27,9 +27,38 @@ contract MockWETH {
     // solhint-disable-next-line gas-indexed-events
     event Withdrawal(address indexed src, uint256 wad);
 
+    function name() external view returns (string memory) {
+        return _name;
+    }
+
+    function symbol() external view returns (string memory) {
+        return _symbol;
+    }
+
+    function decimals() external view returns (uint8) {
+        return _decimals;
+    }
+
+    function totalSupply() external view returns (uint256) {
+        return _totalSupply;
+    }
+
+    function balanceOf(
+        address account
+    ) external view returns (uint256) {
+        return _balanceOf[account];
+    }
+
+    function allowance(
+        address owner,
+        address spender
+    ) external view returns (uint256) {
+        return _allowance[owner][spender];
+    }
+
     function deposit() external payable {
-        balanceOf[msg.sender] += msg.value;
-        totalSupply += msg.value;
+        _balanceOf[msg.sender] += msg.value;
+        _totalSupply += msg.value;
         emit Deposit(msg.sender, msg.value);
         emit Transfer(address(0), msg.sender, msg.value);
     }
@@ -37,11 +66,11 @@ contract MockWETH {
     function withdraw(
         uint256 amount
     ) external {
-        if (balanceOf[msg.sender] < amount) {
+        if (_balanceOf[msg.sender] < amount) {
             revert InsufficientWETH();
         }
-        balanceOf[msg.sender] -= amount;
-        totalSupply -= amount;
+        _balanceOf[msg.sender] -= amount;
+        _totalSupply -= amount;
         emit Withdrawal(msg.sender, amount);
         emit Transfer(msg.sender, address(0), amount);
         (bool success,) = payable(msg.sender).call{value: amount}("");
@@ -54,7 +83,7 @@ contract MockWETH {
         address spender,
         uint256 amount
     ) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
+        _allowance[msg.sender][spender] = amount;
 
         emit Approval(msg.sender, spender, amount);
 
@@ -65,8 +94,8 @@ contract MockWETH {
         address to,
         uint256 amount
     ) external returns (bool) {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
+        _balanceOf[msg.sender] -= amount;
+        _balanceOf[to] += amount;
 
         emit Transfer(msg.sender, to, amount);
 
@@ -78,13 +107,13 @@ contract MockWETH {
         address to,
         uint256 amount
     ) external returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
+        uint256 allowed = _allowance[from][msg.sender];
         if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
+            _allowance[from][msg.sender] = allowed - amount;
         }
 
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
+        _balanceOf[from] -= amount;
+        _balanceOf[to] += amount;
 
         emit Transfer(from, to, amount);
 
@@ -93,8 +122,8 @@ contract MockWETH {
 
     // solhint-disable-next-line no-complex-fallback
     receive() external payable {
-        balanceOf[msg.sender] += msg.value;
-        totalSupply += msg.value;
+        _balanceOf[msg.sender] += msg.value;
+        _totalSupply += msg.value;
 
         emit Deposit(msg.sender, msg.value);
         emit Transfer(address(0), msg.sender, msg.value);

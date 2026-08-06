@@ -60,32 +60,13 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc ISwapboard
-    function weth() external view returns (address) {
+    function getWeth() external view returns (address) {
         return _WETH;
     }
 
-    /// @notice Next order ID that will be assigned on create
-    function nextOrderId() external view returns (uint256) {
+    /// @inheritdoc ISwapboard
+    function getNextOrderId() external view returns (uint256) {
         return _nextOrderId;
-    }
-
-    /// @notice Order details by ID (same shape as the former public mapping getter)
-    function orders(
-        uint256 orderId
-    )
-        external
-        view
-        returns (
-            address maker,
-            bool active,
-            address tokenA,
-            uint256 amountA,
-            address tokenB,
-            uint256 amountB
-        )
-    {
-        Order storage order = _orders[orderId];
-        return (order.maker, order.active, order.tokenA, order.amountA, order.tokenB, order.amountB);
     }
 
     /// @inheritdoc ISwapboard

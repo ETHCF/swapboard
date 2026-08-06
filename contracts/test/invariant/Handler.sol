@@ -17,25 +17,25 @@ contract SwapboardHandler is Test {
     MockERC20 internal _tokenB;
 
     // Ghost variables for tracking state
-    uint256 public ghost_totalTokenADeposited;
-    uint256 public ghost_totalTokenAWithdrawn;
-    uint256 public ghost_ordersCreated;
-    uint256 public ghost_ordersFilled;
-    uint256 public ghost_ordersCancelled;
-    uint256 public ghost_activeOrders;
+    uint256 private _ghostTotalTokenADeposited;
+    uint256 private _ghostTotalTokenAWithdrawn;
+    uint256 private _ghostOrdersCreated;
+    uint256 private _ghostOrdersFilled;
+    uint256 private _ghostOrdersCancelled;
+    uint256 private _ghostActiveOrders;
 
     // Track individual order amounts for precise accounting
-    mapping(uint256 => uint256) public ghost_orderAmounts;
-    mapping(uint256 => bool) public ghost_orderActive;
+    mapping(uint256 => uint256) private _ghostOrderAmounts;
+    mapping(uint256 => bool) private _ghostOrderActive;
 
     // Actors
     address[] internal _actors;
     address internal _currentActor;
 
     // Counters for call tracking
-    uint256 public calls_createOrder;
-    uint256 public calls_fillOrder;
-    uint256 public calls_cancelOrder;
+    uint256 private _callsCreateOrder;
+    uint256 private _callsFillOrder;
+    uint256 private _callsCancelOrder;
 
     modifier useActor(
         uint256 actorIndexSeed
@@ -73,6 +73,54 @@ contract SwapboardHandler is Test {
         }
     }
 
+    function getGhostTotalTokenADeposited() external view returns (uint256) {
+        return _ghostTotalTokenADeposited;
+    }
+
+    function getGhostTotalTokenAWithdrawn() external view returns (uint256) {
+        return _ghostTotalTokenAWithdrawn;
+    }
+
+    function getGhostOrdersCreated() external view returns (uint256) {
+        return _ghostOrdersCreated;
+    }
+
+    function getGhostOrdersFilled() external view returns (uint256) {
+        return _ghostOrdersFilled;
+    }
+
+    function getGhostOrdersCancelled() external view returns (uint256) {
+        return _ghostOrdersCancelled;
+    }
+
+    function getGhostActiveOrders() external view returns (uint256) {
+        return _ghostActiveOrders;
+    }
+
+    function getGhostOrderAmounts(
+        uint256 orderId
+    ) external view returns (uint256) {
+        return _ghostOrderAmounts[orderId];
+    }
+
+    function getGhostOrderActive(
+        uint256 orderId
+    ) external view returns (bool) {
+        return _ghostOrderActive[orderId];
+    }
+
+    function getCallsCreateOrder() external view returns (uint256) {
+        return _callsCreateOrder;
+    }
+
+    function getCallsFillOrder() external view returns (uint256) {
+        return _callsFillOrder;
+    }
+
+    function getCallsCancelOrder() external view returns (uint256) {
+        return _callsCancelOrder;
+    }
+
     /// @notice Creates a new order with bounded amounts
     function createOrder(
         uint256 actorSeed,
@@ -87,15 +135,15 @@ contract SwapboardHandler is Test {
             return; // Skip if insufficient balance
         }
 
-        ++calls_createOrder;
+        ++_callsCreateOrder;
 
         uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB);
 
-        ghost_totalTokenADeposited += amountA;
-        ++ghost_ordersCreated;
-        ++ghost_activeOrders;
-        ghost_orderAmounts[orderId] = amountA;
-        ghost_orderActive[orderId] = true;
+        _ghostTotalTokenADeposited += amountA;
+        ++_ghostOrdersCreated;
+        ++_ghostActiveOrders;
+        _ghostOrderAmounts[orderId] = amountA;
+        _ghostOrderActive[orderId] = true;
     }
 
     /// @notice Fills an existing order
@@ -103,7 +151,7 @@ contract SwapboardHandler is Test {
         uint256 actorSeed,
         uint256 orderIdSeed
     ) external useActor(actorSeed) {
-        uint256 nextId = _board.nextOrderId();
+        uint256 nextId = _board.getNextOrderId();
         if (nextId == 0) {
             return; // No orders exist
         }
@@ -120,21 +168,21 @@ contract SwapboardHandler is Test {
             return; // Insufficient balance
         }
 
-        ++calls_fillOrder;
+        ++_callsFillOrder;
 
         _board.fillOrder(orderId, 0);
 
-        ghost_totalTokenAWithdrawn += order.amountA;
-        ++ghost_ordersFilled;
-        --ghost_activeOrders;
-        ghost_orderActive[orderId] = false;
+        _ghostTotalTokenAWithdrawn += order.amountA;
+        ++_ghostOrdersFilled;
+        --_ghostActiveOrders;
+        _ghostOrderActive[orderId] = false;
     }
 
     /// @notice Cancels an order (only by maker)
     function cancelOrder(
         uint256 orderIdSeed
     ) external {
-        uint256 nextId = _board.nextOrderId();
+        uint256 nextId = _board.getNextOrderId();
         if (nextId == 0) {
             return;
         }
@@ -148,14 +196,14 @@ contract SwapboardHandler is Test {
 
         // Only maker can cancel
         vm.prank(order.maker);
-        ++calls_cancelOrder;
+        ++_callsCancelOrder;
 
         _board.cancelOrder(orderId);
 
-        ghost_totalTokenAWithdrawn += order.amountA;
-        ++ghost_ordersCancelled;
-        --ghost_activeOrders;
-        ghost_orderActive[orderId] = false;
+        _ghostTotalTokenAWithdrawn += order.amountA;
+        ++_ghostOrdersCancelled;
+        --_ghostActiveOrders;
+        _ghostOrderActive[orderId] = false;
     }
 
     /// @notice View function to get contract token balance
@@ -165,12 +213,12 @@ contract SwapboardHandler is Test {
 
     /// @notice Calculate expected contract balance from ghost vars
     function getExpectedContractBalance() external view returns (uint256) {
-        return ghost_totalTokenADeposited - ghost_totalTokenAWithdrawn;
+        return _ghostTotalTokenADeposited - _ghostTotalTokenAWithdrawn;
     }
 
     /// @notice Count active orders by iterating
     function countActiveOrders() external view returns (uint256 count) {
-        uint256 nextId = _board.nextOrderId();
+        uint256 nextId = _board.getNextOrderId();
         for (uint256 i = 0; i < nextId; ++i) {
             if (_board.canFill(i)) {
                 ++count;
@@ -180,7 +228,7 @@ contract SwapboardHandler is Test {
 
     /// @notice Get sum of all active order amounts
     function sumActiveOrderAmounts() external view returns (uint256 total) {
-        uint256 nextId = _board.nextOrderId();
+        uint256 nextId = _board.getNextOrderId();
         for (uint256 i = 0; i < nextId; ++i) {
             ISwapboard.Order memory order = _board.getOrder(i);
             if (order.active) {
