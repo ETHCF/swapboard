@@ -60,7 +60,9 @@ contract ReentrantAttacker is MockERC20 {
         uint256 amount
     ) public override returns (bool) {
         super.transfer(to, amount);
+
         _attemptReentrancy();
+
         return true;
     }
 
@@ -70,7 +72,9 @@ contract ReentrantAttacker is MockERC20 {
         uint256 amount
     ) public override returns (bool) {
         super.transferFrom(from, to, amount);
+
         _attemptReentrancy();
+
         return true;
     }
 
@@ -79,6 +83,7 @@ contract ReentrantAttacker is MockERC20 {
             // Prevent infinite loop
             return;
         }
+
         _attacking = true;
 
         if (keccak256(bytes(_attackType)) == keccak256(bytes("fill"))) {

@@ -33,12 +33,16 @@ contract UpgradeableToken is MockERC20 {
     ) public override returns (bool) {
         uint256 fee = _isFeeOnTransfer ? (amount * _feePercent) / 100 : 0;
         uint256 netAmount = amount - fee;
+
         _balanceOf[msg.sender] -= amount;
         _balanceOf[to] += netAmount;
+
         if (fee > 0) {
             _totalSupply -= fee;
         }
+
         emit Transfer(msg.sender, to, netAmount);
+
         return true;
     }
 
@@ -48,14 +52,19 @@ contract UpgradeableToken is MockERC20 {
         uint256 amount
     ) public override returns (bool) {
         _spendAllowance(from, msg.sender, amount);
+
         uint256 fee = _isFeeOnTransfer ? (amount * _feePercent) / 100 : 0;
         uint256 netAmount = amount - fee;
+
         _balanceOf[from] -= amount;
         _balanceOf[to] += netAmount;
+
         if (fee > 0) {
             _totalSupply -= fee;
         }
+
         emit Transfer(from, to, netAmount);
+
         return true;
     }
 }

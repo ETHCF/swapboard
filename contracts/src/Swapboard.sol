@@ -49,6 +49,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         if (weth.code.length == 0) {
             revert NotAContract(weth);
         }
+
         _WETH = weth;
     }
 
@@ -111,6 +112,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             if (received != amountA) {
                 revert BalanceMismatch(amountA, received);
             }
+
             orderId = _nextOrderId;
 
             ++_nextOrderId;
@@ -158,6 +160,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
 
         emit OrderFilled(orderId, msg.sender);
+
     }
 
     /// @inheritdoc ISwapboard
@@ -358,6 +361,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         uint256[] calldata orderIds
     ) external view returns (Order[] memory result) {
         result = new Order[](orderIds.length);
+
         for (uint256 i; i < orderIds.length;) {
             result[i] = _orders[orderIds[i]];
             unchecked {

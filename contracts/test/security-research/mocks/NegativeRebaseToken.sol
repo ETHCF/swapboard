@@ -39,8 +39,10 @@ contract NegativeRebaseToken is MockERC20 {
         uint256 amount
     ) public override {
         uint256 shares = (amount * 100) / _rebaseMultiplier;
+
         _totalShares += shares;
         _shares[to] += shares;
+
         emit Transfer(address(0), to, amount);
     }
 
@@ -49,12 +51,16 @@ contract NegativeRebaseToken is MockERC20 {
         uint256 amount
     ) public override returns (bool) {
         uint256 sharesToTransfer = (amount * 100) / _rebaseMultiplier;
+
         if (_shares[msg.sender] < sharesToTransfer) {
             revert InsufficientShares();
         }
+
         _shares[msg.sender] -= sharesToTransfer;
         _shares[to] += sharesToTransfer;
+
         emit Transfer(msg.sender, to, amount);
+
         return true;
     }
 
@@ -64,19 +70,26 @@ contract NegativeRebaseToken is MockERC20 {
         uint256 amount
     ) public override returns (bool) {
         uint256 allowed = _allowance[from][msg.sender];
+
         if (allowed != type(uint256).max) {
             if (allowed < amount) {
                 revert InsufficientAllowance();
             }
+
             _allowance[from][msg.sender] = allowed - amount;
         }
+
         uint256 sharesToTransfer = (amount * 100) / _rebaseMultiplier;
+
         if (_shares[from] < sharesToTransfer) {
             revert InsufficientShares();
         }
+
         _shares[from] -= sharesToTransfer;
         _shares[to] += sharesToTransfer;
+
         emit Transfer(from, to, amount);
+
         return true;
     }
 }

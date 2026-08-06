@@ -66,8 +66,10 @@ contract SwapboardHandler is Test {
         for (uint256 i = 0; i < _actors.length; ++i) {
             _tokenA.mint(_actors[i], 1_000_000 ether);
             _tokenB.mint(_actors[i], 1_000_000 ether);
+
             vm.prank(_actors[i]);
             _tokenA.approve(address(_board), type(uint256).max);
+
             vm.prank(_actors[i]);
             _tokenB.approve(address(_board), type(uint256).max);
         }
@@ -196,6 +198,7 @@ contract SwapboardHandler is Test {
 
         // Only maker can cancel
         vm.prank(order.maker);
+
         ++_callsCancelOrder;
 
         _board.cancelOrder(orderId);
@@ -219,6 +222,7 @@ contract SwapboardHandler is Test {
     /// @notice Count active orders by iterating
     function countActiveOrders() external view returns (uint256 count) {
         uint256 nextId = _board.getNextOrderId();
+
         for (uint256 i = 0; i < nextId; ++i) {
             if (_board.canFill(i)) {
                 ++count;
@@ -229,6 +233,7 @@ contract SwapboardHandler is Test {
     /// @notice Get sum of all active order amounts
     function sumActiveOrderAmounts() external view returns (uint256 total) {
         uint256 nextId = _board.getNextOrderId();
+
         for (uint256 i = 0; i < nextId; ++i) {
             ISwapboard.Order memory order = _board.getOrder(i);
             if (order.active) {
