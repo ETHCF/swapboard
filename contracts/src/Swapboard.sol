@@ -61,16 +61,6 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc ISwapboard
-    function getWeth() external view returns (address) {
-        return _WETH;
-    }
-
-    /// @inheritdoc ISwapboard
-    function getNextOrderId() external view returns (uint256) {
-        return _nextOrderId;
-    }
-
-    /// @inheritdoc ISwapboard
     /// @dev Token addresses are identity-based. Aliased or rebranded tokens at different
     ///      addresses are treated as distinct tokens. Users must verify token addresses.
     function createOrder(
@@ -353,6 +343,16 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         }
 
         emit OrderFilled({orderId: orderId, taker: msg.sender});
+    }
+
+    /// @inheritdoc ISwapboard
+    function getWeth() external view returns (address) {
+        return _WETH;
+    }
+
+    /// @inheritdoc ISwapboard
+    function getNextOrderId() external view returns (uint256) {
+        return _nextOrderId;
     }
 
     /// @inheritdoc ISwapboard
