@@ -79,16 +79,10 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         address tokenB,
         uint256 amountB
     ) external nonReentrant returns (uint256 orderId) {
-        if (tokenA == address(0)) {
+        if (tokenA == address(0) || tokenB == address(0)) {
             revert ZeroAddress();
         }
-        if (tokenB == address(0)) {
-            revert ZeroAddress();
-        }
-        if (amountA == 0) {
-            revert ZeroAmount();
-        }
-        if (amountB == 0) {
+        if (amountA == 0 || amountB == 0) {
             revert ZeroAmount();
         }
         if (tokenA == tokenB) {
