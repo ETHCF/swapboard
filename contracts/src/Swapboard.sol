@@ -167,7 +167,6 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
 
         emit OrderFilled({orderId: orderId, taker: msg.sender});
-
     }
 
     /// @inheritdoc ISwapboard
