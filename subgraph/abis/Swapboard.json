@@ -3,7 +3,7 @@
     "type": "constructor",
     "inputs": [
       {
-        "name": "_weth",
+        "name": "weth",
         "type": "address",
         "internalType": "address"
       }

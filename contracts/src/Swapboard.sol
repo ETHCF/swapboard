@@ -28,40 +28,64 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     /// @notice Canonical WETH address for this deployment
-    address private immutable WETH;
+    address private immutable _WETH;
 
     /// @notice Counter for generating unique order IDs
     /// @dev Starts at 0, increments by 1 for each new order
-    uint256 public nextOrderId;
+    uint256 private _nextOrderId;
 
     /// @notice Mapping from order ID to Order struct
     /// @dev Non-existent orders return default struct with maker=address(0) and active=false
-    mapping(uint256 orderId => Order order) public orders;
+    mapping(uint256 orderId => Order order) private _orders;
 
     /// @notice Sets the canonical WETH address for this deployment
-    /// @param _weth Address of the WETH contract (must be a deployed contract)
+    /// @param weth Address of the WETH contract (must be a deployed contract)
     constructor(
-        address _weth
+        address weth
     ) {
-        if (_weth == address(0)) {
+        if (weth == address(0)) {
             revert ZeroAddress();
         }
-        if (_weth.code.length == 0) {
-            revert NotAContract(_weth);
+        if (weth.code.length == 0) {
+            revert NotAContract(weth);
         }
-        WETH = _weth;
+        _WETH = weth;
     }
 
     /// @notice Accept ETH only from WETH contract (for withdraw callbacks)
     receive() external payable {
-        if (msg.sender != WETH) {
-            revert NotWETH(WETH, msg.sender);
+        if (msg.sender != _WETH) {
+            revert NotWETH(_WETH, msg.sender);
         }
     }
 
     /// @inheritdoc ISwapboard
     function weth() external view returns (address) {
-        return WETH;
+        return _WETH;
+    }
+
+    /// @notice Next order ID that will be assigned on create
+    function nextOrderId() external view returns (uint256) {
+        return _nextOrderId;
+    }
+
+    /// @notice Order details by ID (same shape as the former public mapping getter)
+    function orders(
+        uint256 orderId
+    )
+        external
+        view
+        returns (
+            address maker,
+            bool active,
+            address tokenA,
+            uint256 amountA,
+            address tokenB,
+            uint256 amountB
+        )
+    {
+        Order storage order = _orders[orderId];
+        return (order.maker, order.active, order.tokenA, order.amountA, order.tokenB, order.amountB);
     }
 
     /// @inheritdoc ISwapboard
@@ -106,12 +130,12 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             if (received != amountA) {
                 revert BalanceMismatch(amountA, received);
             }
-            orderId = nextOrderId;
+            orderId = _nextOrderId;
 
-            ++nextOrderId;
+            ++_nextOrderId;
         }
 
-        orders[orderId] = Order({
+        _orders[orderId] = Order({
             maker: msg.sender,
             active: true,
             tokenA: tokenA,
@@ -133,7 +157,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             revert DeadlineExpired();
         }
 
-        Order storage order = orders[orderId];
+        Order storage order = _orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) {
@@ -159,7 +183,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     function cancelOrder(
         uint256 orderId
     ) external nonReentrant {
-        Order storage order = orders[orderId];
+        Order storage order = _orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) {
@@ -195,31 +219,31 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         if (amountB == 0) {
             revert ZeroAmount();
         }
-        if (tokenB == WETH) {
+        if (tokenB == _WETH) {
             revert SameToken();
         }
         if (tokenB.code.length == 0) {
             revert NotAContract(tokenB);
         }
 
-        IWETH(WETH).deposit{value: msg.value}();
+        IWETH(_WETH).deposit{value: msg.value}();
 
         unchecked {
-            orderId = nextOrderId;
+            orderId = _nextOrderId;
 
-            ++nextOrderId;
+            ++_nextOrderId;
         }
 
-        orders[orderId] = Order({
+        _orders[orderId] = Order({
             maker: msg.sender,
             active: true,
-            tokenA: WETH,
+            tokenA: _WETH,
             amountA: msg.value,
             tokenB: tokenB,
             amountB: amountB
         });
 
-        emit OrderCreated(orderId, msg.sender, WETH, msg.value, tokenB, amountB);
+        emit OrderCreated(orderId, msg.sender, _WETH, msg.value, tokenB, amountB);
     }
 
     /// @inheritdoc ISwapboard
@@ -231,7 +255,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             revert DeadlineExpired();
         }
 
-        Order storage order = orders[orderId];
+        Order storage order = _orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) {
@@ -243,8 +267,8 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         uint256 amountB = order.amountB;
 
-        if (order.tokenB != WETH) {
-            revert NotWETH(WETH, order.tokenB);
+        if (order.tokenB != _WETH) {
+            revert NotWETH(_WETH, order.tokenB);
         }
         if (msg.value != amountB) {
             revert ETHAmountMismatch(amountB, msg.value);
@@ -252,8 +276,8 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         order.active = false;
 
-        IWETH(WETH).deposit{value: msg.value}();
-        IERC20(WETH).safeTransfer(maker, amountB);
+        IWETH(_WETH).deposit{value: msg.value}();
+        IERC20(_WETH).safeTransfer(maker, amountB);
 
         IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
 
@@ -264,7 +288,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     function cancelOrderUnwrap(
         uint256 orderId
     ) external nonReentrant {
-        Order storage order = orders[orderId];
+        Order storage order = _orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) {
@@ -276,15 +300,15 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         if (msg.sender != maker) {
             revert NotMaker(orderId, msg.sender, maker);
         }
-        if (order.tokenA != WETH) {
-            revert NotWETH(WETH, order.tokenA);
+        if (order.tokenA != _WETH) {
+            revert NotWETH(_WETH, order.tokenA);
         }
 
         uint256 amountA = order.amountA;
 
         order.active = false;
 
-        IWETH(WETH).withdraw(amountA);
+        IWETH(_WETH).withdraw(amountA);
 
         bool success;
         // solhint-disable-next-line no-inline-assembly
@@ -307,7 +331,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
             revert DeadlineExpired();
         }
 
-        Order storage order = orders[orderId];
+        Order storage order = _orders[orderId];
 
         (address maker, bool active) = (order.maker, order.active);
         if (maker == address(0)) {
@@ -316,8 +340,8 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         if (!active) {
             revert OrderNotActive(orderId);
         }
-        if (order.tokenA != WETH) {
-            revert NotWETH(WETH, order.tokenA);
+        if (order.tokenA != _WETH) {
+            revert NotWETH(_WETH, order.tokenA);
         }
 
         uint256 amountA = order.amountA;
@@ -326,7 +350,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
 
         IERC20(order.tokenB).safeTransferFrom(msg.sender, maker, order.amountB);
 
-        IWETH(WETH).withdraw(amountA);
+        IWETH(_WETH).withdraw(amountA);
 
         bool success;
         // solhint-disable-next-line no-inline-assembly
@@ -344,7 +368,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     function getOrder(
         uint256 orderId
     ) external view returns (Order memory) {
-        return orders[orderId];
+        return _orders[orderId];
     }
 
     /// @inheritdoc ISwapboard
@@ -354,7 +378,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     ) external view returns (Order[] memory result) {
         result = new Order[](orderIds.length);
         for (uint256 i; i < orderIds.length;) {
-            result[i] = orders[orderIds[i]];
+            result[i] = _orders[orderIds[i]];
             unchecked {
                 ++i;
             }
@@ -365,6 +389,6 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     function canFill(
         uint256 orderId
     ) external view returns (bool) {
-        return orders[orderId].active;
+        return _orders[orderId].active;
     }
 }

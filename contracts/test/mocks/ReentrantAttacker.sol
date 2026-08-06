@@ -16,11 +16,11 @@ contract ReentrantAttacker {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    Swapboard public immutable BOARD;
-    string public attackType;
-    uint256 public orderId;
-    address public attacker;
-    bool public attacking;
+    Swapboard private immutable _BOARD;
+    string private _attackType;
+    uint256 private _orderId;
+    address private _attacker;
+    bool private _attacking;
 
     // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);
@@ -29,23 +29,23 @@ contract ReentrantAttacker {
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
     constructor(
-        address _board,
-        string memory _attackType
+        address board,
+        string memory attackType
     ) {
-        BOARD = Swapboard(payable(_board));
-        attackType = _attackType;
+        _BOARD = Swapboard(payable(board));
+        _attackType = attackType;
     }
 
     function setOrderId(
-        uint256 _orderId
+        uint256 orderId
     ) external {
-        orderId = _orderId;
+        _orderId = orderId;
     }
 
     function setAttacker(
-        address _attacker
+        address attacker
     ) external {
-        attacker = _attacker;
+        _attacker = attacker;
     }
 
     function mint(
@@ -100,20 +100,20 @@ contract ReentrantAttacker {
     }
 
     function _attemptReentrancy() internal {
-        if (attacking) {
+        if (_attacking) {
             // Prevent infinite loop
             return;
         }
-        attacking = true;
+        _attacking = true;
 
-        if (keccak256(bytes(attackType)) == keccak256(bytes("fill"))) {
+        if (keccak256(bytes(_attackType)) == keccak256(bytes("fill"))) {
             // Try to fill the same order again
-            try BOARD.fillOrder(orderId, 0) {} catch {}
-        } else if (keccak256(bytes(attackType)) == keccak256(bytes("cancel"))) {
+            try _BOARD.fillOrder(_orderId, 0) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("cancel"))) {
             // Try to cancel the same order again
-            try BOARD.cancelOrder(orderId) {} catch {}
+            try _BOARD.cancelOrder(_orderId) {} catch {}
         }
 
-        attacking = false;
+        _attacking = false;
     }
 }

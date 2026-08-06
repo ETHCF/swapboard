@@ -23,9 +23,9 @@ contract UpgradeableToken {
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
     function setFeeOnTransfer(
-        bool _enabled
+        bool enabled
     ) external {
-        isFeeOnTransfer = _enabled;
+        isFeeOnTransfer = enabled;
     }
 
     function mint(
