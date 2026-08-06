@@ -27,9 +27,9 @@ test:
 test-contracts:
 	cd contracts && forge test -vvv
 
-# Run contract tests with coverage
+# Run contract tests with coverage (src only; mocks/tests excluded from report)
 coverage:
-	cd contracts && forge coverage --report summary --report lcov
+	cd contracts && forge coverage --report summary --report lcov --exclude-tests --no-match-coverage 'test/'
 
 # Format code
 fmt:
