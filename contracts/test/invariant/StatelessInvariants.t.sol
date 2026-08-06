@@ -88,9 +88,7 @@ contract SwapboardStatelessInvariantTest is Test {
         _board.fillOrder(orderId, 0);
 
         uint256 takerBalanceAfter = _tokenA.balanceOf(_taker);
-        assertEq(
-            takerBalanceAfter - takerBalanceBefore, amountA, "Taker did not receive correct amountA"
-        );
+        assertEq(takerBalanceAfter - takerBalanceBefore, amountA, "Taker did not receive correct amountA");
     }
 
     /// @notice Property: After fillOrder, _maker gains exactly amountB
@@ -110,9 +108,7 @@ contract SwapboardStatelessInvariantTest is Test {
         _board.fillOrder(orderId, 0);
 
         uint256 makerBalanceAfter = _tokenB.balanceOf(_maker);
-        assertEq(
-            makerBalanceAfter - makerBalanceBefore, amountB, "Maker did not receive correct amountB"
-        );
+        assertEq(makerBalanceAfter - makerBalanceBefore, amountB, "Maker did not receive correct amountB");
     }
 
     /// @notice Property: After cancelOrder, _maker regains exactly amountA
