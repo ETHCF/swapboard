@@ -52,8 +52,7 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by fillOrder
     function test_gas_fillOrder() public {
         vm.prank(_maker);
-        uint256 orderId =
-            _board.createOrder(address(_tokenA), 100 ether, address(_tokenB), 100 ether);
+        uint256 orderId = _board.createOrder(address(_tokenA), 100 ether, address(_tokenB), 100 ether);
 
         vm.prank(_taker);
         uint256 gasBefore = gasleft();
@@ -67,8 +66,7 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by cancelOrder
     function test_gas_cancelOrder() public {
         vm.prank(_maker);
-        uint256 orderId =
-            _board.createOrder(address(_tokenA), 100 ether, address(_tokenB), 100 ether);
+        uint256 orderId = _board.createOrder(address(_tokenA), 100 ether, address(_tokenB), 100 ether);
 
         vm.prank(_maker);
         uint256 gasBefore = gasleft();
@@ -82,8 +80,7 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by getOrder
     function test_gas_getOrder() public {
         vm.prank(_maker);
-        uint256 orderId =
-            _board.createOrder(address(_tokenA), 100 ether, address(_tokenB), 100 ether);
+        uint256 orderId = _board.createOrder(address(_tokenA), 100 ether, address(_tokenB), 100 ether);
 
         uint256 gasBefore = gasleft();
         _board.getOrder(orderId);
@@ -136,8 +133,7 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by canFill
     function test_gas_canFill() public {
         vm.prank(_maker);
-        uint256 orderId =
-            _board.createOrder(address(_tokenA), 100 ether, address(_tokenB), 100 ether);
+        uint256 orderId = _board.createOrder(address(_tokenA), 100 ether, address(_tokenB), 100 ether);
 
         uint256 gasBefore = gasleft();
         _board.canFill(orderId);

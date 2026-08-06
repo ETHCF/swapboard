@@ -32,12 +32,7 @@ interface ISwapboard {
     /// @param tokenB Address of the token wanted
     /// @param amountB Amount of tokenB required to fill
     event OrderCreated(
-        uint256 indexed orderId,
-        address indexed maker,
-        address tokenA,
-        uint256 amountA,
-        address tokenB,
-        uint256 amountB
+        uint256 indexed orderId, address indexed maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB
     );
     // solhint-enable gas-indexed-events
 

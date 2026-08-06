@@ -42,8 +42,7 @@ contract SwapboardInvariantTest is Test {
     /// @dev This is the core solvency invariant
     function invariant_solvency() public view {
         uint256 actualBalance = _tokenA.balanceOf(address(_board));
-        uint256 expectedBalance =
-            _handler.getGhostTotalTokenADeposited() - _handler.getGhostTotalTokenAWithdrawn();
+        uint256 expectedBalance = _handler.getGhostTotalTokenADeposited() - _handler.getGhostTotalTokenAWithdrawn();
 
         assertEq(actualBalance, expectedBalance, "Solvency violated: balance mismatch");
     }

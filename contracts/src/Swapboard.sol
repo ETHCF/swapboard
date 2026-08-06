@@ -103,21 +103,11 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         }
 
         _orders[orderId] = Order({
-            maker: msg.sender,
-            active: true,
-            tokenA: tokenA,
-            amountA: amountA,
-            tokenB: tokenB,
-            amountB: amountB
+            maker: msg.sender, active: true, tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB
         });
 
         emit OrderCreated({
-            orderId: orderId,
-            maker: msg.sender,
-            tokenA: tokenA,
-            amountA: amountA,
-            tokenB: tokenB,
-            amountB: amountB
+            orderId: orderId, maker: msg.sender, tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB
         });
     }
 
@@ -209,21 +199,11 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         }
 
         _orders[orderId] = Order({
-            maker: msg.sender,
-            active: true,
-            tokenA: _WETH,
-            amountA: msg.value,
-            tokenB: tokenB,
-            amountB: amountB
+            maker: msg.sender, active: true, tokenA: _WETH, amountA: msg.value, tokenB: tokenB, amountB: amountB
         });
 
         emit OrderCreated({
-            orderId: orderId,
-            maker: msg.sender,
-            tokenA: _WETH,
-            amountA: msg.value,
-            tokenB: tokenB,
-            amountB: amountB
+            orderId: orderId, maker: msg.sender, tokenA: _WETH, amountA: msg.value, tokenB: tokenB, amountB: amountB
         });
     }
 
