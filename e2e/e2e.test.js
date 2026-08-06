@@ -26,10 +26,21 @@ import { foundry } from "viem/chains";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Load config
+// Load config written by `pnpm setup` / `pnpm e2e`
 function loadConfig() {
   const envPath = join(__dirname, ".env.e2e");
-  const content = readFileSync(envPath, "utf-8");
+  let content;
+  try {
+    content = readFileSync(envPath, "utf-8");
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      console.error(
+        "Missing e2e/.env.e2e. Run `pnpm setup` first, or use `pnpm e2e` to setup, test, and teardown."
+      );
+      process.exit(1);
+    }
+    throw err;
+  }
   const config = {};
   for (const line of content.split("\n")) {
     const [key, value] = line.split("=");
