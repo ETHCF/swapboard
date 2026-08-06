@@ -6,16 +6,16 @@ pragma solidity 0.8.33;
 /// @title MockRebase
 /// @notice Mock ERC20 with rebasing functionality (like stETH, AMPL)
 contract MockRebase {
-    string public name = "Rebase Token";
-    string public symbol = "REBASE";
-    uint8 public decimals = 18;
+    string private _name = "Rebase Token";
+    string private _symbol = "REBASE";
+    uint8 private _decimals = 18;
 
-    uint256 internal _totalShares;
-    uint256 internal _totalSupply;
-    uint256 internal _rebaseMultiplier = 100; // 100 = 1x, 110 = 1.1x
+    uint256 private _totalShares;
+    uint256 private _totalSupply;
+    uint256 private _rebaseMultiplier = 100; // 100 = 1x, 110 = 1.1x
 
-    mapping(address => uint256) internal _shares;
-    mapping(address => mapping(address => uint256)) public allowance;
+    mapping(address => uint256) private _shares;
+    mapping(address => mapping(address => uint256)) private _allowance;
 
     // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);
@@ -26,6 +26,18 @@ contract MockRebase {
     // solhint-disable-next-line gas-indexed-events
     event Rebase(uint256 newMultiplier);
 
+    function name() external view returns (string memory) {
+        return _name;
+    }
+
+    function symbol() external view returns (string memory) {
+        return _symbol;
+    }
+
+    function decimals() external view returns (uint8) {
+        return _decimals;
+    }
+
     function totalSupply() external view returns (uint256) {
         return (_totalShares * _rebaseMultiplier) / 100;
     }
@@ -34,6 +46,13 @@ contract MockRebase {
         address account
     ) external view returns (uint256) {
         return (_shares[account] * _rebaseMultiplier) / 100;
+    }
+
+    function allowance(
+        address owner,
+        address spender
+    ) external view returns (uint256) {
+        return _allowance[owner][spender];
     }
 
     /// @notice Rebase all balances
@@ -59,7 +78,7 @@ contract MockRebase {
         address spender,
         uint256 amount
     ) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
+        _allowance[msg.sender][spender] = amount;
         emit Approval(msg.sender, spender, amount);
         return true;
     }
@@ -80,9 +99,9 @@ contract MockRebase {
         address to,
         uint256 amount
     ) external returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
+        uint256 allowed = _allowance[from][msg.sender];
         if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
+            _allowance[from][msg.sender] = allowed - amount;
         }
         uint256 sharesToTransfer = (amount * 100) / _rebaseMultiplier;
         _shares[from] -= sharesToTransfer;

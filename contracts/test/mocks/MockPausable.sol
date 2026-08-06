@@ -8,14 +8,14 @@ pragma solidity 0.8.33;
 contract MockPausable {
     error Paused();
 
-    string public name = "Pausable Token";
-    string public symbol = "PAUSE";
-    uint8 public decimals = 18;
-    uint256 public totalSupply;
-    bool public paused;
+    string private _name = "Pausable Token";
+    string private _symbol = "PAUSE";
+    uint8 private _decimals = 18;
+    uint256 private _totalSupply;
+    bool private _paused;
 
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
+    mapping(address => uint256) private _balanceOf;
+    mapping(address => mapping(address => uint256)) private _allowance;
 
     // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);
@@ -24,26 +24,59 @@ contract MockPausable {
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
     modifier whenNotPaused() {
-        if (paused) {
+        if (_paused) {
             revert Paused();
         }
         _;
     }
 
+    function name() external view returns (string memory) {
+        return _name;
+    }
+
+    function symbol() external view returns (string memory) {
+        return _symbol;
+    }
+
+    function decimals() external view returns (uint8) {
+        return _decimals;
+    }
+
+    function totalSupply() external view returns (uint256) {
+        return _totalSupply;
+    }
+
+    function getPaused() external view returns (bool) {
+        return _paused;
+    }
+
+    function balanceOf(
+        address account
+    ) external view returns (uint256) {
+        return _balanceOf[account];
+    }
+
+    function allowance(
+        address owner,
+        address spender
+    ) external view returns (uint256) {
+        return _allowance[owner][spender];
+    }
+
     function pause() external {
-        paused = true;
+        _paused = true;
     }
 
     function unpause() external {
-        paused = false;
+        _paused = false;
     }
 
     function mint(
         address to,
         uint256 amount
     ) external {
-        totalSupply += amount;
-        balanceOf[to] += amount;
+        _totalSupply += amount;
+        _balanceOf[to] += amount;
         emit Transfer(address(0), to, amount);
     }
 
@@ -51,7 +84,7 @@ contract MockPausable {
         address spender,
         uint256 amount
     ) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
+        _allowance[msg.sender][spender] = amount;
         emit Approval(msg.sender, spender, amount);
         return true;
     }
@@ -60,8 +93,8 @@ contract MockPausable {
         address to,
         uint256 amount
     ) external whenNotPaused returns (bool) {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
+        _balanceOf[msg.sender] -= amount;
+        _balanceOf[to] += amount;
         emit Transfer(msg.sender, to, amount);
         return true;
     }
@@ -71,12 +104,12 @@ contract MockPausable {
         address to,
         uint256 amount
     ) external whenNotPaused returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
+        uint256 allowed = _allowance[from][msg.sender];
         if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
+            _allowance[from][msg.sender] = allowed - amount;
         }
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
+        _balanceOf[from] -= amount;
+        _balanceOf[to] += amount;
         emit Transfer(from, to, amount);
         return true;
     }

@@ -43,7 +43,7 @@ contract SwapboardInvariantTest is Test {
     function invariant_solvency() public view {
         uint256 actualBalance = _tokenA.balanceOf(address(_board));
         uint256 expectedBalance =
-            _handler.ghost_totalTokenADeposited() - _handler.ghost_totalTokenAWithdrawn();
+            _handler.getGhostTotalTokenADeposited() - _handler.getGhostTotalTokenAWithdrawn();
 
         assertEq(actualBalance, expectedBalance, "Solvency violated: balance mismatch");
     }
@@ -58,22 +58,22 @@ contract SwapboardInvariantTest is Test {
 
     /// @notice Orders created must equal filled + cancelled + active
     function invariant_orderAccounting() public view {
-        uint256 created = _handler.ghost_ordersCreated();
-        uint256 filled = _handler.ghost_ordersFilled();
-        uint256 cancelled = _handler.ghost_ordersCancelled();
-        uint256 active = _handler.ghost_activeOrders();
+        uint256 created = _handler.getGhostOrdersCreated();
+        uint256 filled = _handler.getGhostOrdersFilled();
+        uint256 cancelled = _handler.getGhostOrdersCancelled();
+        uint256 active = _handler.getGhostActiveOrders();
 
         assertEq(created, filled + cancelled + active, "Order accounting mismatch");
     }
 
     /// @notice nextOrderId must equal total orders created
     function invariant_nextOrderIdConsistency() public view {
-        assertEq(_board.nextOrderId(), _handler.ghost_ordersCreated(), "nextOrderId mismatch");
+        assertEq(_board.getNextOrderId(), _handler.getGhostOrdersCreated(), "nextOrderId mismatch");
     }
 
     /// @notice Active order count from ghost must match actual count
     function invariant_activeOrderCount() public view {
-        uint256 ghostActive = _handler.ghost_activeOrders();
+        uint256 ghostActive = _handler.getGhostActiveOrders();
         uint256 actualActive = _handler.countActiveOrders();
 
         assertEq(ghostActive, actualActive, "Active order count mismatch");
@@ -81,9 +81,9 @@ contract SwapboardInvariantTest is Test {
 
     /// @notice Filled + cancelled orders must not exceed created orders
     function invariant_noOvercounting() public view {
-        uint256 created = _handler.ghost_ordersCreated();
-        uint256 filled = _handler.ghost_ordersFilled();
-        uint256 cancelled = _handler.ghost_ordersCancelled();
+        uint256 created = _handler.getGhostOrdersCreated();
+        uint256 filled = _handler.getGhostOrdersFilled();
+        uint256 cancelled = _handler.getGhostOrdersCancelled();
 
         assertLe(filled + cancelled, created, "More orders filled/cancelled than created");
     }
@@ -97,13 +97,13 @@ contract SwapboardInvariantTest is Test {
     /// @notice Call summary for debugging
     function invariant_callSummary() public view {
         console2.log("--- Invariant Test Summary ---");
-        console2.log("createOrder calls:", _handler.calls_createOrder());
-        console2.log("fillOrder calls:", _handler.calls_fillOrder());
-        console2.log("cancelOrder calls:", _handler.calls_cancelOrder());
-        console2.log("Orders created:", _handler.ghost_ordersCreated());
-        console2.log("Orders filled:", _handler.ghost_ordersFilled());
-        console2.log("Orders cancelled:", _handler.ghost_ordersCancelled());
-        console2.log("Active orders:", _handler.ghost_activeOrders());
+        console2.log("createOrder calls:", _handler.getCallsCreateOrder());
+        console2.log("fillOrder calls:", _handler.getCallsFillOrder());
+        console2.log("cancelOrder calls:", _handler.getCallsCancelOrder());
+        console2.log("Orders created:", _handler.getGhostOrdersCreated());
+        console2.log("Orders filled:", _handler.getGhostOrdersFilled());
+        console2.log("Orders cancelled:", _handler.getGhostOrdersCancelled());
+        console2.log("Active orders:", _handler.getGhostActiveOrders());
         console2.log("Contract balance:", _tokenA.balanceOf(address(_board)));
         console2.log("------------------------------");
     }

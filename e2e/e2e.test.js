@@ -84,7 +84,7 @@ const SWAPBOARD_ABI = [
   },
   {
     type: "function",
-    name: "nextOrderId",
+    name: "getNextOrderId",
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],
     stateMutability: "view",

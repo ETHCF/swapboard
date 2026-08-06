@@ -173,6 +173,19 @@
   },
   {
     "type": "function",
+    "name": "getNextOrderId",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getOrder",
     "inputs": [
       {
@@ -275,64 +288,7 @@
   },
   {
     "type": "function",
-    "name": "nextOrderId",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "orders",
-    "inputs": [
-      {
-        "name": "orderId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "maker",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "active",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "tokenA",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amountA",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tokenB",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amountB",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "weth",
+    "name": "getWeth",
     "inputs": [],
     "outputs": [
       {

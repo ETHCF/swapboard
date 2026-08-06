@@ -60,7 +60,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 order3 = _board.createOrder(address(_wbtc), 1e8, address(_usdc), 95_000e6);
         vm.stopPrank();
 
-        assertEq(_board.nextOrderId(), 4);
+        assertEq(_board.getNextOrderId(), 4);
         assertTrue(_board.canFill(order0));
         assertTrue(_board.canFill(order1));
         assertTrue(_board.canFill(order2));
@@ -180,7 +180,7 @@ contract SwapboardIntegrationTest is Test {
         }
         vm.stopPrank();
 
-        assertEq(_board.nextOrderId(), 10);
+        assertEq(_board.getNextOrderId(), 10);
         assertEq(_weth.balanceOf(address(_board)), 100 ether);
 
         ISwapboard.Order[] memory orders = _board.getOrders(orderIds);
@@ -321,7 +321,7 @@ contract SwapboardIntegrationTest is Test {
         }
         vm.stopPrank();
 
-        assertEq(_board.nextOrderId(), numOrders);
+        assertEq(_board.getNextOrderId(), numOrders);
         assertEq(_weth.balanceOf(address(_board)), numOrders * 1 ether);
 
         vm.startPrank(_bob);

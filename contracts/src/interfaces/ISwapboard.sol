@@ -158,7 +158,11 @@ interface ISwapboard {
 
     /// @notice Returns the WETH address used by this contract
     /// @return The WETH token address
-    function weth() external view returns (address);
+    function getWeth() external view returns (address);
+
+    /// @notice Next order ID that will be assigned on create
+    /// @return The next order ID
+    function getNextOrderId() external view returns (uint256);
 
     /// @notice Creates an order selling ETH (auto-wrapped to WETH)
     /// @dev Wraps msg.value to WETH and stores order with tokenA = WETH
