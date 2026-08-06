@@ -19,6 +19,7 @@ contract MockWETH is MockERC20 {
 
     function deposit() external payable {
         _mint(msg.sender, msg.value);
+
         emit Deposit(msg.sender, msg.value);
     }
 
@@ -28,8 +29,11 @@ contract MockWETH is MockERC20 {
         if (_balanceOf[msg.sender] < amount) {
             revert InsufficientWETH();
         }
+
         _burn(msg.sender, amount);
+
         emit Withdrawal(msg.sender, amount);
+
         (bool success,) = payable(msg.sender).call{value: amount}("");
         if (!success) {
             revert ETHTransferFailed();
@@ -39,6 +43,7 @@ contract MockWETH is MockERC20 {
     // solhint-disable-next-line no-complex-fallback
     receive() external payable {
         _mint(msg.sender, msg.value);
+
         emit Deposit(msg.sender, msg.value);
     }
 }

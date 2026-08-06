@@ -34,6 +34,7 @@ contract MockRebase is MockERC20 {
         uint256 newMultiplier
     ) external {
         _rebaseMultiplier = newMultiplier;
+
         emit Rebase(newMultiplier);
     }
 
@@ -42,8 +43,10 @@ contract MockRebase is MockERC20 {
         uint256 amount
     ) public override {
         uint256 shares = (amount * 100) / _rebaseMultiplier;
+
         _totalShares += shares;
         _shares[to] += shares;
+
         emit Transfer(address(0), to, amount);
     }
 
@@ -52,9 +55,12 @@ contract MockRebase is MockERC20 {
         uint256 amount
     ) public override returns (bool) {
         uint256 sharesToTransfer = (amount * 100) / _rebaseMultiplier;
+
         _shares[msg.sender] -= sharesToTransfer;
         _shares[to] += sharesToTransfer;
+
         emit Transfer(msg.sender, to, amount);
+
         return true;
     }
 
@@ -64,10 +70,14 @@ contract MockRebase is MockERC20 {
         uint256 amount
     ) public override returns (bool) {
         _spendAllowance(from, msg.sender, amount);
+
         uint256 sharesToTransfer = (amount * 100) / _rebaseMultiplier;
+
         _shares[from] -= sharesToTransfer;
         _shares[to] += sharesToTransfer;
+
         emit Transfer(from, to, amount);
+
         return true;
     }
 }

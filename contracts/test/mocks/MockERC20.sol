@@ -78,6 +78,7 @@ contract MockERC20 {
         uint256 amount
     ) public virtual returns (bool) {
         _approve(msg.sender, spender, amount);
+
         return true;
     }
 
@@ -86,6 +87,7 @@ contract MockERC20 {
         uint256 amount
     ) public virtual returns (bool) {
         _transfer(msg.sender, to, amount);
+
         return true;
     }
 
@@ -96,6 +98,7 @@ contract MockERC20 {
     ) public virtual returns (bool) {
         _spendAllowance(from, msg.sender, amount);
         _transfer(from, to, amount);
+
         return true;
     }
 
@@ -105,6 +108,7 @@ contract MockERC20 {
     ) internal virtual {
         _totalSupply += amount;
         _balanceOf[to] += amount;
+
         emit Transfer(address(0), to, amount);
     }
 
@@ -114,6 +118,7 @@ contract MockERC20 {
     ) internal virtual {
         _balanceOf[from] -= amount;
         _totalSupply -= amount;
+
         emit Transfer(from, address(0), amount);
     }
 
@@ -123,6 +128,7 @@ contract MockERC20 {
         uint256 amount
     ) internal virtual {
         _allowance[owner][spender] = amount;
+
         emit Approval(owner, spender, amount);
     }
 
@@ -144,6 +150,7 @@ contract MockERC20 {
     ) internal virtual {
         _balanceOf[from] -= amount;
         _balanceOf[to] += amount;
+
         emit Transfer(from, to, amount);
     }
 }
