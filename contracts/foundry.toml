@@ -8,6 +8,7 @@ optimizer = true
 optimizer_runs = 10000
 via_ir = false
 evm_version = "cancun"
+no_match_coverage = "test/"
 
 [profile.default.fuzz]
 runs = 256
