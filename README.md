@@ -54,8 +54,9 @@ make lint
 ./test.sh --all
 
 # Make targets
-make test            # contract + subgraph + e2e package tests
+make test            # contract + subgraph tests
 make test-contracts  # Foundry tests only
+make test-e2e        # full Docker e2e (setup + test + teardown)
 ```
 
 ### E2E Test Stack
@@ -70,11 +71,17 @@ The full E2E tests spin up:
 Then execute real transactions, wait for indexing, and verify the frontend displays correct data from the subgraph.
 
 ```bash
+# One-shot (recommended)
+cd e2e && pnpm e2e
+
+# Or via Make
+make test-e2e
+
 # Manual control
 cd e2e
-./setup.sh    # Start stack, deploy contract + subgraph
-node e2e.test.js  # Run tests
-./teardown.sh # Stop stack
+pnpm setup        # Start stack, deploy contract + subgraph, write .env.e2e
+pnpm test         # Requires .env.e2e from setup
+pnpm teardown     # Stop stack
 ```
 
 ### Deploy
