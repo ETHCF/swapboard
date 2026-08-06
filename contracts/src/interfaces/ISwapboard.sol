@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity ^0.8.33;
+pragma solidity ^0.8.36;
 
 /// @title ISwapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
