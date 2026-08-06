@@ -5,7 +5,7 @@ services:
     entrypoint: ["anvil"]
     command: ["--host", "0.0.0.0", "--block-time", "1"]
     ports:
-      - "8545:8545"
+      - "18545:8545"
     healthcheck:
       test: ["CMD", "cast", "block-number", "--rpc-url", "http://127.0.0.1:8545"]
       interval: 2s
