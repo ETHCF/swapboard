@@ -283,7 +283,9 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         vm.startPrank(_taker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotMaker.selector, orderId, _taker, _maker));
+        vm.expectRevert(
+            abi.encodeWithSelector(ISwapboard.NotMaker.selector, orderId, _taker, _maker)
+        );
         _board.cancelOrder(orderId);
         vm.stopPrank();
     }
@@ -320,8 +322,10 @@ contract SwapboardTest is Test {
         _tokenA.approve(address(_board), AMOUNT_A * 3);
 
         uint256 order0 = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
-        uint256 order1 = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B * 2);
-        uint256 order2 = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B * 3);
+        uint256 order1 =
+            _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B * 2);
+        uint256 order2 =
+            _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B * 3);
         vm.stopPrank();
 
         uint256[] memory ids = new uint256[](3);
@@ -350,8 +354,10 @@ contract SwapboardTest is Test {
         _tokenA.approve(address(_board), AMOUNT_A * 3);
 
         uint256 order0 = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
-        uint256 order1 = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B * 2);
-        uint256 order2 = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B * 3);
+        uint256 order1 =
+            _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B * 2);
+        uint256 order2 =
+            _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B * 3);
         vm.stopPrank();
 
         assertEq(order0, 0);
