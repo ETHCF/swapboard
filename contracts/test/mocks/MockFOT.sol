@@ -25,7 +25,7 @@ contract MockFOT is MockERC20 {
         _balanceOf[to] += netAmount;
         _totalSupply -= fee;
 
-        emit Transfer(msg.sender, to, netAmount);
+        emit Transfer({from: msg.sender, to: to, amount: netAmount});
 
         return true;
     }
@@ -44,7 +44,7 @@ contract MockFOT is MockERC20 {
         _balanceOf[to] += netAmount;
         _totalSupply -= fee;
 
-        emit Transfer(from, to, netAmount);
+        emit Transfer({from: from, to: to, amount: netAmount});
 
         return true;
     }

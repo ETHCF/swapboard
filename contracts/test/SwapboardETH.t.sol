@@ -67,9 +67,14 @@ contract SwapboardETHTest is Test {
     /// @notice Tests createOrderWithEth event
     function test_createOrderWithEth_event() public {
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderCreated(
-            0, _maker, address(_weth), ETH_AMOUNT, address(_token), TOKEN_AMOUNT
-        );
+        emit ISwapboard.OrderCreated({
+            orderId: 0,
+            maker: _maker,
+            tokenA: address(_weth),
+            amountA: ETH_AMOUNT,
+            tokenB: address(_token),
+            amountB: TOKEN_AMOUNT
+        });
 
         vm.prank(_maker);
         _board.createOrderWithEth{value: ETH_AMOUNT}(address(_token), TOKEN_AMOUNT);
@@ -151,7 +156,7 @@ contract SwapboardETHTest is Test {
         vm.stopPrank();
 
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderFilled(orderId, _taker);
+        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker});
 
         vm.prank(_taker);
         _board.fillOrderWithEth{value: ETH_AMOUNT}(orderId, 0);
@@ -252,7 +257,7 @@ contract SwapboardETHTest is Test {
         uint256 orderId = _board.createOrderWithEth{value: ETH_AMOUNT}(address(_token), TOKEN_AMOUNT);
 
         vm.expectEmit(true, false, false, true);
-        emit ISwapboard.OrderCanceled(orderId);
+        emit ISwapboard.OrderCanceled({orderId: orderId});
 
         vm.prank(_maker);
         _board.cancelOrderUnwrap(orderId);
@@ -350,7 +355,7 @@ contract SwapboardETHTest is Test {
         _token.approve(address(_board), TOKEN_AMOUNT);
 
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderFilled(orderId, _taker);
+        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker});
         _board.fillOrderUnwrap(orderId, 0);
         vm.stopPrank();
     }

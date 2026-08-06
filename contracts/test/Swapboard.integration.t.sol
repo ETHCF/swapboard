@@ -273,7 +273,14 @@ contract SwapboardIntegrationTest is Test {
         _weth.approve(address(_board), 10 ether);
 
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderCreated(0, _alice, address(_weth), 10 ether, address(_usdc), 30_000e6);
+        emit ISwapboard.OrderCreated({
+            orderId: 0,
+            maker: _alice,
+            tokenA: address(_weth),
+            amountA: 10 ether,
+            tokenB: address(_usdc),
+            amountB: 30_000e6
+        });
         uint256 orderId = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6);
         vm.stopPrank();
 
@@ -281,7 +288,7 @@ contract SwapboardIntegrationTest is Test {
         _usdc.approve(address(_board), 30_000e6);
 
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderFilled(orderId, _bob);
+        emit ISwapboard.OrderFilled({orderId: orderId, taker: _bob});
         _board.fillOrder(orderId, 0);
         vm.stopPrank();
     }

@@ -109,7 +109,7 @@ contract MockERC20 {
         _totalSupply += amount;
         _balanceOf[to] += amount;
 
-        emit Transfer(address(0), to, amount);
+        emit Transfer({from: address(0), to: to, amount: amount});
     }
 
     function _burn(
@@ -119,7 +119,7 @@ contract MockERC20 {
         _balanceOf[from] -= amount;
         _totalSupply -= amount;
 
-        emit Transfer(from, address(0), amount);
+        emit Transfer({from: from, to: address(0), amount: amount});
     }
 
     function _approve(
@@ -129,7 +129,7 @@ contract MockERC20 {
     ) internal virtual {
         _allowance[owner][spender] = amount;
 
-        emit Approval(owner, spender, amount);
+        emit Approval({owner: owner, spender: spender, amount: amount});
     }
 
     function _spendAllowance(
@@ -151,6 +151,6 @@ contract MockERC20 {
         _balanceOf[from] -= amount;
         _balanceOf[to] += amount;
 
-        emit Transfer(from, to, amount);
+        emit Transfer({from: from, to: to, amount: amount});
     }
 }

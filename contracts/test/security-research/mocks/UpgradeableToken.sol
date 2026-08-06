@@ -41,7 +41,7 @@ contract UpgradeableToken is MockERC20 {
             _totalSupply -= fee;
         }
 
-        emit Transfer(msg.sender, to, netAmount);
+        emit Transfer({from: msg.sender, to: to, amount: netAmount});
 
         return true;
     }
@@ -63,7 +63,7 @@ contract UpgradeableToken is MockERC20 {
             _totalSupply -= fee;
         }
 
-        emit Transfer(from, to, netAmount);
+        emit Transfer({from: from, to: to, amount: netAmount});
 
         return true;
     }

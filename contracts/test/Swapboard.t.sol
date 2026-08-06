@@ -381,7 +381,14 @@ contract SwapboardTest is Test {
         _tokenA.approve(address(_board), AMOUNT_A);
 
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderCreated(0, _maker, address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        emit ISwapboard.OrderCreated({
+            orderId: 0,
+            maker: _maker,
+            tokenA: address(_tokenA),
+            amountA: AMOUNT_A,
+            tokenB: address(_tokenB),
+            amountB: AMOUNT_B
+        });
 
         _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
         vm.stopPrank();
@@ -398,7 +405,7 @@ contract SwapboardTest is Test {
         _tokenB.approve(address(_board), AMOUNT_B);
 
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderFilled(orderId, _taker);
+        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker});
 
         _board.fillOrder(orderId, 0);
         vm.stopPrank();
@@ -411,7 +418,7 @@ contract SwapboardTest is Test {
         uint256 orderId = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
 
         vm.expectEmit(true, false, false, true);
-        emit ISwapboard.OrderCanceled(orderId);
+        emit ISwapboard.OrderCanceled({orderId: orderId});
 
         _board.cancelOrder(orderId);
         vm.stopPrank();

@@ -20,7 +20,7 @@ contract MockWETH is MockERC20 {
     function deposit() external payable {
         _mint(msg.sender, msg.value);
 
-        emit Deposit(msg.sender, msg.value);
+        emit Deposit({dst: msg.sender, wad: msg.value});
     }
 
     function withdraw(
@@ -32,7 +32,7 @@ contract MockWETH is MockERC20 {
 
         _burn(msg.sender, amount);
 
-        emit Withdrawal(msg.sender, amount);
+        emit Withdrawal({src: msg.sender, wad: amount});
 
         (bool success,) = payable(msg.sender).call{value: amount}("");
         if (!success) {
@@ -44,6 +44,6 @@ contract MockWETH is MockERC20 {
     receive() external payable {
         _mint(msg.sender, msg.value);
 
-        emit Deposit(msg.sender, msg.value);
+        emit Deposit({dst: msg.sender, wad: msg.value});
     }
 }
