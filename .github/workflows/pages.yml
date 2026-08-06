@@ -3,9 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/pages.yml'
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -65,5 +63,6 @@ jobs:
           path: dist
 
       - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main'
         id: deployment
         uses: actions/deploy-pages@v4
