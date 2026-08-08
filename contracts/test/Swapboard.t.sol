@@ -47,6 +47,11 @@ contract SwapboardTest is Test {
     // State variable getters (_WETH, _nextOrderId, _orders)
     // ========================================
 
+    /// @notice version returns the semver string for this deployment
+    function test_version() public view {
+        assertEq(_board.version(), "2.0.0");
+    }
+
     /// @notice getWeth returns the configured WETH address
     function test_getWeth() public view {
         assertEq(_board.getWeth(), address(_mockWeth));

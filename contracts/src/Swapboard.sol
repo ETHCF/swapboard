@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ISwapboard} from "./interfaces/ISwapboard.sol";
 import {IWETH} from "./vendor/IWETH.sol";
+import {Semver} from "./Semver.sol";
 
 /// @title Swapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
@@ -24,7 +25,7 @@ import {IWETH} from "./vendor/IWETH.sol";
 ///      - Malicious tokens can cause fund loss - users must verify token contracts
 ///
 /// @custom:security-contact zak@numbergroup.xyz
-contract Swapboard is ISwapboard, ReentrancyGuardTransient {
+contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     /// @notice Canonical WETH address for this deployment
@@ -42,7 +43,7 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
     /// @param weth Address of the WETH contract (must be a deployed contract)
     constructor(
         address weth
-    ) {
+    ) Semver(2, 0, 0) {
         if (weth == address(0)) {
             revert ZeroAddress();
         }
