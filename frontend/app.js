@@ -142,8 +142,8 @@
     "function getOrder(uint256 orderId) external view returns (tuple(address maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB, bool active))",
     "function getOrders(uint256[] orderIds) external view returns (tuple(address maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB, bool active)[])",
     "function canFill(uint256 orderId) external view returns (bool)",
-    "function nextOrderId() external view returns (uint256)",
-    "function weth() external view returns (address)",
+    "function getNextOrderId() external view returns (uint256)",
+    "function getWeth() external view returns (address)",
     "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB)",
     "event OrderFilled(uint256 indexed orderId, address indexed taker)",
     "event OrderCanceled(uint256 indexed orderId)",
@@ -3146,7 +3146,7 @@
 
       if (!cachedWethAddress) {
         try {
-          cachedWethAddress = (await contract.weth()).toLowerCase();
+          cachedWethAddress = (await contract.getWeth()).toLowerCase();
         } catch (e) {
           cachedWethAddress = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
         }
@@ -4223,7 +4223,7 @@
 
             if (!cachedWethAddress) {
               try {
-                cachedWethAddress = (await contract.weth()).toLowerCase();
+                cachedWethAddress = (await contract.getWeth()).toLowerCase();
               } catch (e) {
                 cachedWethAddress = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
               }

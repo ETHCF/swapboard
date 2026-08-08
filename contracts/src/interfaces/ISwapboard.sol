@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity ^0.8.33;
+pragma solidity ^0.8.0;
 
 /// @title ISwapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
@@ -32,12 +32,7 @@ interface ISwapboard {
     /// @param tokenB Address of the token wanted
     /// @param amountB Amount of tokenB required to fill
     event OrderCreated(
-        uint256 indexed orderId,
-        address indexed maker,
-        address tokenA,
-        uint256 amountA,
-        address tokenB,
-        uint256 amountB
+        uint256 indexed orderId, address indexed maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB
     );
     // solhint-enable gas-indexed-events
 
@@ -133,33 +128,6 @@ interface ISwapboard {
         uint256 orderId
     ) external;
 
-    /// @notice Retrieves the details of a single order
-    /// @param orderId The unique identifier of the order
-    /// @return order The Order struct containing all order details
-    function getOrder(
-        uint256 orderId
-    ) external view returns (Order memory order);
-
-    /// @notice Retrieves the details of multiple orders in a single call
-    /// @dev Returns default Order struct for non-existent orderIds
-    /// @param orderIds Array of order identifiers to retrieve
-    /// @return result Array of Order structs in the same order as input
-    function getOrders(
-        uint256[] calldata orderIds
-    ) external view returns (Order[] memory result);
-
-    /// @notice Checks whether an order can be filled
-    /// @dev Returns false for non-existent orders (they have active=false by default)
-    /// @param orderId The unique identifier of the order to check
-    /// @return Whether the order exists and is active
-    function canFill(
-        uint256 orderId
-    ) external view returns (bool);
-
-    /// @notice Returns the WETH address used by this contract
-    /// @return The WETH token address
-    function weth() external view returns (address);
-
     /// @notice Creates an order selling ETH (auto-wrapped to WETH)
     /// @dev Wraps msg.value to WETH and stores order with tokenA = WETH
     /// @param tokenB Address of the ERC20 token wanted in exchange
@@ -194,4 +162,35 @@ interface ISwapboard {
         uint256 orderId,
         uint256 deadline
     ) external;
+
+    /// @notice Returns the WETH address used by this contract
+    /// @return The WETH token address
+    function getWeth() external view returns (address);
+
+    /// @notice Next order ID that will be assigned on create
+    /// @return The next order ID
+    function getNextOrderId() external view returns (uint256);
+
+    /// @notice Retrieves the details of a single order
+    /// @param orderId The unique identifier of the order
+    /// @return order The Order struct containing all order details
+    function getOrder(
+        uint256 orderId
+    ) external view returns (Order memory order);
+
+    /// @notice Retrieves the details of multiple orders in a single call
+    /// @dev Returns default Order struct for non-existent orderIds
+    /// @param orderIds Array of order identifiers to retrieve
+    /// @return result Array of Order structs in the same order as input
+    function getOrders(
+        uint256[] calldata orderIds
+    ) external view returns (Order[] memory result);
+
+    /// @notice Checks whether an order can be filled
+    /// @dev Returns false for non-existent orders (they have active=false by default)
+    /// @param orderId The unique identifier of the order to check
+    /// @return Whether the order exists and is active
+    function canFill(
+        uint256 orderId
+    ) external view returns (bool);
 }

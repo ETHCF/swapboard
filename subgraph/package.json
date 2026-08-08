@@ -11,8 +11,8 @@
   "scripts": {
     "codegen": "graph codegen",
     "build": "graph codegen && graph build",
-    "test": "graph test -d",
-    "test:local": "graph test",
+    "test": "graph codegen && graph test -d",
+    "test:local": "graph codegen && graph test",
     "deploy": "graph deploy --studio swapboard",
     "create-local": "graph create --node http://localhost:8020/ swapboard",
     "remove-local": "graph remove --node http://localhost:8020/ swapboard",
@@ -23,6 +23,7 @@
     "@graphprotocol/graph-ts": "0.32.0"
   },
   "devDependencies": {
+    "assemblyscript": "0.19.10",
     "matchstick-as": "0.6.0"
   }
 }

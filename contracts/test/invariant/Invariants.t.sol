@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity 0.8.33;
+pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 // solhint-disable no-console
@@ -15,96 +15,95 @@ import {SwapboardHandler} from "./Handler.sol";
 /// @notice Invariant tests for Swapboard contract
 /// @dev Tests protocol invariants that must hold across all state transitions
 contract SwapboardInvariantTest is Test {
-    Swapboard public board;
-    MockERC20 public tokenA;
-    MockERC20 public tokenB;
-    MockWETH public mockWeth;
-    SwapboardHandler public handler;
+    Swapboard internal _board;
+    MockERC20 internal _tokenA;
+    MockERC20 internal _tokenB;
+    MockWETH internal _mockWeth;
+    SwapboardHandler internal _handler;
 
     /// @notice Deploys fixtures for each test
     function setUp() public {
-        mockWeth = new MockWETH();
-        board = new Swapboard(address(mockWeth));
-        tokenA = new MockERC20("Token A", "TKA", 18);
-        tokenB = new MockERC20("Token B", "TKB", 18);
-        handler = new SwapboardHandler(board, tokenA, tokenB);
+        _mockWeth = new MockWETH();
+        _board = new Swapboard(address(_mockWeth));
+        _tokenA = new MockERC20("Token A", "TKA", 18);
+        _tokenB = new MockERC20("Token B", "TKB", 18);
+        _handler = new SwapboardHandler(_board, _tokenA, _tokenB);
 
-        // Target only the handler for fuzzing
-        targetContract(address(handler));
+        // Target only the _handler for fuzzing
+        targetContract(address(_handler));
 
-        // Exclude board from direct calls
-        excludeContract(address(board));
-        excludeContract(address(tokenA));
-        excludeContract(address(tokenB));
+        // Exclude _board from direct calls
+        excludeContract(address(_board));
+        excludeContract(address(_tokenA));
+        excludeContract(address(_tokenB));
     }
 
-    /// @notice Contract tokenA balance must equal deposited minus withdrawn
+    /// @notice Contract _tokenA balance must equal deposited minus withdrawn
     /// @dev This is the core solvency invariant
     function invariant_solvency() public view {
-        uint256 actualBalance = tokenA.balanceOf(address(board));
-        uint256 expectedBalance =
-            handler.ghost_totalTokenADeposited() - handler.ghost_totalTokenAWithdrawn();
+        uint256 actualBalance = _tokenA.balanceOf(address(_board));
+        uint256 expectedBalance = _handler.getGhostTotalTokenADeposited() - _handler.getGhostTotalTokenAWithdrawn();
 
         assertEq(actualBalance, expectedBalance, "Solvency violated: balance mismatch");
     }
 
     /// @notice Contract balance must equal sum of all active order amounts
     function invariant_balanceEqualsActiveOrderSum() public view {
-        uint256 actualBalance = tokenA.balanceOf(address(board));
-        uint256 activeOrderSum = handler.sumActiveOrderAmounts();
+        uint256 actualBalance = _tokenA.balanceOf(address(_board));
+        uint256 activeOrderSum = _handler.sumActiveOrderAmounts();
 
         assertEq(actualBalance, activeOrderSum, "Balance does not equal sum of active orders");
     }
 
     /// @notice Orders created must equal filled + cancelled + active
     function invariant_orderAccounting() public view {
-        uint256 created = handler.ghost_ordersCreated();
-        uint256 filled = handler.ghost_ordersFilled();
-        uint256 cancelled = handler.ghost_ordersCancelled();
-        uint256 active = handler.ghost_activeOrders();
+        uint256 created = _handler.getGhostOrdersCreated();
+        uint256 filled = _handler.getGhostOrdersFilled();
+        uint256 cancelled = _handler.getGhostOrdersCancelled();
+        uint256 active = _handler.getGhostActiveOrders();
 
         assertEq(created, filled + cancelled + active, "Order accounting mismatch");
     }
 
     /// @notice nextOrderId must equal total orders created
     function invariant_nextOrderIdConsistency() public view {
-        assertEq(board.nextOrderId(), handler.ghost_ordersCreated(), "nextOrderId mismatch");
+        assertEq(_board.getNextOrderId(), _handler.getGhostOrdersCreated(), "nextOrderId mismatch");
     }
 
     /// @notice Active order count from ghost must match actual count
     function invariant_activeOrderCount() public view {
-        uint256 ghostActive = handler.ghost_activeOrders();
-        uint256 actualActive = handler.countActiveOrders();
+        uint256 ghostActive = _handler.getGhostActiveOrders();
+        uint256 actualActive = _handler.countActiveOrders();
 
         assertEq(ghostActive, actualActive, "Active order count mismatch");
     }
 
     /// @notice Filled + cancelled orders must not exceed created orders
     function invariant_noOvercounting() public view {
-        uint256 created = handler.ghost_ordersCreated();
-        uint256 filled = handler.ghost_ordersFilled();
-        uint256 cancelled = handler.ghost_ordersCancelled();
+        uint256 created = _handler.getGhostOrdersCreated();
+        uint256 filled = _handler.getGhostOrdersFilled();
+        uint256 cancelled = _handler.getGhostOrdersCancelled();
 
         assertLe(filled + cancelled, created, "More orders filled/cancelled than created");
     }
 
     /// @notice Token balance should never be negative (implicit via uint256 but good sanity check)
     function invariant_nonNegativeBalance() public view {
-        uint256 balance = tokenA.balanceOf(address(board));
+        uint256 balance = _tokenA.balanceOf(address(_board));
         assertGe(balance, 0, "Negative balance detected");
     }
 
     /// @notice Call summary for debugging
     function invariant_callSummary() public view {
         console2.log("--- Invariant Test Summary ---");
-        console2.log("createOrder calls:", handler.calls_createOrder());
-        console2.log("fillOrder calls:", handler.calls_fillOrder());
-        console2.log("cancelOrder calls:", handler.calls_cancelOrder());
-        console2.log("Orders created:", handler.ghost_ordersCreated());
-        console2.log("Orders filled:", handler.ghost_ordersFilled());
-        console2.log("Orders cancelled:", handler.ghost_ordersCancelled());
-        console2.log("Active orders:", handler.ghost_activeOrders());
-        console2.log("Contract balance:", tokenA.balanceOf(address(board)));
+        console2.log("createOrder calls:", _handler.getCallsCreateOrder());
+        console2.log("fillOrder calls:", _handler.getCallsFillOrder());
+        console2.log("cancelOrder calls:", _handler.getCallsCancelOrder());
+        console2.log("Orders created:", _handler.getGhostOrdersCreated());
+        console2.log("Orders filled:", _handler.getGhostOrdersFilled());
+        console2.log("Orders cancelled:", _handler.getGhostOrdersCancelled());
+        console2.log("Active orders:", _handler.getGhostActiveOrders());
+        console2.log("Contract balance:", _tokenA.balanceOf(address(_board)));
         console2.log("------------------------------");
     }
 }

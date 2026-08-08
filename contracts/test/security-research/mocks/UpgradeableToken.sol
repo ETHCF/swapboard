@@ -1,63 +1,48 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity 0.8.33;
+pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
+import {MockERC20} from "../../mocks/MockERC20.sol";
+
 /// @title UpgradeableToken
 /// @notice Simulates a token that can be upgraded to change behavior
-contract UpgradeableToken {
-    string public name = "Upgradeable Token";
-    string public symbol = "UPGRADE";
-    uint8 public decimals = 18;
-    uint256 public totalSupply;
-    bool public isFeeOnTransfer;
-    uint256 public feePercent = 5;
+contract UpgradeableToken is MockERC20 {
+    bool private _isFeeOnTransfer;
+    uint256 private _feePercent = 5;
 
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
+    constructor() MockERC20("Upgradeable Token", "UPGRADE", 18) {}
 
-    // solhint-disable-next-line gas-indexed-events
-    event Transfer(address indexed from, address indexed to, uint256 amount);
+    function getIsFeeOnTransfer() external view returns (bool) {
+        return _isFeeOnTransfer;
+    }
 
-    // solhint-disable-next-line gas-indexed-events
-    event Approval(address indexed owner, address indexed spender, uint256 amount);
+    function getFeePercent() external view returns (uint256) {
+        return _feePercent;
+    }
 
     function setFeeOnTransfer(
-        bool _enabled
+        bool enabled
     ) external {
-        isFeeOnTransfer = _enabled;
-    }
-
-    function mint(
-        address to,
-        uint256 amount
-    ) external {
-        totalSupply += amount;
-        balanceOf[to] += amount;
-        emit Transfer(address(0), to, amount);
-    }
-
-    function approve(
-        address spender,
-        uint256 amount
-    ) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
+        _isFeeOnTransfer = enabled;
     }
 
     function transfer(
         address to,
         uint256 amount
-    ) external returns (bool) {
-        uint256 fee = isFeeOnTransfer ? (amount * feePercent) / 100 : 0;
+    ) public override returns (bool) {
+        uint256 fee = _isFeeOnTransfer ? (amount * _feePercent) / 100 : 0;
         uint256 netAmount = amount - fee;
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += netAmount;
+
+        _balanceOf[msg.sender] -= amount;
+        _balanceOf[to] += netAmount;
+
         if (fee > 0) {
-            totalSupply -= fee;
+            _totalSupply -= fee;
         }
-        emit Transfer(msg.sender, to, netAmount);
+
+        emit Transfer({from: msg.sender, to: to, amount: netAmount});
+
         return true;
     }
 
@@ -65,19 +50,21 @@ contract UpgradeableToken {
         address from,
         address to,
         uint256 amount
-    ) external returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
-        if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
-        }
-        uint256 fee = isFeeOnTransfer ? (amount * feePercent) / 100 : 0;
+    ) public override returns (bool) {
+        _spendAllowance(from, msg.sender, amount);
+
+        uint256 fee = _isFeeOnTransfer ? (amount * _feePercent) / 100 : 0;
         uint256 netAmount = amount - fee;
-        balanceOf[from] -= amount;
-        balanceOf[to] += netAmount;
+
+        _balanceOf[from] -= amount;
+        _balanceOf[to] += netAmount;
+
         if (fee > 0) {
-            totalSupply -= fee;
+            _totalSupply -= fee;
         }
-        emit Transfer(from, to, netAmount);
+
+        emit Transfer({from: from, to: to, amount: netAmount});
+
         return true;
     }
 }

@@ -1,4 +1,4 @@
-.PHONY: all build build-contracts test test-contracts clean install fmt fmt-check lint coverage
+.PHONY: all build build-contracts test test-contracts test-e2e clean install fmt fmt-check lint coverage
 
 all: build test
 
@@ -17,19 +17,22 @@ build: lint build-contracts
 build-contracts:
 	cd contracts && forge build --sizes
 
-# Run all tests
+# Run unit/integration tests (no full Docker e2e stack)
 test:
 	cd contracts && forge test -vvv
 	cd subgraph && pnpm test
-	cd e2e && pnpm test
 
 # Run contract tests only
 test-contracts:
 	cd contracts && forge test -vvv
 
-# Run contract tests with coverage
+# Full stack e2e (Docker: anvil + graph-node + deploy + tests + teardown)
+test-e2e:
+	cd e2e && pnpm e2e
+
+# Run contract tests with coverage (src only; mocks/tests excluded from report)
 coverage:
-	cd contracts && forge coverage --report summary --report lcov
+	cd contracts && forge coverage --report summary --report lcov --exclude-tests --no-match-coverage 'test/'
 
 # Format code
 fmt:
@@ -85,8 +88,9 @@ help:
 	@echo "  install         - Install all dependencies"
 	@echo "  build           - Lint, then build contracts and subgraph"
 	@echo "  build-contracts - Build contracts only"
-	@echo "  test            - Run all tests"
+	@echo "  test            - Run contract + subgraph tests"
 	@echo "  test-contracts  - Run contract tests only"
+	@echo "  test-e2e        - Run full Docker e2e stack (setup + test + teardown)"
 	@echo "  coverage        - Run contract tests with coverage"
 	@echo "  fmt             - Format Solidity code"
 	@echo "  fmt-check       - Check Solidity formatting"
