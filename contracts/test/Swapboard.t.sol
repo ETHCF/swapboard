@@ -15,7 +15,6 @@ import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFOT} from "./mocks/MockFOT.sol";
-import {MockWETH} from "./mocks/MockWETH.sol";
 
 /// @notice Unit tests for Swapboard contract
 /// @dev Uses Foundry's Test framework with MockERC20 tokens
@@ -23,7 +22,6 @@ contract SwapboardTest is Test {
     Swapboard internal _board;
     MockERC20 internal _tokenA;
     MockERC20 internal _tokenB;
-    MockWETH internal _mockWeth;
 
     address internal _maker = address(0x1);
     address internal _taker = address(0x2);
@@ -33,8 +31,7 @@ contract SwapboardTest is Test {
 
     /// @notice Deploys fixtures for each test
     function setUp() public {
-        _mockWeth = new MockWETH();
-        _board = new Swapboard(address(_mockWeth));
+        _board = new Swapboard();
 
         _tokenA = new MockERC20("Token A", "TKA", 18);
         _tokenB = new MockERC20("Token B", "TKB", 6);
@@ -44,7 +41,7 @@ contract SwapboardTest is Test {
     }
 
     // ========================================
-    // State variable getters (_WETH, _nextOrderId, _orders)
+    // State variable getters (_nextOrderId, _orders)
     // ========================================
 
     /// @notice version returns the semver string for this deployment
@@ -52,9 +49,9 @@ contract SwapboardTest is Test {
         assertEq(_board.version(), "2.0.0");
     }
 
-    /// @notice getWeth returns the configured WETH address
-    function test_getWeth() public view {
-        assertEq(_board.getWeth(), address(_mockWeth));
+    /// @notice getEth returns the canonical ETH sentinel
+    function test_getEth() public view {
+        assertEq(_board.getEth(), 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
     }
 
     /// @notice getNextOrderId starts at zero and increments on create

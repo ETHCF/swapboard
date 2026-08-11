@@ -50,8 +50,6 @@ if [[ "$SKIP_CONTRACT" != "true" ]]; then
 
     # Private key loaded from Foundry keystore via --account flag
 
-    check_env "WETH_ADDRESS"
-
     if [[ "$NETWORK" == "mainnet" ]]; then
         check_env "MAINNET_RPC_URL"
         RPC_URL="$MAINNET_RPC_URL"

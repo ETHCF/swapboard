@@ -8,6 +8,7 @@ import {ISemver} from "./ISemver.sol";
 /// @notice Interface for the Swapboard OTC trading contract
 /// @dev Implement this interface for composability with the Swapboard protocol.
 ///      All amounts are in base units (wei-equivalent for 18 decimal tokens).
+///      Native ETH is represented by the sentinel returned from `getEth()`.
 interface ISwapboard is ISemver {
     /// @notice Represents a single OTC order
     /// @param maker Address that created the order and deposited tokenA
@@ -80,94 +81,49 @@ interface ISwapboard is ISemver {
     /// @param maker The actual maker of the order
     error NotMaker(uint256 orderId, address caller, address maker);
 
-    /// @notice Thrown when a function requiring WETH is called on a non-WETH token
-    /// @param expected The WETH address
-    /// @param actual The actual token address
-    error NotWETH(address expected, address actual);
-
     /// @notice Thrown when msg.value does not match the required ETH amount
-    /// @param required The required ETH amount
+    /// @param required The required ETH amount (0 when ETH is not used)
     /// @param sent The actual msg.value
     error ETHAmountMismatch(uint256 required, uint256 sent);
-
-    /// @notice Thrown when an ETH transfer fails
-    /// @param recipient The intended recipient
-    error ETHTransferFailed(address recipient);
-
-    /// @notice Thrown when msg.value is zero for a payable function
-    error ZeroETH();
 
     /// @notice Thrown when a fill is attempted after the specified deadline
     error DeadlineExpired();
 
-    /// @notice Creates a new OTC order by depositing tokenA
-    /// @dev Transfers tokenA from caller to contract. Reverts if token is fee-on-transfer.
-    /// @param tokenA Address of the ERC20 token to sell
-    /// @param amountA Amount of tokenA to deposit (in base units)
-    /// @param tokenB Address of the ERC20 token wanted in exchange
-    /// @param amountB Amount of tokenB required to fill the order (in base units)
+    /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
+    /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer tokens.
+    ///      For ETH tokenA (`getEth()`), requires `msg.value == amountA`.
+    /// @param tokenA Address of the asset to sell (`getEth()` for native ETH)
+    /// @param amountA Amount of tokenA to deposit (in base units / wei)
+    /// @param tokenB Address of the asset wanted in exchange (`getEth()` for native ETH)
+    /// @param amountB Amount of tokenB required to fill the order
     /// @return orderId The unique identifier for the created order
     function createOrder(
         address tokenA,
         uint256 amountA,
         address tokenB,
         uint256 amountB
-    ) external returns (uint256 orderId);
+    ) external payable returns (uint256 orderId);
 
-    /// @notice Fills an existing order by transferring tokenB to maker
-    /// @dev Transfers tokenB from caller to maker, transfers tokenA from contract to caller
+    /// @notice Fills an existing order
+    /// @dev If tokenB is ETH, requires `msg.value == amountB`.
+    ///      If tokenA is ETH, pays the taker in ETH.
     /// @param orderId The unique identifier of the order to fill
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrder(
         uint256 orderId,
         uint256 deadline
-    ) external;
+    ) external payable;
 
     /// @notice Cancels an existing order and returns tokenA to maker
-    /// @dev Only callable by the order's maker
+    /// @dev Only callable by the order's maker. Returns ETH if tokenA is ETH.
     /// @param orderId The unique identifier of the order to cancel
     function cancelOrder(
         uint256 orderId
     ) external;
 
-    /// @notice Creates an order selling ETH (auto-wrapped to WETH)
-    /// @dev Wraps msg.value to WETH and stores order with tokenA = WETH
-    /// @param tokenB Address of the ERC20 token wanted in exchange
-    /// @param amountB Amount of tokenB required to fill the order (in base units)
-    /// @return orderId The unique identifier for the created order
-    function createOrderWithEth(
-        address tokenB,
-        uint256 amountB
-    ) external payable returns (uint256 orderId);
-
-    /// @notice Fills an order by sending ETH (auto-wrapped to WETH)
-    /// @dev Requires order.tokenB == WETH and msg.value == order.amountB
-    /// @param orderId The unique identifier of the order to fill
-    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
-    function fillOrderWithEth(
-        uint256 orderId,
-        uint256 deadline
-    ) external payable;
-
-    /// @notice Cancels an order where tokenA is WETH, returning ETH to maker
-    /// @dev Only callable by the order's maker. Unwraps WETH to ETH.
-    /// @param orderId The unique identifier of the order to cancel
-    function cancelOrderUnwrap(
-        uint256 orderId
-    ) external;
-
-    /// @notice Fills an order where tokenA is WETH, receiving ETH instead
-    /// @dev Pays tokenB normally, receives ETH after WETH unwrap
-    /// @param orderId The unique identifier of the order to fill
-    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
-    function fillOrderUnwrap(
-        uint256 orderId,
-        uint256 deadline
-    ) external;
-
-    /// @notice Returns the WETH address used by this contract
-    /// @return The WETH token address
-    function getWeth() external view returns (address);
+    /// @notice Canonical placeholder address representing native ETH
+    /// @return The ETH sentinel address (`0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`)
+    function getEth() external pure returns (address);
 
     /// @notice Next order ID that will be assigned on create
     /// @return The next order ID
