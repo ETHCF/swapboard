@@ -77,6 +77,10 @@ cd e2e && pnpm e2e
 # Or via Make
 make test-e2e
 
+# Local Anvil (same host port as e2e: 18545)
+make anvil
+make deploy-local
+
 # Manual control
 cd e2e
 pnpm setup        # Start stack, deploy contract + subgraph, write .env.e2e
