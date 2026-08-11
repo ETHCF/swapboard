@@ -550,7 +550,6 @@ contract SwapboardTest is Test {
         _board.createOrder{value: ETH_AMOUNT - 1}(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B);
     }
 
-
     /// @notice Tests createOrder selling ETH emits OrderCreated
     function test_createOrder_sellEth_event() public {
         vm.expectEmit(true, true, false, true);
