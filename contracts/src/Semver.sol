@@ -5,6 +5,7 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {ISemver} from "./interfaces/ISemver.sol";
 
 /// @title Semver
+/// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
 /// @notice Simple base contract for managing semantic version numbers
 contract Semver is ISemver {
     /// @notice Contract major version number
@@ -16,6 +17,7 @@ contract Semver is ISemver {
     /// @notice Contract patch version number
     uint256 private immutable _PATCH;
 
+    /// @notice Sets the immutable semantic version components
     /// @param major Major version number
     /// @param minor Minor version number
     /// @param patch Patch version number
