@@ -25,8 +25,8 @@ contract SwapboardHandler is Test {
     uint256 private _ghostActiveOrders;
 
     // Track individual order amounts for precise accounting
-    mapping(uint256 => uint256) private _ghostOrderAmounts;
-    mapping(uint256 => bool) private _ghostOrderActive;
+    mapping(uint256 orderId => uint256 amount) private _ghostOrderAmounts;
+    mapping(uint256 orderId => bool active) private _ghostOrderActive;
 
     // Actors
     address[] internal _actors;

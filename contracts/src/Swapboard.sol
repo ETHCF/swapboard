@@ -175,8 +175,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @dev Gas scales linearly with array length. Callers should limit to ~100 IDs per call.
     function getOrders(
         uint256[] calldata orderIds
-    ) external view returns (Order[] memory result) {
-        result = new Order[](orderIds.length);
+    ) external view returns (Order[] memory) {
+        Order[] memory result = new Order[](orderIds.length);
 
         for (uint256 i; i < orderIds.length;) {
             result[i] = _orders[orderIds[i]];
@@ -184,6 +184,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 ++i;
             }
         }
+
+        return result;
     }
 
     /// @inheritdoc ISwapboard

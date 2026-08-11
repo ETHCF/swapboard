@@ -14,7 +14,7 @@ contract NegativeRebaseToken is MockERC20 {
     uint256 private _totalShares;
     uint256 private _rebaseMultiplier = 100; // 100 = 1x
 
-    mapping(address => uint256) private _shares;
+    mapping(address account => uint256 shares) private _shares;
 
     constructor() MockERC20("Negative Rebase Token", "NREBASE", 18) {}
 

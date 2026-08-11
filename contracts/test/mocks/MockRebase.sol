@@ -11,7 +11,7 @@ contract MockRebase is MockERC20 {
     uint256 private _totalShares;
     uint256 private _rebaseMultiplier = 100; // 100 = 1x, 110 = 1.1x
 
-    mapping(address => uint256) private _shares;
+    mapping(address account => uint256 shares) private _shares;
 
     // solhint-disable-next-line gas-indexed-events
     event Rebase(uint256 newMultiplier);

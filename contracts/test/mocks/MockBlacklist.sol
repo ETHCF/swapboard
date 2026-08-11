@@ -10,7 +10,7 @@ import {MockERC20} from "./MockERC20.sol";
 contract MockBlacklist is MockERC20 {
     error Blacklisted();
 
-    mapping(address => bool) private _isBlacklisted;
+    mapping(address account => bool isBlacklisted) private _isBlacklisted;
 
     constructor() MockERC20("Blacklist Token", "BLACK", 18) {}
 
