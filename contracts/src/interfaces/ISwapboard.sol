@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.0;
 
+import {ISemver} from "./ISemver.sol";
+
 /// @title ISwapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
 /// @notice Interface for the Swapboard OTC trading contract
 /// @dev Implement this interface for composability with the Swapboard protocol.
 ///      All amounts are in base units (wei-equivalent for 18 decimal tokens).
-interface ISwapboard {
+interface ISwapboard is ISemver {
     /// @notice Represents a single OTC order
     /// @param maker Address that created the order and deposited tokenA
     /// @param tokenA Address of the token being sold (held in escrow)
