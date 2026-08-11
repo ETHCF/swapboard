@@ -12,11 +12,11 @@ import {ISemver} from "./ISemver.sol";
 interface ISwapboard is ISemver {
     /// @notice Represents a single OTC order
     /// @param maker Address that created the order and deposited tokenA
+    /// @param active Whether the order can still be filled or cancelled
     /// @param tokenA Address of the token being sold (held in escrow)
     /// @param amountA Amount of tokenA deposited by maker (in base units)
     /// @param tokenB Address of the token maker wants to receive
     /// @param amountB Amount of tokenB required to fill the order (in base units)
-    /// @param active Whether the order can still be filled or cancelled
     struct Order {
         address maker;
         bool active;
@@ -131,18 +131,18 @@ interface ISwapboard is ISemver {
 
     /// @notice Retrieves the details of a single order
     /// @param orderId The unique identifier of the order
-    /// @return order The Order struct containing all order details
+    /// @return The Order struct containing all order details
     function getOrder(
         uint256 orderId
-    ) external view returns (Order memory order);
+    ) external view returns (Order memory);
 
     /// @notice Retrieves the details of multiple orders in a single call
     /// @dev Returns default Order struct for non-existent orderIds
     /// @param orderIds Array of order identifiers to retrieve
-    /// @return result Array of Order structs in the same order as input
+    /// @return Array of Order structs in the same order as input
     function getOrders(
         uint256[] calldata orderIds
-    ) external view returns (Order[] memory result);
+    ) external view returns (Order[] memory);
 
     /// @notice Checks whether an order can be filled
     /// @dev Returns false for non-existent orders (they have active=false by default)
