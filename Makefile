@@ -61,15 +61,10 @@ clean:
 anvil:
 	anvil --block-time 1 --host 0.0.0.0 --port $(ANVIL_PORT)
 
-# Deploy to local Anvil (deploys MockWETH first, then Swapboard)
+# Deploy to local Anvil
 deploy-local:
 	@cd contracts && \
-	WETH_ADDR=$$(forge create test/mocks/MockWETH.sol:MockWETH \
-		--rpc-url $(ANVIL_RPC_URL) \
-		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-		--broadcast --json | jq -r '.deployedTo') && \
-	echo "MockWETH deployed at: $$WETH_ADDR" && \
-	WETH_ADDRESS=$$WETH_ADDR forge script script/Deploy.s.sol \
+	forge script script/Deploy.s.sol \
 		--rpc-url $(ANVIL_RPC_URL) \
 		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
 		--broadcast

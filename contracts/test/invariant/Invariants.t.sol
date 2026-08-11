@@ -8,7 +8,6 @@ pragma solidity 0.8.36;
 import {Test, console2} from "forge-std/Test.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
-import {MockWETH} from "../mocks/MockWETH.sol";
 import {SwapboardHandler} from "./Handler.sol";
 
 /// @title SwapboardInvariantTest
@@ -18,13 +17,11 @@ contract SwapboardInvariantTest is Test {
     Swapboard internal _board;
     MockERC20 internal _tokenA;
     MockERC20 internal _tokenB;
-    MockWETH internal _mockWeth;
     SwapboardHandler internal _handler;
 
     /// @notice Deploys fixtures for each test
     function setUp() public {
-        _mockWeth = new MockWETH();
-        _board = new Swapboard(address(_mockWeth));
+        _board = new Swapboard();
         _tokenA = new MockERC20("Token A", "TKA", 18);
         _tokenB = new MockERC20("Token B", "TKB", 18);
         _handler = new SwapboardHandler(_board, _tokenA, _tokenB);

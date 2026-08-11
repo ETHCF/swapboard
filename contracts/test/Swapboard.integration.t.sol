@@ -7,11 +7,9 @@ import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
-import {MockWETH} from "./mocks/MockWETH.sol";
 
 contract SwapboardIntegrationTest is Test {
     Swapboard internal _board;
-    MockWETH internal _mockWeth;
     MockERC20 internal _weth;
     MockERC20 internal _usdc;
     MockERC20 internal _dai;
@@ -24,8 +22,7 @@ contract SwapboardIntegrationTest is Test {
 
     /// @notice Deploys fixtures for each test
     function setUp() public {
-        _mockWeth = new MockWETH();
-        _board = new Swapboard(address(_mockWeth));
+        _board = new Swapboard();
 
         _weth = new MockERC20("Wrapped Ether", "WETH", 18);
         _usdc = new MockERC20("USD Coin", "USDC", 6);
