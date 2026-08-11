@@ -52,6 +52,16 @@ const {
   computeReceiveFromFill,
   computeFillFromReceive,
   summarizeFillBatch,
+  VERSION_STORAGE_KEY,
+  DEFAULT_VERSION,
+  SUPPORTED_VERSIONS,
+  VERSION_CAPS,
+  parseVersion,
+  resolveVersion,
+  capsFor,
+  orderQueryFields,
+  normalizeOrder,
+  offersEthDirectly,
 } = require("./lib");
 
 // ============================================================================
@@ -2324,5 +2334,253 @@ describe("summarizeFillBatch", () => {
   test("reports no price when there is nothing to receive", () => {
     const empty = [Object.assign({ amountA: "0", amountB: "100" }, pair)];
     expect(summarizeFillBatch(empty).avgPrice).toBe(null);
+  });
+});
+
+// ============================================================================
+// Protocol version
+// ============================================================================
+
+describe("parseVersion", () => {
+  // MUTATION: Return the raw value instead of a number
+  // BREAKS: VERSION_CAPS lookups are keyed by number and would all miss
+  test("coerces numeric strings to numbers", () => {
+    expect(parseVersion("1")).toBe(1);
+    expect(parseVersion("2")).toBe(2);
+    expect(parseVersion(2)).toBe(2);
+  });
+
+  // MUTATION: Drop the leading-v strip
+  // BREAKS: ?v=v2 — the form users actually type — silently falls back to v1
+  test("accepts a leading v, in either case", () => {
+    expect(parseVersion("v2")).toBe(2);
+    expect(parseVersion("V1")).toBe(1);
+    expect(parseVersion(" v2 ")).toBe(2);
+  });
+
+  // MUTATION: Skip the SUPPORTED_VERSIONS check
+  // BREAKS: ?v=3 yields capsFor(3), and every capability reads undefined
+  test("rejects unsupported and unparseable values", () => {
+    expect(parseVersion("3")).toBe(null);
+    expect(parseVersion("0")).toBe(null);
+    expect(parseVersion("banana")).toBe(null);
+    expect(parseVersion("")).toBe(null);
+    expect(parseVersion(null)).toBe(null);
+    expect(parseVersion(undefined)).toBe(null);
+  });
+});
+
+describe("resolveVersion", () => {
+  // MUTATION: Change DEFAULT_VERSION to 2
+  // BREAKS: a first-time visitor lands on the version whose subgraph query
+  //         errors out and whose contracts are not deployed
+  test("defaults to v1 when nothing selects a version", () => {
+    expect(resolveVersion({})).toEqual({ version: 1, pinned: false });
+    expect(resolveVersion()).toEqual({ version: 1, pinned: false });
+    expect(DEFAULT_VERSION).toBe(1);
+  });
+
+  // MUTATION: Check localStorage before the URL parameter
+  // BREAKS: a shared ?v=2 link opens on whatever the recipient last chose
+  test("the URL parameter outranks the stored preference", () => {
+    expect(resolveVersion({ search: "?v=2", stored: "1" })).toEqual({
+      version: 2,
+      pinned: true,
+    });
+    expect(resolveVersion({ search: "?v=1", stored: "2" })).toEqual({
+      version: 1,
+      pinned: true,
+    });
+  });
+
+  // MUTATION: Ignore the stored value
+  // BREAKS: the switcher appears not to stick — every reload reverts to v1
+  test("falls back to the stored preference", () => {
+    expect(resolveVersion({ stored: "2" })).toEqual({ version: 2, pinned: false });
+    expect(resolveVersion({ search: "?other=1", stored: "2" }).version).toBe(2);
+  });
+
+  // MUTATION: Trust the stored value without parsing
+  // BREAKS: corrupted storage pins the app to a version that does not exist
+  test("ignores an unusable stored value", () => {
+    expect(resolveVersion({ stored: "banana" }).version).toBe(1);
+    expect(resolveVersion({ stored: "9" }).version).toBe(1);
+  });
+
+  // MUTATION: Let the URLSearchParams throw escape
+  // BREAKS: a malformed query string takes down startup before first render
+  test("survives a search string it cannot parse", () => {
+    expect(resolveVersion({ search: "%", stored: "2" }).version).toBe(2);
+  });
+
+  test("exposes the storage key it resolves against", () => {
+    expect(VERSION_STORAGE_KEY).toBe("swapboard_version");
+    expect(SUPPORTED_VERSIONS).toEqual([1, 2]);
+  });
+});
+
+describe("capsFor", () => {
+  // MUTATION: Swap which version claims batch/partialFill
+  // BREAKS: v1 renders batch controls for entry points its contract lacks
+  test("v1 has none of the v2 features", () => {
+    const v1 = capsFor(1);
+    expect(v1.partialFill).toBe(false);
+    expect(v1.batch).toBe(false);
+    expect(v1.nativeEth).toBe(false);
+    expect(v1.multiCreate).toBe(false);
+    expect(v1.remainingAmounts).toBe(false);
+  });
+
+  // MUTATION: Enable gasEstimate/subgraphPolling on v2
+  // BREAKS: gas estimation encodes against an ABI with no deployment behind
+  //         it, and polling waits out its full timeout on every transaction
+  test("v1 alone can estimate gas and poll the subgraph", () => {
+    expect(capsFor(1).gasEstimate).toBe(true);
+    expect(capsFor(1).subgraphPolling).toBe(true);
+    expect(capsFor(2).gasEstimate).toBe(false);
+    expect(capsFor(2).subgraphPolling).toBe(false);
+  });
+
+  // MUTATION: Mark v2 live
+  // BREAKS: the UI would present simulated transactions as real ones
+  test("only v1 is live", () => {
+    expect(capsFor(1).live).toBe(true);
+    expect(capsFor(2).live).toBe(false);
+  });
+
+  // MUTATION: Return undefined for an unknown version
+  // BREAKS: every `CAPS.x` read throws instead of degrading to v1
+  test("falls back to the default version's capabilities", () => {
+    expect(capsFor(99)).toBe(VERSION_CAPS[DEFAULT_VERSION]);
+    expect(capsFor(undefined)).toBe(VERSION_CAPS[DEFAULT_VERSION]);
+  });
+});
+
+describe("orderQueryFields", () => {
+  // MUTATION: Include partialFill in the v1 field list
+  // BREAKS: the deployed subgraph errors on the unknown field and returns no
+  //         orders at all — GraphQL rejects the whole query, not just the field
+  test("omits every v2-only field on v1", () => {
+    const fields = orderQueryFields(1);
+    expect(fields).not.toContain("partialFill");
+    expect(fields).not.toContain("originalAmountA");
+    expect(fields).not.toContain("originalAmountB");
+  });
+
+  // MUTATION: Drop a v2 field
+  // BREAKS: partial-fill progress silently stops rendering on v2
+  test("requests the v2-only fields on v2", () => {
+    const fields = orderQueryFields(2);
+    expect(fields).toContain("partialFill");
+    expect(fields).toContain("originalAmountA");
+    expect(fields).toContain("originalAmountB");
+  });
+
+  // MUTATION: Drop a shared field from one branch
+  // BREAKS: a column renders blank in exactly one version
+  test("both versions request every shared field", () => {
+    const shared = [
+      "orderId",
+      "maker",
+      "amountA",
+      "amountB",
+      "active",
+      "taker",
+      "createdAt",
+      "filledAt",
+    ];
+    for (const field of shared) {
+      expect(orderQueryFields(1)).toContain(field);
+      expect(orderQueryFields(2)).toContain(field);
+    }
+  });
+
+  test("v1 asks for strictly fewer fields", () => {
+    expect(orderQueryFields(1).length).toBe(8);
+    expect(orderQueryFields(2).length).toBe(11);
+  });
+});
+
+describe("normalizeOrder", () => {
+  // MUTATION: Leave originalAmount undefined on v1
+  // BREAKS: buildAmountCell calls BigInt(undefined) and throws mid-render
+  test("backfills the v2 fields a v1 subgraph never returns", () => {
+    const order = normalizeOrder({ amountA: "100", amountB: "250" }, 1);
+    expect(order.originalAmountA).toBe("100");
+    expect(order.originalAmountB).toBe("250");
+    expect(order.partialFill).toBe(false);
+  });
+
+  // MUTATION: Set original to something other than the remaining amount
+  // BREAKS: every v1 order renders a bogus "of X left" partial-fill hint,
+  //         since that hint shows exactly when original > remaining
+  test("a v1 order reads as untouched, never partly filled", () => {
+    const order = normalizeOrder({ amountA: "100", amountB: "250" }, 1);
+    expect(BigInt(order.originalAmountA)).toBe(BigInt(order.amountA));
+    expect(BigInt(order.originalAmountB)).toBe(BigInt(order.amountB));
+  });
+
+  // MUTATION: Overwrite the v2 amounts too
+  // BREAKS: partial-fill progress is erased on the version that has it
+  test("leaves genuine v2 partial-fill data alone", () => {
+    const order = normalizeOrder(
+      {
+        amountA: "40",
+        amountB: "100",
+        originalAmountA: "100",
+        originalAmountB: "250",
+        partialFill: true,
+      },
+      2
+    );
+    expect(order.originalAmountA).toBe("100");
+    expect(order.amountA).toBe("40");
+    expect(order.partialFill).toBe(true);
+  });
+
+  // MUTATION: Treat a missing flag as true
+  // BREAKS: an order the subgraph never vouched for offers partial fills the
+  //         contract will reject
+  test("a missing partialFill flag means opted out", () => {
+    expect(normalizeOrder({ amountA: "1", amountB: "1" }, 2).partialFill).toBe(false);
+    expect(normalizeOrder({ amountA: "1", amountB: "1", partialFill: "yes" }, 2).partialFill).toBe(
+      false
+    );
+  });
+
+  test("passes a missing order straight through", () => {
+    expect(normalizeOrder(null, 1)).toBe(null);
+    expect(normalizeOrder(undefined, 2)).toBe(undefined);
+  });
+});
+
+describe("offersEthDirectly", () => {
+  const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+  const isWeth = (a) => a.toLowerCase() === WETH.toLowerCase();
+  const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+
+  // MUTATION: Use isNativeEth on v1
+  // BREAKS: a v1 order offering WETH goes down the ERC20 path, so the wallet
+  //         is asked to approve and transfer WETH it was never given
+  test("v1 settles a WETH leg through msg.value", () => {
+    expect(offersEthDirectly(WETH, 1, isWeth)).toBe(true);
+    expect(offersEthDirectly(USDC, 1, isWeth)).toBe(false);
+  });
+
+  // MUTATION: Treat WETH as ETH on v2 as well
+  // BREAKS: a v2 WETH order sends ETH in msg.value for a contract expecting
+  //         an ERC20 transfer
+  test("v2 settles only the native sentinel through msg.value", () => {
+    expect(offersEthDirectly(NATIVE_ETH, 2, isWeth)).toBe(true);
+    expect(offersEthDirectly(WETH, 2, isWeth)).toBe(false);
+    expect(offersEthDirectly(USDC, 2, isWeth)).toBe(false);
+  });
+
+  // MUTATION: Call isWethFn unconditionally
+  // BREAKS: TypeError when no predicate is supplied
+  test("returns false rather than throwing on bad input", () => {
+    expect(offersEthDirectly(null, 1, isWeth)).toBe(false);
+    expect(offersEthDirectly(WETH, 1, undefined)).toBe(false);
+    expect(offersEthDirectly(123, 2, isWeth)).toBe(false);
   });
 });

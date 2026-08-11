@@ -84,6 +84,12 @@
     return;
   }
 
+  // Lets app.js tell simulated data from real. v1 uses it to skip polling the
+  // subgraph after a transaction: mock orders are generated rather than
+  // indexed, so their state never changes and the poll would only ever run out
+  // its full timeout.
+  window.SWAPBOARD_MOCK = true;
+
   // Show mock mode banner
   document.addEventListener("DOMContentLoaded", function () {
     const banner = document.createElement("div");
@@ -128,6 +134,35 @@
 
     /** Enable mock wallet provider if no real wallet detected */
     enableMockWallet: true,
+
+    /**
+     * Address the mock wallet connects as, and the maker on every cancel-cohort
+     * order. Shared so the two cannot drift apart — if they did, "My Orders"
+     * would come up empty and the cancel cohort would be unreachable.
+     */
+    walletAddress: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+
+    /**
+     * Orders sharing one token pair, added on top of the generated set.
+     *
+     * Fill All batches a single pair — canSelectOrder() rejects anything whose
+     * pair differs from the anchor — and the seeded generator picks pairs at
+     * random, which in practice leaves every open order on a pair of its own.
+     * Without a cohort like this there is nothing to multi-select.
+     *
+     * Above MAX_BATCH_FILL (15) so the batch splits across transactions.
+     */
+    fillCohortSize: 18,
+
+    /**
+     * Orders made by walletAddress, so the connected wallet owns something to
+     * cancel. Nothing in the seeded set is ever owned by the mock wallet.
+     *
+     * Sized so that even after the WETH-offering orders peel off into the
+     * unwrap-on-cancel batch, the remainder still clears MAX_BATCH_CANCEL (25)
+     * and splits across transactions.
+     */
+    cancelCohortSize: 30,
   };
 
   // ============================================================================
@@ -412,7 +447,192 @@
     return orders.sort((a, b) => parseInt(b.orderId) - parseInt(a.orderId));
   }
 
-  const MOCK_ORDERS = generateOrders();
+  // ============================================================================
+  // Multi-Select Cohorts
+  // ============================================================================
+  //
+  // The seeded generator picks each order's pair and maker at random, which
+  // leaves the open orders spread across as many distinct pairs as there are
+  // orders, and none of them owned by the connected wallet. Both batch actions
+  // are unreachable in that data:
+  //
+  //   Fill All   — canSelectOrder() only lets orders join a fill selection if
+  //                their pair matches the anchor's exactly, so with no pair
+  //                repeated a selection can never exceed one order.
+  //   Cancel All — only ever offered on your own orders, and the wallet owns
+  //                none.
+  //
+  // These two cohorts are appended after the seeded loop and built entirely
+  // from their index — no rng() calls — so the seeded stream, and with it the
+  // active/filled/cancelled split test.js asserts on, is untouched. They take
+  // the highest order IDs, which puts them at the top of the default sort.
+  // ============================================================================
+
+  /** Shared skeleton for a cohort order, so the two stay consistent. */
+  function buildCohortOrder({ id, maker, tokenA, tokenB, amountA, amountB, partialFill, filled }) {
+    const createdAt = Math.floor(Date.now() / 1000) - 3600 - id * 60;
+    const token = (t) => ({ address: t.address, symbol: t.symbol, decimals: t.decimals });
+
+    // A partly filled order keeps its original amounts alongside the remainder,
+    // which is what makes the "of X left" column and the fill math meaningful.
+    const remainingA = filled ? ((BigInt(amountA) * 35n) / 100n).toString() : amountA;
+    const remainingB = filled ? ((BigInt(amountB) * 35n) / 100n).toString() : amountB;
+
+    return {
+      orderId: String(id),
+      maker,
+      amountA: remainingA,
+      amountB: remainingB,
+      originalAmountA: filled ? amountA : null,
+      originalAmountB: filled ? amountB : null,
+      partialFill,
+      active: true,
+      taker: null,
+      createdAt: String(createdAt),
+      createdTx: "0x" + (id * 1000).toString(16).padStart(64, "0"),
+      filledAt: null,
+      filledTx: null,
+      cancelledAt: null,
+      cancelledTx: null,
+      tokenA: token(tokenA),
+      tokenB: token(tokenB),
+    };
+  }
+
+  /**
+   * Open orders on a single pair, from makers other than the wallet.
+   *
+   * Every order shares WETH -> USDC so the whole run is selectable together.
+   * Sizes climb across the cohort, which spreads the implied prices out so the
+   * batch summary has a real average to report rather than one repeated number.
+   *
+   * @param {number} startId - First order ID to use
+   * @returns {Array<Object>}
+   */
+  function generateFillCohort(startId) {
+    const WETH = TOKEN_REGISTRY.find((t) => t.symbol === "WETH");
+    const USDC = TOKEN_REGISTRY.find((t) => t.symbol === "USDC");
+    const orders = [];
+
+    for (let i = 0; i < MOCK_CONFIG.fillCohortSize; i++) {
+      // 0.5 -> 9.0 WETH, priced at 2,000 + 25*i USDC each.
+      const weth = 5n + BigInt(i) * 5n; // tenths of a WETH
+      const amountA = (weth * 10n ** 17n).toString();
+      const pricePerWeth = 2000n + BigInt(i) * 25n;
+      const amountB = ((weth * pricePerWeth * 10n ** 6n) / 10n).toString();
+
+      orders.push(
+        buildCohortOrder({
+          id: startId + i,
+          // Spread across makers so the cohort looks like a real order book,
+          // and never the wallet — an own order would flip the selection into
+          // cancel mode and hide Fill All.
+          maker: MAKER_ADDRESSES[i % MAKER_ADDRESSES.length],
+          tokenA: WETH,
+          tokenB: USDC,
+          amountA,
+          amountB,
+          // Every fourth order is all-or-nothing, so a batch spanning the
+          // cohort mixes both kinds.
+          partialFill: i % 4 !== 3,
+          // Every fifth is already part-filled.
+          filled: i % 5 === 2,
+        })
+      );
+    }
+
+    return orders;
+  }
+
+  /**
+   * Open orders owned by the connected wallet.
+   *
+   * Deliberately spread across pairs: Cancel All is pair-agnostic, and mixing
+   * pairs is what demonstrates that. Native ETH and WETH both appear so the
+   * plain-cancel and unwrap-on-cancel paths are each reachable.
+   *
+   * @param {number} startId - First order ID to use
+   * @returns {Array<Object>}
+   */
+  function generateCancelCohort(startId) {
+    const WETH = TOKEN_REGISTRY.find((t) => t.symbol === "WETH");
+    const offered = [WETH, NATIVE_ETH_TOKEN, ...TOKEN_REGISTRY.filter((t) => t.symbol !== "WETH")];
+    const wanted = TOKEN_REGISTRY.filter((t) => t.symbol === "USDC" || t.symbol === "DAI");
+    const orders = [];
+
+    for (let i = 0; i < MOCK_CONFIG.cancelCohortSize; i++) {
+      const tokenA = offered[i % offered.length];
+      let tokenB = wanted[i % wanted.length];
+      // An order cannot offer and want the same token.
+      if (tokenB.address === tokenA.address) tokenB = wanted[(i + 1) % wanted.length];
+
+      const units = 10n ** BigInt(tokenA.decimals);
+      const amountA = (units * BigInt(i + 1)).toString();
+      const amountB = (10n ** BigInt(tokenB.decimals) * BigInt(100 * (i + 1))).toString();
+
+      orders.push(
+        buildCohortOrder({
+          id: startId + i,
+          maker: MOCK_CONFIG.walletAddress,
+          tokenA,
+          tokenB,
+          amountA,
+          amountB,
+          partialFill: i % 3 !== 0,
+          filled: i % 6 === 4,
+        })
+      );
+    }
+
+    return orders;
+  }
+
+  const MOCK_ORDERS = (() => {
+    const seeded = generateOrders();
+    const cancelCohort = generateCancelCohort(MOCK_CONFIG.orderCount);
+    const fillCohort = generateFillCohort(MOCK_CONFIG.orderCount + cancelCohort.length);
+
+    // Fill cohort last so it takes the highest IDs and lands at the top of the
+    // default newest-first sort — it is the one you need visible to shift-select.
+    return [...seeded, ...cancelCohort, ...fillCohort].sort(
+      (a, b) => parseInt(b.orderId) - parseInt(a.orderId)
+    );
+  })();
+
+  /**
+   * Projects a generated order down to what the v1 subgraph could return.
+   *
+   * Three things go away, and each has to be undone rather than merely hidden:
+   * the v2-only fields, the partial-fill state (a v1 order is all-or-nothing,
+   * so its remaining amount is always its full amount), and the native-ETH
+   * sentinel (v1 predates it — such a leg would have been WETH).
+   *
+   * @param {Object} order - Generated v2-shaped order
+   * @returns {Object} v1-shaped order
+   */
+  function toV1Order(order) {
+    const WETH = TOKEN_REGISTRY[0];
+    const deEth = (token) =>
+      token.address.toLowerCase() === NATIVE_ETH_TOKEN.address.toLowerCase()
+        ? { address: WETH.address, symbol: WETH.symbol, decimals: WETH.decimals }
+        : token;
+
+    const v1Order = { ...order };
+    const { originalAmountA, originalAmountB } = order;
+    delete v1Order.partialFill;
+    delete v1Order.originalAmountA;
+    delete v1Order.originalAmountB;
+
+    return {
+      ...v1Order,
+      // Un-fill the partly filled ones: without partial fills these orders
+      // would still be sitting at their full size.
+      amountA: originalAmountA || order.amountA,
+      amountB: originalAmountB || order.amountB,
+      tokenA: deEth(order.tokenA),
+      tokenB: deEth(order.tokenB),
+    };
+  }
 
   // ============================================================================
   // Statistics Generation
@@ -525,6 +745,14 @@
         return false;
       }
 
+      // Maker filter, i.e. the My Orders checkbox. Without this the clause is
+      // ignored and My Orders returns the whole board, which hides the fact
+      // that the wallet owns anything in particular.
+      const makerMatch = whereClause.match(/(?:^|[,{\s])maker:\s*"([^"]+)"/i);
+      if (makerMatch && order.maker.toLowerCase() !== makerMatch[1].toLowerCase()) {
+        return false;
+      }
+
       return true;
     });
   }
@@ -540,17 +768,33 @@
       return { globalStats: MOCK_STATS };
     }
 
-    // Pair stats
+    // Pair stats. The key has to be pairStats_collection — that is what the
+    // subgraph returns and what loadPopularPairs reads; anything else leaves
+    // the Popular Pairs row permanently stuck on "No popular pairs yet".
     if (query.includes("pairStats")) {
-      return { pairStatses: MOCK_PAIRS };
+      return { pairStats_collection: MOCK_PAIRS };
     }
 
-    // Token list
+    // Single order — polled by v1 after a transaction, waiting for the
+    // subgraph to index it.
+    const singleOrder = query.match(/order\(id:\s*"(\d+)"\)/);
+    if (singleOrder) {
+      const found = MOCK_ORDERS.find((o) => o.orderId === singleOrder[1]);
+      return { order: found || null };
+    }
+
+    // Token list. decimals and volumeSold are both required: loadStats divides
+    // BigInt(volumeSold) by 10**decimals, and a missing volumeSold throws
+    // "Cannot convert undefined to a BigInt", which aborts the whole function
+    // and leaves the Volume stat blank.
     if (query.includes("tokens(")) {
       return {
-        tokens: TOKEN_REGISTRY.map((t) => ({
+        tokens: TOKEN_REGISTRY.map((t, i) => ({
           address: t.address,
           symbol: t.symbol,
+          decimals: t.decimals,
+          // Deterministic per token so the stat is stable across reloads.
+          volumeSold: (BigInt(10) ** BigInt(t.decimals) * BigInt(500 + i * 337)).toString(),
         })),
       };
     }
@@ -586,6 +830,13 @@
       // Filter and paginate
       const filtered = filterOrders(whereClause);
       const paginated = filtered.slice(skip, skip + first);
+
+      // Answer in the shape that was asked for. The deployed v1 subgraph has
+      // no partialFill / originalAmount fields, so serving them in v1 mode
+      // would let the UI depend on data production can never return.
+      if (!query.includes("partialFill")) {
+        return { orders: paginated.map(toV1Order) };
+      }
 
       return { orders: paginated };
     }
@@ -669,12 +920,14 @@
   if (MOCK_CONFIG.enableMockWallet) {
     console.log("[Mock] Creating mock wallet provider (overriding any existing wallet)");
 
-    const mockAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    // Same address the cancel cohort is made by, so connecting the mock wallet
+    // actually owns those orders.
+    const mockAddress = MOCK_CONFIG.walletAddress;
     let connected = false;
 
     window.ethereum = {
       isMetaMask: true,
-      chainId: "0xaa36a7", // Sepolia
+      chainId: "0x1", // Ethereum mainnet — see note above
       selectedAddress: null,
 
       request: async function ({ method, params }) {
@@ -690,7 +943,7 @@
             return connected ? [mockAddress] : [];
 
           case "eth_chainId":
-            return "0xaa36a7"; // Sepolia
+            return "0x1"; // Ethereum mainnet
 
           case "wallet_switchEthereumChain":
             return null;
@@ -730,6 +983,14 @@
               // makes every order-creation attempt fail in mock mode.
               return "0x" + (18).toString(16).padStart(64, "0");
             }
+            if (params?.[0]?.data?.startsWith("0x3fc8cef3")) {
+              // Swapboard.weth(). app.js caches this on connect and every
+              // isWeth() check compares against it, so the catch-all below —
+              // which decodes as address 0x…01 — would silently mean "nothing
+              // is WETH": WETH legs would render as WETH instead of ETH, and
+              // the unwrap-on-fill and unwrap-on-cancel paths would never run.
+              return "0x" + TOKEN_REGISTRY[0].address.slice(2).padStart(64, "0");
+            }
             return "0x0000000000000000000000000000000000000000000000000000000000000001";
 
           case "eth_estimateGas":
@@ -753,8 +1014,16 @@
           case "eth_blockNumber":
             return "0x" + Math.floor(Date.now() / 12000).toString(16);
 
+          case "eth_getLogs":
+            // Must be an array, not the null the default branch would give.
+            // app.js subscribes to OrderFilled/OrderCreated on connect, and
+            // ethers maps over whatever comes back on every poll — null there
+            // throws "Cannot read properties of null (reading 'map')" on a
+            // timer, several times a minute, for the whole session.
+            return [];
+
           case "net_version":
-            return "11155111"; // Sepolia
+            return "1"; // Ethereum mainnet
 
           default:
             console.warn("[Mock Wallet] Unhandled:", method);

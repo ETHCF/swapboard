@@ -104,6 +104,66 @@ h1 {
   display: inline-block;
 }
 
+/* ============================================================================
+   Protocol version switcher
+   ============================================================================ */
+
+#version-switch {
+  display: inline-flex;
+  border: 1px solid var(--fg);
+}
+
+.version-option {
+  font-family: inherit;
+  font-size: 13px;
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  padding: 3px 9px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.version-option + .version-option {
+  border-left: 1px solid var(--fg);
+}
+
+.version-option:hover:not(.active) {
+  opacity: 0.7;
+}
+
+.version-option.active {
+  background: var(--fg);
+  color: var(--bg);
+  cursor: default;
+}
+
+/* v2 is a preview against stubbed contracts, so it reads as provisional even
+   while selected rather than looking like the settled default. */
+.version-option[data-version="2"].active {
+  background: #e03e2d;
+  color: #000;
+}
+
+/* ----------------------------------------------------------------------------
+   Version feature gates
+
+   v1 has no batch entry points, no partial fills, no multi-order create, and
+   no native-ETH sentinel. Gating here rather than at each render site means a
+   control added later is hidden by matching a selector, not by remembering to
+   check a flag.
+   ---------------------------------------------------------------------------- */
+
+body[data-version="1"] th.select-col,
+body[data-version="1"] #selection-bar,
+body[data-version="1"] .native-eth-btn,
+body[data-version="1"] .partial-optout,
+body[data-version="1"] .create-add-row,
+/* Nothing to remove when the form is always a single order. */
+body[data-version="1"] .create-row-remove {
+  display: none;
+}
+
 #theme-btn {
   display: flex;
   align-items: center;

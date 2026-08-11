@@ -711,6 +711,218 @@ function validateConfig(config, isLocal) {
 }
 
 // ============================================================================
+// Protocol Version
+// ============================================================================
+//
+// Swapboard v1 is deployed and live; v2 is not. The two differ in three ways
+// that reach all the way up into the UI, so the version is resolved once at
+// startup and everything downstream reads it through VERSION_CAPS:
+//
+//   1. Subgraph shape. The deployed v1 subgraph has no partialFill /
+//      originalAmountA / originalAmountB, and GraphQL rejects an entire query
+//      on one unknown field — so asking for the v2 shape in v1 mode returns
+//      nothing at all, not a partial result. orderQueryFields() is the fix.
+//   2. Contract surface. v1 has no partial fills and no batch entry points.
+//   3. Native ETH. v1 has no NATIVE_ETH sentinel; it reaches ETH by treating
+//      a WETH-denominated side as a wrap/unwrap. v2 escrows ETH directly.
+//
+// ============================================================================
+
+/** localStorage key persisting the user's chosen protocol version. */
+const VERSION_STORAGE_KEY = "swapboard_version";
+
+/**
+ * Version used when nothing else selects one.
+ * v1, because it is the only version with deployed contracts and a subgraph
+ * that answers — v2 is opt-in preview until that changes.
+ * @constant {number}
+ */
+const DEFAULT_VERSION = 1;
+
+/** Versions this frontend knows how to speak. */
+const SUPPORTED_VERSIONS = [1, 2];
+
+/**
+ * What each protocol version can do. The UI gates on these rather than
+ * comparing version numbers inline, so adding v3 means adding a row here.
+ *
+ * @constant {Object<number, Object>}
+ */
+const VERSION_CAPS = {
+  1: {
+    version: 1,
+    label: "v1",
+    /** Orders are all-or-nothing; no fill-amount controls. */
+    partialFill: false,
+    /** No multicall entry points; one order per transaction. */
+    batch: false,
+    /** No NATIVE_ETH sentinel — ETH is reached through WETH wrap/unwrap. */
+    nativeEth: false,
+    /** Sell form creates exactly one order at a time. */
+    multiCreate: false,
+    /** Subgraph exposes no original-vs-remaining split. */
+    remainingAmounts: false,
+    /** Real contracts, so a gas estimate can be encoded and shown. */
+    gasEstimate: true,
+    /** Real subgraph, so post-transaction indexing can be polled. */
+    subgraphPolling: true,
+    /** Writes hit chain. */
+    live: true,
+  },
+  2: {
+    version: 2,
+    label: "v2",
+    partialFill: true,
+    batch: true,
+    nativeEth: true,
+    multiCreate: true,
+    remainingAmounts: true,
+    // Both off until the v2 contracts and subgraph exist: there is no ABI to
+    // encode a gas estimate against, and polling an index that will never
+    // update only ever times out.
+    gasEstimate: false,
+    subgraphPolling: false,
+    /** Writes go to the dummy connector. */
+    live: false,
+  },
+};
+
+/**
+ * Coerces an arbitrary value to a supported version number.
+ * @param {*} value - Candidate version ("1", 2, "v2", ...)
+ * @returns {number|null} Supported version, or null when unrecognized
+ */
+function parseVersion(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toLowerCase().replace(/^v/, "");
+  const parsed = Number(normalized);
+  return SUPPORTED_VERSIONS.includes(parsed) ? parsed : null;
+}
+
+/**
+ * Resolves which protocol version to run, in precedence order:
+ *   1. `?v=` URL parameter — explicit, and wins so a link can pin a version
+ *   2. localStorage — the user's last choice from the header switcher
+ *   3. DEFAULT_VERSION
+ *
+ * Mirrors how mock.js resolves mock mode, so the two behave alike.
+ *
+ * @param {Object} [sources] - Resolution inputs
+ * @param {string} [sources.search] - location.search, e.g. "?v=2"
+ * @param {*} [sources.stored] - Persisted preference
+ * @returns {{version: number, pinned: boolean}} Resolved version, and whether
+ *   the URL pinned it (in which case the switcher must rewrite the URL)
+ */
+function resolveVersion(sources) {
+  const { search = "", stored = null } = sources || {};
+
+  let param = null;
+  try {
+    param = new URLSearchParams(search).get("v");
+  } catch {
+    param = null;
+  }
+
+  const fromParam = parseVersion(param);
+  if (fromParam !== null) return { version: fromParam, pinned: true };
+
+  const fromStore = parseVersion(stored);
+  if (fromStore !== null) return { version: fromStore, pinned: false };
+
+  return { version: DEFAULT_VERSION, pinned: false };
+}
+
+/**
+ * Capability set for a version, falling back to the default version's.
+ * @param {number} version - Protocol version
+ * @returns {Object} Capability descriptor
+ */
+function capsFor(version) {
+  return VERSION_CAPS[version] || VERSION_CAPS[DEFAULT_VERSION];
+}
+
+/**
+ * Order fields to request from the subgraph for a given version.
+ *
+ * v2-only fields are omitted in v1 mode because the deployed subgraph errors
+ * on unknown fields and returns no data at all.
+ *
+ * @param {number} version - Protocol version
+ * @returns {string[]} Field names, in query order
+ */
+function orderQueryFields(version) {
+  const base = [
+    "orderId",
+    "maker",
+    "amountA",
+    "amountB",
+    "active",
+    "taker",
+    "createdAt",
+    "filledAt",
+  ];
+  if (!capsFor(version).remainingAmounts) return base;
+  // Slot the v2 additions next to the amounts they qualify.
+  return [
+    "orderId",
+    "maker",
+    "amountA",
+    "amountB",
+    "originalAmountA",
+    "originalAmountB",
+    "partialFill",
+    "active",
+    "taker",
+    "createdAt",
+    "filledAt",
+  ];
+}
+
+/**
+ * Fills in the v2-shaped fields a v1 subgraph never returns, so rendering and
+ * fill math stay on one code path regardless of version.
+ *
+ * A v1 order is all-or-nothing and never partly filled, so its remaining
+ * amount is by definition its original amount.
+ *
+ * @param {Object} order - Raw order from the subgraph
+ * @param {number} version - Protocol version the order came from
+ * @returns {Object} The same order, normalized in place
+ */
+function normalizeOrder(order, version) {
+  if (!order) return order;
+  if (capsFor(version).remainingAmounts) {
+    // A missing flag means the order never opted in, so treat it as
+    // all-or-nothing rather than assuming partial fills are allowed.
+    order.partialFill = order.partialFill === true;
+    return order;
+  }
+  order.partialFill = false;
+  order.originalAmountA = order.amountA;
+  order.originalAmountB = order.amountB;
+  return order;
+}
+
+/**
+ * Whether an offered token is settled as ETH via msg.value rather than an
+ * ERC20 transfer.
+ *
+ * The two versions disagree on what "offering ETH" means: v1 wraps a WETH
+ * side through createOrderWithEth, while v2 escrows native ETH under the
+ * NATIVE_ETH sentinel and treats WETH as an ordinary ERC20.
+ *
+ * @param {string} address - Offered token address
+ * @param {number} version - Protocol version
+ * @param {function(string): boolean} isWethFn - WETH predicate
+ * @returns {boolean}
+ */
+function offersEthDirectly(address, version, isWethFn) {
+  if (typeof address !== "string") return false;
+  if (capsFor(version).nativeEth) return isNativeEth(address);
+  return typeof isWethFn === "function" ? isWethFn(address) : false;
+}
+
+// ============================================================================
 // V2: Native ETH
 // ============================================================================
 
@@ -929,6 +1141,18 @@ if (typeof window !== "undefined") {
     formatUsd,
     formatAmount,
 
+    // Protocol version
+    VERSION_STORAGE_KEY,
+    DEFAULT_VERSION,
+    SUPPORTED_VERSIONS,
+    VERSION_CAPS,
+    parseVersion,
+    resolveVersion,
+    capsFor,
+    orderQueryFields,
+    normalizeOrder,
+    offersEthDirectly,
+
     // V2: native ETH
     NATIVE_ETH,
     isNativeEth,
@@ -1009,6 +1233,18 @@ if (typeof module !== "undefined" && module.exports) {
 
     // Config validation
     validateConfig,
+
+    // Protocol version
+    VERSION_STORAGE_KEY,
+    DEFAULT_VERSION,
+    SUPPORTED_VERSIONS,
+    VERSION_CAPS,
+    parseVersion,
+    resolveVersion,
+    capsFor,
+    orderQueryFields,
+    normalizeOrder,
+    offersEthDirectly,
 
     // V2: native ETH
     isNativeEth,

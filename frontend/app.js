@@ -24,6 +24,14 @@
     truncateAddress,
     formatUsd,
     formatAmount,
+    // Protocol version
+    VERSION_STORAGE_KEY,
+    SUPPORTED_VERSIONS,
+    resolveVersion,
+    capsFor,
+    orderQueryFields,
+    normalizeOrder,
+    offersEthDirectly,
     // V2 helpers
     NATIVE_ETH,
     isNativeEth,
@@ -72,6 +80,122 @@
     rpcUrls: ["https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q"],
     blockExplorerUrls: ["https://etherscan.io"],
   };
+
+  // ============================================================================
+  // Protocol Version
+  // ============================================================================
+
+  /**
+   * Reads the persisted version preference.
+   * @returns {string|null} Stored value, or null when storage is unavailable
+   */
+  function readStoredVersion() {
+    try {
+      return localStorage.getItem(VERSION_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  const initialVersion = resolveVersion({
+    search: window.location.search,
+    stored: readStoredVersion(),
+  });
+
+  /**
+   * Protocol version the app is currently speaking.
+   * @type {number}
+   */
+  const ACTIVE_VERSION = initialVersion.version;
+
+  /**
+   * Capabilities of ACTIVE_VERSION. Every version-dependent branch in the app
+   * reads a named flag off this object rather than comparing version numbers,
+   * so what a branch is actually about stays legible at the call site.
+   * @type {Object}
+   */
+  const CAPS = capsFor(ACTIVE_VERSION);
+
+  /**
+   * Switches protocol version.
+   *
+   * A reload is the honest way to do this. The version decides the subgraph
+   * query shape, the connector, the table columns, and the shape of the sell
+   * form; rebuilding all of that in place would mean unwinding wallet state,
+   * in-flight requests, and the current selection, and any missed corner
+   * leaves the two versions' state mixed together. Reloading cannot.
+   *
+   * @param {number} version - Version to switch to
+   */
+  function setVersion(version) {
+    if (!SUPPORTED_VERSIONS.includes(version) || version === ACTIVE_VERSION) return;
+
+    try {
+      localStorage.setItem(VERSION_STORAGE_KEY, String(version));
+    } catch {
+      // Storage unavailable (private mode); the URL below still carries it.
+    }
+
+    // Keep ?v= in step with the choice, so the reload lands on the new version
+    // even if storage was refused, and so the URL stays shareable.
+    const url = new URL(window.location.href);
+    url.searchParams.set("v", String(version));
+    // The order hash addresses an order in the version being left behind.
+    url.hash = "";
+    window.location.href = url.toString();
+  }
+
+  /** Headline text and blurb for each version. */
+  const VERSION_COPY = {
+    1: {
+      title: "Welcome to SWAPBOARD v1",
+      note: "V1: no partial fills. Live on mainnet.",
+      hint: "Swapboard v1 — deployed and live on mainnet",
+    },
+    2: {
+      title: "Welcome to SWAPBOARD v2",
+      note: "V2: partial fills, batch fill/cancel/create, and native ETH. Preview — contracts are not deployed, so transactions are simulated.",
+      hint: "Swapboard v2 — preview, contracts not yet deployed",
+    },
+  };
+
+  /**
+   * Number of columns in the order table, which the select column changes.
+   * Used for the full-width "Loading" / "No orders" rows.
+   * @returns {number}
+   */
+  function orderColumnCount() {
+    return CAPS.batch ? 10 : 9;
+  }
+
+  /**
+   * Applies everything about the page that depends on the protocol version:
+   * the body attribute driving the CSS gates, the copy, and the switcher's
+   * pressed state.
+   *
+   * Feature chrome is hidden in CSS off `body[data-version]` rather than by
+   * toggling each node here, so a control added later is gated by matching a
+   * selector instead of by remembering to update this function.
+   */
+  function applyVersionUi() {
+    const copy = VERSION_COPY[ACTIVE_VERSION] || VERSION_COPY[1];
+
+    document.body.dataset.version = String(ACTIVE_VERSION);
+
+    const title = $("#app-title");
+    if (title) title.textContent = copy.title;
+
+    const note = $("#version-note-text");
+    if (note) note.textContent = copy.note;
+
+    document.querySelectorAll("#version-switch .version-option").forEach((btn) => {
+      const version = Number(btn.dataset.version);
+      const active = version === ACTIVE_VERSION;
+      btn.setAttribute("aria-pressed", String(active));
+      btn.classList.toggle("active", active);
+      btn.title = (VERSION_COPY[version] || {}).hint || "";
+    });
+  }
 
   // ============================================================================
   // Theme (Dark Mode)
@@ -217,6 +341,8 @@
   let currentFilters = { selling: "", wanting: "", status: "open", myOrders: false };
   let currentSort = { column: "orderId", direction: "desc" };
   let cachedOrders = [];
+  /** True when the last order query errored, as opposed to returning nothing. */
+  let ordersQueryFailed = false;
   let highlightedOrderId = null;
   let notificationsEnabled = false;
   const RECENT_TOKENS_KEY = "swapboard_recent_tokens";
@@ -586,6 +712,44 @@
       setTimeout(() => notification.close(), 10000);
     } catch (e) {
       console.error("Notification error:", e);
+    }
+  }
+
+  /**
+   * Estimates what a transaction will cost, in gas, ETH, and USD.
+   *
+   * Only reachable in v1 mode (CAPS.gasEstimate) — estimating requires a
+   * deployed contract to encode against and simulate the call on.
+   *
+   * @param {Object} txParams - {from, to, data, value?}
+   * @returns {Promise<Object|null>} {gas, eth, usd}, or null if unavailable
+   */
+  async function estimateGasCost(txParams) {
+    if (!provider) return null;
+
+    try {
+      const [gasEstimate, feeData] = await Promise.all([
+        provider.estimateGas(txParams),
+        provider.getFeeData(),
+      ]);
+
+      const gasPrice = feeData.gasPrice || feeData.maxFeePerGas;
+      if (!gasPrice) return null;
+
+      const gasCostWei = gasEstimate * gasPrice;
+      const gasCostEth = Number(gasCostWei) / 1e18;
+
+      const ethPrice = getTokenPrice("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+      const gasCostUsd = ethPrice ? gasCostEth * ethPrice : null;
+
+      return {
+        gas: gasEstimate.toString(),
+        eth: gasCostEth < 0.0001 ? gasCostEth.toExponential(2) : gasCostEth.toFixed(6),
+        usd: gasCostUsd ? formatUsd(gasCostUsd) : "$--",
+      };
+    } catch (e) {
+      console.error("Gas estimation error:", e);
+      return null;
     }
   }
 
@@ -1484,11 +1648,13 @@
     for (let i = 0; i < count; i++) {
       const tr = document.createElement("tr");
 
-      // Column 0: Select (empty)
-      const tdSelect = document.createElement("td");
-      tdSelect.className = "select-col";
-      tdSelect.dataset.label = "";
-      tr.appendChild(tdSelect);
+      // Column 0: Select (empty). Absent when the table has no select column.
+      if (CAPS.batch) {
+        const tdSelect = document.createElement("td");
+        tdSelect.className = "select-col";
+        tdSelect.dataset.label = "";
+        tr.appendChild(tdSelect);
+      }
 
       // Column 1: Action (empty)
       const tdAction = document.createElement("td");
@@ -1985,6 +2151,42 @@
     }
   }
 
+  /**
+   * Polls the subgraph until an order reaches an expected state.
+   *
+   * Indexing lags the chain by a few seconds, so reloading straight after a
+   * confirmed transaction would show the pre-transaction row. Only reachable
+   * in v1 mode (CAPS.subgraphPolling); nothing indexes v2 yet.
+   *
+   * @param {string} orderId - Order to watch
+   * @param {boolean} expectedActive - Active flag to wait for
+   * @param {number} [maxAttempts=10] - Polls before giving up
+   * @param {number} [interval=1500] - Milliseconds between polls
+   * @returns {Promise<boolean>} True if the state was observed
+   */
+  async function waitForOrderUpdate(orderId, expectedActive, maxAttempts = 10, interval = 1500) {
+    for (let i = 0; i < maxAttempts; i++) {
+      // Silent: transient errors while polling are expected and must not
+      // raise a toast on every attempt.
+      const data = await querySubgraph(
+        `
+        query {
+          order(id: "${orderId}") {
+            active
+          }
+        }
+      `,
+        {},
+        true
+      );
+      if (data && data.order && data.order.active === expectedActive) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, interval));
+    }
+    return false;
+  }
+
   async function loadStats() {
     const [statsData, tokenData] = await Promise.all([
       querySubgraph(`
@@ -2168,20 +2370,15 @@
 
     const where = conditions.length > 0 ? `where: { ${conditions.join(", ")} }` : "";
 
+    // The v1 subgraph has no partialFill/originalAmount fields, and GraphQL
+    // rejects the whole query on a single unknown field — asking for the v2
+    // shape in v1 mode returns nothing at all, not a partial result.
+    const orderFields = orderQueryFields(ACTIVE_VERSION).join("\n          ");
+
     const data = await querySubgraph(`
       query {
         orders(first: ${CONFIG.PAGE_SIZE}, skip: ${skip}, orderBy: orderId, orderDirection: desc, ${where}) {
-          orderId
-          maker
-          amountA
-          amountB
-          originalAmountA
-          originalAmountB
-          partialFill
-          active
-          taker
-          createdAt
-          filledAt
+          ${orderFields}
           tokenA {
             address
             symbol
@@ -2198,16 +2395,21 @@
 
     if (!data || !data.orders) {
       cachedOrders = [];
+      // "No orders found" would be a lie when the query never came back —
+      // and in v2 against the live subgraph it never can, because no deployed
+      // subgraph indexes v2 yet. renderOrders says which of the two it is.
+      ordersQueryFailed = true;
     } else {
+      ordersQueryFailed = false;
       cachedOrders = data.orders;
       for (const o of cachedOrders) {
         // Display WETH as ETH. Native-ETH orders already carry the ETH symbol;
         // they keep no address, which is how the two stay distinguishable.
         if (isWeth(o.tokenA.address)) o.tokenA.symbol = "ETH";
         if (isWeth(o.tokenB.address)) o.tokenB.symbol = "ETH";
-        // Treat a missing partialFill flag as opted out, so anything the v2
-        // subgraph doesn't vouch for behaves like a v1 all-or-nothing order.
-        o.partialFill = o.partialFill === true;
+        // Backfills the fields the v1 subgraph never returns, so rendering and
+        // fill math stay on one code path in both versions.
+        normalizeOrder(o, ACTIVE_VERSION);
       }
     }
 
@@ -2370,6 +2572,14 @@
    */
   function renderSelectionBar() {
     const bar = $("#selection-bar");
+
+    // Without batch entry points there is nothing to select for, so the bar
+    // stays down regardless of what is in selectedOrderIds.
+    if (!CAPS.batch) {
+      bar.classList.add("hidden");
+      return;
+    }
+
     const selectAllBtn = $("#select-all-orders");
     const fillBtn = $("#batch-fill-btn");
     const cancelBtn = $("#batch-cancel-btn");
@@ -2475,8 +2685,18 @@
     if (cachedOrders.length === 0) {
       const tr = document.createElement("tr");
       const td = document.createElement("td");
-      td.colSpan = 10;
-      td.textContent = "No orders found";
+      td.colSpan = orderColumnCount();
+      if (!ordersQueryFailed) {
+        td.textContent = "No orders found";
+      } else if (!CAPS.live) {
+        // The usual reason a v2 query fails: it asks for fields no deployed
+        // subgraph has. Say so, rather than implying the board is empty.
+        td.textContent =
+          "Swapboard v2 is not deployed yet, so there are no orders to index. " +
+          "Switch to v1 for live orders, or add ?mock=true to preview v2 with simulated data.";
+      } else {
+        td.textContent = "Could not load orders. Check your connection and try again.";
+      }
       tr.appendChild(td);
       tbody.appendChild(tr);
       updatePagination(0);
@@ -2547,27 +2767,30 @@
       // Build row with links
       // Column 0: Selection checkbox. Disabled when the order can't join the
       // current selection (closed, or it would mix own/other orders or pairs).
-      const tdSelect = document.createElement("td");
-      tdSelect.className = "select-col";
-      tdSelect.dataset.label = "";
-      const selectBox = document.createElement("input");
-      selectBox.type = "checkbox";
-      selectBox.checked = selectedOrderIds.has(order.orderId);
-      selectBox.disabled =
-        !selectBox.checked && !canSelectOrder(order, selectionAnchor, userAddress);
-      selectBox.title = selectBox.disabled
-        ? "Can't mix your own orders with other makers' orders, or different pairs when filling"
-        : "Select order #" + order.orderId;
-      // Suppress the browser's shift-click text selection across rows.
-      selectBox.addEventListener("mousedown", (e) => {
-        if (e.shiftKey) e.preventDefault();
-      });
-      selectBox.addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleOrderSelection(order, e.shiftKey);
-      });
-      tdSelect.appendChild(selectBox);
-      tr.appendChild(tdSelect);
+      // Omitted entirely without batch entry points to select orders *for*.
+      if (CAPS.batch) {
+        const tdSelect = document.createElement("td");
+        tdSelect.className = "select-col";
+        tdSelect.dataset.label = "";
+        const selectBox = document.createElement("input");
+        selectBox.type = "checkbox";
+        selectBox.checked = selectedOrderIds.has(order.orderId);
+        selectBox.disabled =
+          !selectBox.checked && !canSelectOrder(order, selectionAnchor, userAddress);
+        selectBox.title = selectBox.disabled
+          ? "Can't mix your own orders with other makers' orders, or different pairs when filling"
+          : "Select order #" + order.orderId;
+        // Suppress the browser's shift-click text selection across rows.
+        selectBox.addEventListener("mousedown", (e) => {
+          if (e.shiftKey) e.preventDefault();
+        });
+        selectBox.addEventListener("click", (e) => {
+          e.stopPropagation();
+          toggleOrderSelection(order, e.shiftKey);
+        });
+        tdSelect.appendChild(selectBox);
+        tr.appendChild(tdSelect);
+      }
 
       // Column 1: Action button (Fill for others, Cancel for own) or status
       const tdAction = document.createElement("td");
@@ -3001,7 +3224,163 @@
       await tx.wait();
       return true;
     },
+
+    /**
+     * No gas estimate in v2: there is no deployed ABI to encode against, and
+     * an invented number is worse than none.
+     * @returns {Promise<null>}
+     */
+    async estimateFor() {
+      return null;
+    },
+
+    /** No subgraph indexes v2 yet, so there is nothing to poll for. */
+    async syncAfter() {},
   };
+
+  // ============================================================================
+  // V1 CONNECTOR — LIVE CONTRACTS
+  // ============================================================================
+  //
+  // Swapboard v1 at CONFIG.CONTRACT_ADDRESS is deployed, immutable, and holds
+  // real funds. Every method here submits a real transaction.
+  //
+  // The surface deliberately matches the V2 connector above so the call sites
+  // above this layer never branch on version — they call SB.<method> and the
+  // adapter decides what that means. Where v2 takes an argument v1 has no
+  // concept of (fillAmountB, partialFill), the v1 method accepts and ignores
+  // it; the UI never produces a meaningful value for it anyway, because
+  // CAPS.partialFill gates those controls off.
+  //
+  // The batch entry points (fillOrders / cancelOrders / createOrders and the
+  // tryFill variants) do not exist on v1 at all. They are present here only to
+  // throw a clear error: CAPS.batch keeps the selection UI hidden in v1, so
+  // reaching one of these means a gate was missed, and failing loudly beats
+  // silently sending one transaction where the user asked for twenty.
+  // ============================================================================
+
+  /** Rejects a v2-only batch call that leaked past a capability gate. */
+  function v1Unsupported(method) {
+    return Promise.reject(
+      new Error(`${method} is a v2 entry point and does not exist on Swapboard v1`)
+    );
+  }
+
+  const V1 = {
+    /** @see Swapboard.createOrder — partialFill has no v1 equivalent */
+    createOrder(tokenA, amountA, tokenB, amountB) {
+      return contract.createOrder(tokenA, amountA, tokenB, amountB);
+    },
+
+    /**
+     * @see Swapboard.createOrderWithEth
+     * v1 reaches ETH by wrapping: the offered side is WETH and the ETH rides
+     * in msg.value.
+     */
+    createOrderWithEth(tokenB, amountB, partialFill, value) {
+      return contract.createOrderWithEth(tokenB, amountB, { value });
+    },
+
+    createOrders: () => v1Unsupported("createOrders"),
+    createOrdersWithEth: () => v1Unsupported("createOrdersWithEth"),
+
+    /** @see Swapboard.fillOrder — v1 orders are all-or-nothing */
+    fillOrder(orderId, deadline) {
+      return contract.fillOrder(orderId, deadline);
+    },
+
+    /** @see Swapboard.fillOrderWithEth — msg.value is the full wanted amount */
+    fillOrderWithEth(orderId, deadline, value) {
+      return contract.fillOrderWithEth(orderId, deadline, { value });
+    },
+
+    /** @see Swapboard.fillOrderUnwrap — taker receives native ETH */
+    fillOrderUnwrap(orderId, deadline) {
+      return contract.fillOrderUnwrap(orderId, deadline);
+    },
+
+    /** @see Swapboard.cancelOrder */
+    cancelOrder(orderId) {
+      return contract.cancelOrder(orderId);
+    },
+
+    /** @see Swapboard.cancelOrderUnwrap — maker receives native ETH */
+    cancelOrderUnwrap(orderId) {
+      return contract.cancelOrderUnwrap(orderId);
+    },
+
+    fillOrders: () => v1Unsupported("fillOrders"),
+    tryFillOrders: () => v1Unsupported("tryFillOrders"),
+    tryFillOrdersWithEth: () => v1Unsupported("tryFillOrdersWithEth"),
+    cancelOrders: () => v1Unsupported("cancelOrders"),
+    cancelOrdersUnwrap: () => v1Unsupported("cancelOrdersUnwrap"),
+
+    /**
+     * Approves the Swapboard contract for `total` of `tokenAddress` when the
+     * existing allowance falls short.
+     * @param {string} tokenAddress - ERC20 address
+     * @param {bigint} total - Amount the transaction will move
+     * @returns {Promise<boolean>} True if an approval transaction was sent
+     */
+    async ensureAllowance(tokenAddress, total) {
+      const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
+      const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+      if (allowance >= BigInt(total)) return false;
+
+      showToast("Approve tokens in wallet...", "info", true);
+      const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, total);
+      showToast("Waiting for approval tx...", "info", true);
+      await approveTx.wait();
+      showToast("Approval confirmed");
+      return true;
+    },
+
+    /**
+     * Estimates the gas cost of a call before showing the confirmation modal.
+     * Returns null on any failure — a missing estimate is not worth blocking a
+     * transaction over.
+     *
+     * @param {string} method - Contract method name
+     * @param {Array} args - Arguments to encode
+     * @param {bigint} [value] - msg.value for payable calls
+     * @returns {Promise<Object|null>} {gas, eth, usd} or null
+     */
+    async estimateFor(method, args, value) {
+      if (!provider || !contract) return null;
+      try {
+        const txParams = {
+          from: userAddress,
+          to: CONFIG.CONTRACT_ADDRESS,
+          data: contract.interface.encodeFunctionData(method, args),
+        };
+        if (value !== undefined && value !== null) txParams.value = BigInt(value);
+        return await estimateGasCost(txParams);
+      } catch (e) {
+        console.error("Gas estimation failed:", e);
+        return null;
+      }
+    },
+
+    /**
+     * Waits for the subgraph to catch up with a transaction before reloading,
+     * so the table does not flash the pre-transaction state.
+     * @param {string} orderId - Order that changed
+     * @param {boolean} expectedActive - Active flag to wait for
+     */
+    async syncAfter(orderId, expectedActive) {
+      // Mock orders are generated, not indexed — their state never changes, so
+      // polling would only burn the full timeout before giving up.
+      if (window.SWAPBOARD_MOCK) return;
+      await waitForOrderUpdate(orderId, expectedActive);
+    },
+  };
+
+  /**
+   * The connector for the active protocol version. Fixed for the life of the
+   * page — setVersion() reloads rather than swapping this out.
+   * @type {Object}
+   */
+  const SB = ACTIVE_VERSION === 1 ? V1 : V2;
 
   // ============================================================================
   // Order Actions
@@ -3127,9 +3506,9 @@
     body.appendChild(summary);
 
     // Orders that opted out of partial fill are all-or-nothing, so there is
-    // nothing to choose and the controls stay off.
+    // nothing to choose and the controls stay off. So is every v1 order.
     let fillAmountB = remainingB;
-    if (order.partialFill) {
+    if (CAPS.partialFill && order.partialFill) {
       body.appendChild(
         buildPartialFillControls(order, (amount) => {
           fillAmountB = amount;
@@ -3137,45 +3516,69 @@
       );
     }
 
-    showModal("Fill Order #" + order.orderId, body, async () => {
-      try {
-        if (fillAmountB <= 0n) {
-          showToast("Enter an amount to fill", "error");
-          return;
+    // Estimated against the full-remainder fill, which is what the modal opens
+    // on. A partial fill costs about the same, so re-estimating on every
+    // keystroke would buy precision nobody acts on.
+    const estimateDeadline = Math.floor(Date.now() / 1000) + 300;
+    let gasEstimate = null;
+    if (CAPS.gasEstimate) {
+      showToast("Estimating gas...");
+      gasEstimate = payWithEth
+        ? await SB.estimateFor("fillOrderWithEth", [order.orderId, estimateDeadline], remainingB)
+        : await SB.estimateFor(unwrapToEth ? "fillOrderUnwrap" : "fillOrder", [
+            order.orderId,
+            estimateDeadline,
+          ]);
+    }
+
+    showModal(
+      "Fill Order #" + order.orderId,
+      body,
+      async () => {
+        try {
+          if (fillAmountB <= 0n) {
+            showToast("Enter an amount to fill", "error");
+            return;
+          }
+
+          const deadline = Math.floor(Date.now() / 1000) + 300;
+          // 0 means "fill the remainder" on-chain; send it when the user hasn't
+          // scaled the order down, so a race that partially fills it first
+          // doesn't turn into a revert.
+          const fillArg = fillAmountB >= remainingB ? 0n : fillAmountB;
+
+          let tx;
+          if (payWithEth) {
+            // Paying in ETH: the amount rides in msg.value, so nothing to approve.
+            showToast("Confirm fill in wallet...", "info", true);
+            tx = await SB.fillOrderWithEth(order.orderId, deadline, fillAmountB);
+          } else {
+            showToast("Checking allowance...", "info", true);
+            await SB.ensureAllowance(order.tokenB.address, fillAmountB);
+
+            showToast("Confirm fill in wallet...", "info", true);
+            tx = unwrapToEth
+              ? await SB.fillOrderUnwrap(order.orderId, deadline, fillArg)
+              : await SB.fillOrder(order.orderId, deadline, fillArg);
+          }
+
+          showToast("Waiting for tx confirmation...", "info", true);
+          await tx.wait();
+          showToast("Order filled! Syncing...", "success", true);
+          // A fully filled order goes inactive; a partial fill leaves it active
+          // with a smaller remainder, which this poll cannot distinguish, so
+          // only wait when the whole order was taken.
+          await SB.syncAfter(order.orderId, fillAmountB < remainingB);
+          loadOrders();
+          loadStats();
+          showToast("Order filled!", "success");
+        } catch (e) {
+          console.error("Fill error:", e);
+          showToast("Fill failed: " + parseContractError(e), "error");
         }
-
-        const deadline = Math.floor(Date.now() / 1000) + 300;
-        // 0 means "fill the remainder" on-chain; send it when the user hasn't
-        // scaled the order down, so a race that partially fills it first
-        // doesn't turn into a revert.
-        const fillArg = fillAmountB >= remainingB ? 0n : fillAmountB;
-
-        let tx;
-        if (payWithEth) {
-          // Paying in ETH: the amount rides in msg.value, so nothing to approve.
-          showToast("Confirm fill in wallet...", "info", true);
-          tx = await V2.fillOrderWithEth(order.orderId, deadline, fillAmountB);
-        } else {
-          showToast("Checking allowance...", "info", true);
-          await V2.ensureAllowance(order.tokenB.address, fillAmountB);
-
-          showToast("Confirm fill in wallet...", "info", true);
-          tx = unwrapToEth
-            ? await V2.fillOrderUnwrap(order.orderId, deadline, fillArg)
-            : await V2.fillOrder(order.orderId, deadline, fillArg);
-        }
-
-        showToast("Waiting for tx confirmation...", "info", true);
-        await tx.wait();
-        showToast("Order filled! Syncing...", "success", true);
-        loadOrders();
-        loadStats();
-        showToast("Order filled!", "success");
-      } catch (e) {
-        console.error("Fill error:", e);
-        showToast("Fill failed: " + parseContractError(e), "error");
-      }
-    });
+      },
+      gasEstimate
+    );
   }
 
   /**
@@ -3195,6 +3598,14 @@
     const unwrap = isWeth(order.tokenA.address);
     const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
 
+    let gasEstimate = null;
+    if (CAPS.gasEstimate) {
+      showToast("Estimating gas...");
+      gasEstimate = await SB.estimateFor(unwrap ? "cancelOrderUnwrap" : "cancelOrder", [
+        order.orderId,
+      ]);
+    }
+
     showModal(
       "Cancel Order #" + order.orderId,
       `Your ${amountAStr} ${order.tokenA.symbol} will be returned to your wallet.`,
@@ -3202,10 +3613,11 @@
         try {
           showToast("Cancelling order...", "info", true);
           const tx = unwrap
-            ? await V2.cancelOrderUnwrap(order.orderId)
-            : await V2.cancelOrder(order.orderId);
+            ? await SB.cancelOrderUnwrap(order.orderId)
+            : await SB.cancelOrder(order.orderId);
           await tx.wait();
           showToast("Order cancelled! Updating...", "success", true);
+          await SB.syncAfter(order.orderId, false);
           loadOrders();
           loadStats();
           showToast("Order cancelled!", "success");
@@ -3213,7 +3625,8 @@
           console.error("Cancel error:", e);
           showToast("Cancel failed: " + parseContractError(e), "error");
         }
-      }
+      },
+      gasEstimate
     );
   }
 
@@ -3384,7 +3797,7 @@
       try {
         if (!payWithEth) {
           showToast("Checking allowance...", "info", true);
-          await V2.ensureAllowance(tokenB.address, totals.totalSend);
+          await SB.ensureAllowance(tokenB.address, totals.totalSend);
         }
 
         const deadline = Math.floor(Date.now() / 1000) + 300;
@@ -3396,12 +3809,12 @@
           // is also what finishes off already partially filled orders.
           const amounts = chunk.map(() => 0n);
 
-          if (!payWithEth) return V2.tryFillOrders(ids, deadline, amounts);
+          if (!payWithEth) return SB.tryFillOrders(ids, deadline, amounts);
 
           // Paying in ETH: msg.value covers this chunk, and the contract
           // refunds whatever any skipped orders leave unspent.
           const chunkValue = chunk.reduce((sum, o) => sum + BigInt(o.amountB), 0n);
-          return V2.tryFillOrdersWithEth(ids, deadline, amounts, chunkValue);
+          return SB.tryFillOrdersWithEth(ids, deadline, amounts, chunkValue);
         });
 
         clearSelection(false);
@@ -3475,12 +3888,12 @@
         cancelled += await runBatchTransactions(
           chunkArray(plain, CONFIG.MAX_BATCH_CANCEL),
           "Cancelling",
-          (chunk) => V2.cancelOrders(chunk.map((o) => o.orderId))
+          (chunk) => SB.cancelOrders(chunk.map((o) => o.orderId))
         );
         cancelled += await runBatchTransactions(
           chunkArray(unwrap, CONFIG.MAX_BATCH_CANCEL),
           "Cancelling",
-          (chunk) => V2.cancelOrdersUnwrap(chunk.map((o) => o.orderId))
+          (chunk) => SB.cancelOrdersUnwrap(chunk.map((o) => o.orderId))
         );
 
         clearSelection(false);
@@ -3810,11 +4223,14 @@
         rows.length > 1 ? "Order " + (i + 1) + " of " + rows.length : "";
     });
 
-    const atLimit = rows.length >= CONFIG.MAX_BATCH_CREATE;
+    // One order per transaction without a batch create entry point.
+    const rowLimit = CAPS.multiCreate ? CONFIG.MAX_BATCH_CREATE : 1;
+    const atLimit = rows.length >= rowLimit;
     $("#add-sell-btn").disabled = atLimit;
-    $("#create-limit-note").textContent = atLimit
-      ? "Limit reached — " + CONFIG.MAX_BATCH_CREATE + " orders per transaction"
-      : "";
+    $("#create-limit-note").textContent =
+      atLimit && CAPS.multiCreate
+        ? "Limit reached — " + CONFIG.MAX_BATCH_CREATE + " orders per transaction"
+        : "";
     $("#create-btn").textContent =
       rows.length > 1 ? "Create " + rows.length + " Orders" : "Create Order";
   }
@@ -3824,15 +4240,20 @@
    * @returns {HTMLElement|null} The new row, or null at the batch limit
    */
   function addCreateRow() {
-    if (getCreateRows().length >= CONFIG.MAX_BATCH_CREATE) return null;
+    const rowLimit = CAPS.multiCreate ? CONFIG.MAX_BATCH_CREATE : 1;
+    if (getCreateRows().length >= rowLimit) return null;
 
     const row = $("#create-row-template").content.firstElementChild.cloneNode(true);
 
     for (const side of ["tokenA", "tokenB"]) {
       setupRowTokenField(row, side);
-      row.querySelector('[data-eth-for="' + side + '"]').addEventListener("click", () => {
-        toggleRowNativeEth(row, side);
-      });
+      // The [ETH] shortcut fills in the native-ETH sentinel, which only v2
+      // understands; v1 reaches ETH by naming WETH like any other token.
+      if (CAPS.nativeEth) {
+        row.querySelector('[data-eth-for="' + side + '"]').addEventListener("click", () => {
+          toggleRowNativeEth(row, side);
+        });
+      }
     }
 
     rowField(row, "amountA").addEventListener("input", () => {
@@ -3934,8 +4355,9 @@
         amountA,
         tokenB: tokenBAddr,
         amountB,
-        // The checkbox is the opt-out, so partial fills are the default.
-        partialFill: !rowField(row, "no-partial").checked,
+        // The checkbox is the opt-out, so partial fills are the default —
+        // except on v1, where every order is all-or-nothing regardless.
+        partialFill: CAPS.partialFill && !rowField(row, "no-partial").checked,
         tokenAInfo: tokenA,
         tokenBInfo: tokenB,
         amountAStr,
@@ -3971,16 +4393,22 @@
         buildBatchItem(
           String(i + 1),
           `Sell ${p.amountAStr} ${p.tokenAInfo.symbol} for ${p.amountBStr} ${p.tokenBInfo.symbol}` +
-            (p.partialFill ? "" : " (no partial fills)")
+            // On v1 nothing partially fills, so saying so would be noise.
+            (!CAPS.partialFill || p.partialFill ? "" : " (no partial fills)")
         )
       );
     });
     body.appendChild(list);
 
-    // Orders offering native ETH go out through the payable entry point, so
-    // they are submitted separately from the ERC20 ones.
-    const ethParams = params.filter((p) => isNativeEth(p.tokenA));
-    const erc20Params = params.filter((p) => !isNativeEth(p.tokenA));
+    // Orders offering ETH go out through the payable entry point, so they are
+    // submitted separately from the ERC20 ones. What counts as "offering ETH"
+    // is version-dependent: v2 means the native-ETH sentinel, v1 means WETH.
+    const offersEth = (p) => offersEthDirectly(p.tokenA, ACTIVE_VERSION, isWeth);
+    const ethParams = params.filter(offersEth);
+    const erc20Params = params.filter((p) => !offersEth(p));
+
+    // Without batch entry points every order is its own transaction.
+    const createChunkSize = CAPS.batch ? CONFIG.MAX_BATCH_CREATE : 1;
 
     if (ethParams.length > 0 && erc20Params.length > 0) {
       const note = document.createElement("div");
@@ -3991,8 +4419,8 @@
       body.appendChild(note);
     }
 
-    appendBatchTxNote(body, erc20Params.length, CONFIG.MAX_BATCH_CREATE);
-    appendBatchTxNote(body, ethParams.length, CONFIG.MAX_BATCH_CREATE);
+    appendBatchTxNote(body, erc20Params.length, createChunkSize);
+    appendBatchTxNote(body, ethParams.length, createChunkSize);
 
     showModal(
       params.length > 1 ? `Create ${params.length} Orders` : "Create Order",
@@ -4004,51 +4432,52 @@
         setTextWithDots(createBtn, "Processing");
 
         try {
-          // One approval per distinct offered token, covering every row using it.
+          // One approval per distinct offered token, covering every row using
+          // it. Orders paying through msg.value have nothing to approve.
           const totals = new Map();
           for (const p of params) {
-            if (isNativeEth(p.tokenA)) continue;
+            if (offersEth(p)) continue;
             totals.set(p.tokenA, (totals.get(p.tokenA) || 0n) + p.amountA);
           }
 
           for (const [token, total] of totals) {
             setTextWithDots(createBtn, "Approving");
             showToast("Checking allowance...", "info", true);
-            await V2.ensureAllowance(token, total);
+            await SB.ensureAllowance(token, total);
           }
 
           setTextWithDots(createBtn, "Creating");
 
           await runBatchTransactions(
-            chunkArray(erc20Params, CONFIG.MAX_BATCH_CREATE),
+            chunkArray(erc20Params, createChunkSize),
             "Creating",
             (chunk) =>
               chunk.length === 1
-                ? V2.createOrder(
+                ? SB.createOrder(
                     chunk[0].tokenA,
                     chunk[0].amountA,
                     chunk[0].tokenB,
                     chunk[0].amountB,
                     chunk[0].partialFill
                   )
-                : V2.createOrders(chunk)
+                : SB.createOrders(chunk)
           );
 
-          // Offering native ETH means the amount rides in msg.value, so these
-          // go through the payable variant with no tokenA argument.
+          // Offering ETH means the amount rides in msg.value, so these go
+          // through the payable variant with no tokenA argument.
           await runBatchTransactions(
-            chunkArray(ethParams, CONFIG.MAX_BATCH_CREATE),
+            chunkArray(ethParams, createChunkSize),
             "Creating",
             (chunk) => {
               const value = chunk.reduce((sum, p) => sum + p.amountA, 0n);
               return chunk.length === 1
-                ? V2.createOrderWithEth(
+                ? SB.createOrderWithEth(
                     chunk[0].tokenB,
                     chunk[0].amountB,
                     chunk[0].partialFill,
                     value
                   )
-                : V2.createOrdersWithEth(chunk, value);
+                : SB.createOrdersWithEth(chunk, value);
             }
           );
 
@@ -4597,6 +5026,10 @@
 
     validateConfig();
 
+    // Before anything renders: the version decides the table's columns and
+    // which controls exist at all.
+    applyVersionUi();
+
     // Initialize dark mode from localStorage or system preference
     initTheme();
 
@@ -4923,26 +5356,34 @@
       loadOrders();
     });
 
-    // Selection bar
-    $("#select-all-orders").addEventListener("click", (e) => {
-      e.preventDefault();
-      selectAllOwnOrders();
-    });
+    // Selection bar. Left unwired without batch entry points — the bar and its
+    // checkboxes are hidden in that case, so there is nothing to listen to.
+    if (CAPS.batch) {
+      $("#select-all-orders").addEventListener("click", (e) => {
+        e.preventDefault();
+        selectAllOwnOrders();
+      });
 
-    $("#selection-clear").addEventListener("click", (e) => {
-      e.preventDefault();
-      clearSelection();
-    });
+      $("#selection-clear").addEventListener("click", (e) => {
+        e.preventDefault();
+        clearSelection();
+      });
 
-    $("#batch-fill-btn").addEventListener("click", async (e) => {
-      e.preventDefault();
-      if (!userAddress) await connectWallet();
-      if (userAddress) fillSelectedOrders();
-    });
+      $("#batch-fill-btn").addEventListener("click", async (e) => {
+        e.preventDefault();
+        if (!userAddress) await connectWallet();
+        if (userAddress) fillSelectedOrders();
+      });
 
-    $("#batch-cancel-btn").addEventListener("click", (e) => {
-      e.preventDefault();
-      cancelSelectedOrders();
+      $("#batch-cancel-btn").addEventListener("click", (e) => {
+        e.preventDefault();
+        cancelSelectedOrders();
+      });
+    }
+
+    // Protocol version switcher
+    document.querySelectorAll("#version-switch .version-option").forEach((btn) => {
+      btn.addEventListener("click", () => setVersion(Number(btn.dataset.version)));
     });
 
     $("#prev-page").addEventListener("click", () => {

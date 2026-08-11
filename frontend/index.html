@@ -51,8 +51,21 @@
   </head>
   <body>
     <header>
-      <h1><span class="header-box">Welcome to SWAPBOARD v2</span></h1>
+      <h1><span class="header-box" id="app-title">Welcome to SWAPBOARD</span></h1>
       <div class="header-right">
+        <!--
+          Protocol version switcher. v1 is deployed and live; v2 runs against
+          stubbed contracts until its own are. app.js sets aria-pressed and
+          fills in the titles, and switching reloads the page.
+        -->
+        <span id="version-switch" role="group" aria-label="Protocol version">
+          <button type="button" class="version-option" data-version="1" aria-pressed="false">
+            v1
+          </button>
+          <button type="button" class="version-option" data-version="2" aria-pressed="false">
+            v2
+          </button>
+        </span>
         <a href="#" id="theme-btn" title="Toggle dark mode">
           <svg
             id="theme-icon-sun"
@@ -130,7 +143,8 @@
     </p>
 
     <p class="version-note">
-      V2: partial fills, batch fill/cancel/create, and native ETH.
+      <!-- Filled by app.js to match the active version. -->
+      <span id="version-note-text"></span>
       Feedback and suggestions via
       <a href="https://github.com/ETHCF/swapboard/discussions" target="_blank" rel="noopener noreferrer"
         >GitHub Discussions</a
