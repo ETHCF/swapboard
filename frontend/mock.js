@@ -90,15 +90,24 @@
   // its full timeout.
   window.SWAPBOARD_MOCK = true;
 
-  // Show mock mode banner
+  // Show mock mode banner.
+  //
+  // Pinned to the bottom: at the top it sat over the header, hiding the title
+  // and clipping the version switcher and wallet button behind it.
   document.addEventListener("DOMContentLoaded", function () {
     const banner = document.createElement("div");
     banner.id = "mock-banner";
     banner.style.cssText =
-      "position:fixed;top:0;left:0;right:0;background:#ff6600;color:#fff;padding:8px 15px;font-size:13px;font-weight:bold;z-index:9999;display:flex;justify-content:space-between;align-items:center;font-family:monospace;";
+      "position:fixed;bottom:0;left:0;right:0;background:#ff6600;color:#fff;padding:8px 15px;font-size:13px;font-weight:bold;z-index:9999;display:flex;justify-content:space-between;align-items:center;font-family:monospace;";
     banner.innerHTML =
       'MOCK MODE ACTIVE - Data is simulated <button id="mock-disable" style="background:#fff;color:#ff6600;border:none;padding:4px 10px;cursor:pointer;font-weight:bold;font-family:inherit;">Disable</button>';
-    document.body.prepend(banner);
+    document.body.appendChild(banner);
+
+    // A fixed banner is out of flow, so the end of the page would otherwise
+    // scroll underneath it and stay unreachable. Measured rather than assumed,
+    // since the height moves with font size and wrapping.
+    document.body.style.paddingBottom = banner.offsetHeight + "px";
+
     document.getElementById("mock-disable").addEventListener("click", function () {
       localStorage.setItem(STORAGE_KEY, "false");
       window.location.reload();
