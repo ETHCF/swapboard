@@ -38,6 +38,7 @@ contract EthReentrantReceiver {
         _orderId = orderId;
     }
 
+    // solhint-disable no-complex-fallback
     receive() external payable {
         if (_attacking || _attack == Attack.None) {
             return;
