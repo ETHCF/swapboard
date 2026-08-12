@@ -43,18 +43,18 @@ contract SwapboardIntegrationTest is Test {
     function test_multipleUsersMultipleOrders() public {
         vm.startPrank(_alice);
         _weth.approve(address(_board), 100 ether);
-        uint256 order0 = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6);
-        uint256 order1 = _board.createOrder(address(_weth), 20 ether, address(_usdc), 58_000e6);
+        uint256 order0 = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6, false);
+        uint256 order1 = _board.createOrder(address(_weth), 20 ether, address(_usdc), 58_000e6, false);
         vm.stopPrank();
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 1_000_000e6);
-        uint256 order2 = _board.createOrder(address(_usdc), 100_000e6, address(_weth), 35 ether);
+        uint256 order2 = _board.createOrder(address(_usdc), 100_000e6, address(_weth), 35 ether, false);
         vm.stopPrank();
 
         vm.startPrank(_dave);
         _wbtc.approve(address(_board), 10e8);
-        uint256 order3 = _board.createOrder(address(_wbtc), 1e8, address(_usdc), 95_000e6);
+        uint256 order3 = _board.createOrder(address(_wbtc), 1e8, address(_usdc), 95_000e6, false);
         vm.stopPrank();
 
         assertEq(_board.getNextOrderId(), 4);
@@ -84,7 +84,7 @@ contract SwapboardIntegrationTest is Test {
     function test_orderLifecycle_createFill() public {
         vm.startPrank(_alice);
         _weth.approve(address(_board), 50 ether);
-        uint256 orderId = _board.createOrder(address(_weth), 50 ether, address(_usdc), 150_000e6);
+        uint256 orderId = _board.createOrder(address(_weth), 50 ether, address(_usdc), 150_000e6, false);
         vm.stopPrank();
 
         uint256 bobWethBefore = _weth.balanceOf(_bob);
@@ -109,7 +109,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_alice);
         _weth.approve(address(_board), 50 ether);
-        uint256 orderId = _board.createOrder(address(_weth), 50 ether, address(_usdc), 150_000e6);
+        uint256 orderId = _board.createOrder(address(_weth), 50 ether, address(_usdc), 150_000e6, false);
 
         assertEq(_weth.balanceOf(_alice), aliceWethBefore - 50 ether);
         assertEq(_weth.balanceOf(address(_board)), 50 ether);
@@ -128,7 +128,7 @@ contract SwapboardIntegrationTest is Test {
     function test_raceCondition_twoFillersOneOrder() public {
         vm.startPrank(_alice);
         _weth.approve(address(_board), 10 ether);
-        uint256 orderId = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6);
+        uint256 orderId = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6, false);
         vm.stopPrank();
 
         vm.prank(_bob);
@@ -152,7 +152,7 @@ contract SwapboardIntegrationTest is Test {
     function test_raceCondition_fillAndCancel() public {
         vm.startPrank(_alice);
         _weth.approve(address(_board), 10 ether);
-        uint256 orderId = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6);
+        uint256 orderId = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6, false);
         vm.stopPrank();
 
         vm.prank(_bob);
@@ -173,7 +173,7 @@ contract SwapboardIntegrationTest is Test {
 
         uint256[] memory orderIds = new uint256[](10);
         for (uint256 i = 0; i < 10; ++i) {
-            orderIds[i] = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6);
+            orderIds[i] = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6, false);
         }
         vm.stopPrank();
 
@@ -215,7 +215,7 @@ contract SwapboardIntegrationTest is Test {
     function test_differentDecimalTokens() public {
         vm.startPrank(_dave);
         _wbtc.approve(address(_board), 1e8);
-        uint256 orderId = _board.createOrder(address(_wbtc), 1e8, address(_dai), 95_000 ether);
+        uint256 orderId = _board.createOrder(address(_wbtc), 1e8, address(_dai), 95_000 ether, false);
         vm.stopPrank();
 
         vm.startPrank(_bob);
@@ -234,7 +234,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_alice);
         _weth.approve(address(_board), largeAmount);
-        uint256 orderId = _board.createOrder(address(_weth), largeAmount, address(_usdc), 1e6);
+        uint256 orderId = _board.createOrder(address(_weth), largeAmount, address(_usdc), 1e6, false);
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
@@ -252,7 +252,7 @@ contract SwapboardIntegrationTest is Test {
     function test_dustAmounts() public {
         vm.startPrank(_alice);
         _weth.approve(address(_board), 1);
-        uint256 orderId = _board.createOrder(address(_weth), 1, address(_usdc), 1);
+        uint256 orderId = _board.createOrder(address(_weth), 1, address(_usdc), 1, false);
         vm.stopPrank();
 
         vm.startPrank(_bob);
@@ -276,9 +276,10 @@ contract SwapboardIntegrationTest is Test {
             tokenA: address(_weth),
             amountA: 10 ether,
             tokenB: address(_usdc),
-            amountB: 30_000e6
+            amountB: 30_000e6,
+            partialFillAllowed: false
         });
-        uint256 orderId = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6);
+        uint256 orderId = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6, false);
         vm.stopPrank();
 
         vm.startPrank(_bob);
@@ -294,8 +295,8 @@ contract SwapboardIntegrationTest is Test {
     function test_getOrdersWithNonExistent() public {
         vm.startPrank(_alice);
         _weth.approve(address(_board), 20 ether);
-        _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6);
-        _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6);
+        _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6, false);
+        _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6, false);
         vm.stopPrank();
 
         uint256[] memory ids = new uint256[](4);
@@ -321,7 +322,7 @@ contract SwapboardIntegrationTest is Test {
         _weth.approve(address(_board), numOrders * 1 ether);
 
         for (uint256 i = 0; i < numOrders; ++i) {
-            _board.createOrder(address(_weth), 1 ether, address(_usdc), 3000e6);
+            _board.createOrder(address(_weth), 1 ether, address(_usdc), 3000e6, false);
         }
         vm.stopPrank();
 

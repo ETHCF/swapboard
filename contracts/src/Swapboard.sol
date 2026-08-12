@@ -15,7 +15,7 @@ import {Semver} from "./Semver.sol";
 ///
 ///      Key properties:
 ///      - No admin functions, fees, or upgrades
-///      - Orders are filled atomically (all-or-nothing)
+///      - Orders are filled atomically (all-or-nothing); `partialFillAllowed` is stored but not enforced yet
 ///      - Fee-on-transfer tokens are rejected for tokenA (selling token)
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
 ///      - Reentrancy protected via OpenZeppelin ReentrancyGuardTransient (EIP-1153)
@@ -53,7 +53,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address tokenA,
         uint256 amountA,
         address tokenB,
-        uint256 amountB
+        uint256 amountB,
+        bool partialFillAllowed
     ) external payable nonReentrant returns (uint256 orderId) {
         _validateCreateOrder(tokenA, amountA, tokenB, amountB);
 
@@ -68,11 +69,23 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         _orders[orderId] = Order({
-            maker: msg.sender, active: true, tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB
+            maker: msg.sender,
+            active: true,
+            partialFillAllowed: partialFillAllowed,
+            tokenA: tokenA,
+            amountA: amountA,
+            tokenB: tokenB,
+            amountB: amountB
         });
 
         emit OrderCreated({
-            orderId: orderId, maker: msg.sender, tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB
+            orderId: orderId,
+            maker: msg.sender,
+            tokenA: tokenA,
+            amountA: amountA,
+            tokenB: tokenB,
+            amountB: amountB,
+            partialFillAllowed: partialFillAllowed
         });
     }
 

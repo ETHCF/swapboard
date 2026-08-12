@@ -162,7 +162,7 @@ contract SwapboardHandler is Test {
 
         ++_callsCreateOrder;
 
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
 
         _ghostTotalTokenADeposited += amountA;
         ++_ghostOrdersCreated;
@@ -186,7 +186,7 @@ contract SwapboardHandler is Test {
 
         ++_callsCreateOrderSellEth;
 
-        uint256 orderId = _board.createOrder{value: amountA}(_ETH, amountA, address(_tokenB), amountB);
+        uint256 orderId = _board.createOrder{value: amountA}(_ETH, amountA, address(_tokenB), amountB, false);
 
         _ghostTotalEthDeposited += amountA;
         ++_ghostOrdersCreated;
@@ -210,7 +210,7 @@ contract SwapboardHandler is Test {
 
         ++_callsCreateOrderWantEth;
 
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, _ETH, amountB);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA, _ETH, amountB, false);
 
         _ghostTotalTokenADeposited += amountA;
         ++_ghostOrdersCreated;
