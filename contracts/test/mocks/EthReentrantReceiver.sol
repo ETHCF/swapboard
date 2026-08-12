@@ -51,7 +51,7 @@ contract EthReentrantReceiver {
         } else if (_attack == Attack.Cancel) {
             try _BOARD.cancelOrder(_orderId) {} catch {}
         } else if (_attack == Attack.Create) {
-            try _BOARD.createOrder{value: 0}(address(_TOKEN), 1, address(_TOKEN), 1) {} catch {}
+            try _BOARD.createOrder{value: 0}(address(_TOKEN), 1, address(_TOKEN), 1, false) {} catch {}
         }
 
         _attacking = false;

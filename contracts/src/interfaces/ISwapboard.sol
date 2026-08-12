@@ -13,6 +13,7 @@ interface ISwapboard is ISemver {
     /// @notice Represents a single OTC order
     /// @param maker Address that created the order and deposited tokenA
     /// @param active Whether the order can still be filled or cancelled
+    /// @param partialFillAllowed Whether the order may be filled in multiple parts
     /// @param tokenA Address of the token being sold (held in escrow)
     /// @param amountA Amount of tokenA deposited by maker (in base units)
     /// @param tokenB Address of the token maker wants to receive
@@ -20,6 +21,7 @@ interface ISwapboard is ISemver {
     struct Order {
         address maker;
         bool active;
+        bool partialFillAllowed;
         address tokenA;
         uint256 amountA;
         address tokenB;
@@ -34,8 +36,15 @@ interface ISwapboard is ISemver {
     /// @param amountA Amount of tokenA deposited
     /// @param tokenB Address of the token wanted
     /// @param amountB Amount of tokenB required to fill
+    /// @param partialFillAllowed Whether the order may be filled in multiple parts
     event OrderCreated(
-        uint256 indexed orderId, address indexed maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB
+        uint256 indexed orderId,
+        address indexed maker,
+        address tokenA,
+        uint256 amountA,
+        address tokenB,
+        uint256 amountB,
+        bool partialFillAllowed
     );
     // solhint-enable gas-indexed-events
 
@@ -96,12 +105,14 @@ interface ISwapboard is ISemver {
     /// @param amountA Amount of tokenA to deposit (in base units / wei)
     /// @param tokenB Address of the asset wanted in exchange (`getEth()` for native ETH)
     /// @param amountB Amount of tokenB required to fill the order
+    /// @param partialFillAllowed Whether the order may be filled in multiple parts
     /// @return orderId The unique identifier for the created order
     function createOrder(
         address tokenA,
         uint256 amountA,
         address tokenB,
-        uint256 amountB
+        uint256 amountB,
+        bool partialFillAllowed
     ) external payable returns (uint256 orderId);
 
     /// @notice Fills an existing order

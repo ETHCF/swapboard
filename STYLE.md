@@ -53,6 +53,7 @@ Always use **named** fields for struct literals and event emits. Never rely on p
 _orders[orderId] = Order({
     maker: msg.sender,
     active: true,
+    partialFillAllowed: partialFillAllowed,
     tokenA: tokenA,
     amountA: amountA,
     tokenB: tokenB,
@@ -65,7 +66,8 @@ emit OrderCreated({
     tokenA: tokenA,
     amountA: amountA,
     tokenB: tokenB,
-    amountB: amountB
+    amountB: amountB,
+    partialFillAllowed: partialFillAllowed
 });
 
 emit OrderFilled({orderId: orderId, taker: msg.sender});
