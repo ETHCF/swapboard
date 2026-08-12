@@ -1,5 +1,9 @@
 .PHONY: all build build-contracts test test-contracts test-e2e clean install fmt fmt-check lint coverage
 
+# Host port for local Anvil (e2e Docker maps 18545:8545; avoids clashes with RPC tunnels on 8545)
+ANVIL_RPC_URL ?= http://localhost:18545
+ANVIL_PORT ?= 18545
+
 all: build test
 
 # Install dependencies
@@ -42,10 +46,10 @@ fmt:
 fmt-check:
 	cd contracts && forge fmt --check
 
-# Lint contracts (forge lint + solhint)
+# Lint contracts (forge lint + solhint). Non-zero exit on any forge lint warnings or solhint issues.
 lint:
-	cd contracts && forge lint
-	cd contracts && npx --yes solhint 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
+	cd contracts && forge lint --deny warnings
+	cd contracts && npx --yes solhint --max-warnings 0 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 
 # Clean build artifacts
 clean:
@@ -53,20 +57,15 @@ clean:
 	rm -rf subgraph/build subgraph/generated
 	rm -rf e2e/node_modules/.cache
 
-# Run local Anvil node
+# Run local Anvil node (same host port as e2e)
 anvil:
-	anvil --block-time 1
+	anvil --block-time 1 --host 0.0.0.0 --port $(ANVIL_PORT)
 
-# Deploy to local Anvil (deploys MockWETH first, then Swapboard)
+# Deploy to local Anvil
 deploy-local:
 	@cd contracts && \
-	WETH_ADDR=$$(forge create test/mocks/MockWETH.sol:MockWETH \
-		--rpc-url http://localhost:8545 \
-		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-		--broadcast --json | jq -r '.deployedTo') && \
-	echo "MockWETH deployed at: $$WETH_ADDR" && \
-	WETH_ADDRESS=$$WETH_ADDR forge script script/Deploy.s.sol \
-		--rpc-url http://localhost:8545 \
+	forge script script/Deploy.s.sol \
+		--rpc-url $(ANVIL_RPC_URL) \
 		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
 		--broadcast
 
@@ -96,8 +95,8 @@ help:
 	@echo "  fmt-check       - Check Solidity formatting"
 	@echo "  lint            - Lint Solidity (forge lint + solhint)"
 	@echo "  clean           - Clean build artifacts"
-	@echo "  anvil           - Start local Anvil node"
-	@echo "  deploy-local    - Deploy to local Anvil"
+	@echo "  anvil           - Start local Anvil on port $(ANVIL_PORT)"
+	@echo "  deploy-local    - Deploy to local Anvil ($(ANVIL_RPC_URL))"
 	@echo "  snapshot        - Generate gas snapshot"
 	@echo "  slither         - Run Slither analysis"
 	@echo "  serve           - Start frontend dev server"

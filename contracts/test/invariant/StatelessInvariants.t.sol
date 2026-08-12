@@ -8,7 +8,6 @@ import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
 import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
-import {MockWETH} from "../mocks/MockWETH.sol";
 
 /// @title SwapboardStatelessInvariantTest
 /// @notice Stateless invariant tests using direct property assertions
@@ -16,15 +15,13 @@ contract SwapboardStatelessInvariantTest is Test {
     Swapboard internal _board;
     MockERC20 internal _tokenA;
     MockERC20 internal _tokenB;
-    MockWETH internal _mockWeth;
 
     address internal _maker = makeAddr("maker");
     address internal _taker = makeAddr("taker");
 
     /// @notice Deploys fixtures for each test
     function setUp() public {
-        _mockWeth = new MockWETH();
-        _board = new Swapboard(address(_mockWeth));
+        _board = new Swapboard();
         _tokenA = new MockERC20("Token A", "TKA", 18);
         _tokenB = new MockERC20("Token B", "TKB", 18);
 

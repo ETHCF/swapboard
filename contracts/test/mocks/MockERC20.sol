@@ -11,8 +11,8 @@ contract MockERC20 {
     uint8 private _decimals;
 
     uint256 internal _totalSupply;
-    mapping(address => uint256) internal _balanceOf;
-    mapping(address => mapping(address => uint256)) internal _allowance;
+    mapping(address account => uint256 balance) internal _balanceOf;
+    mapping(address owner => mapping(address spender => uint256 allowance)) internal _allowance;
 
     // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);

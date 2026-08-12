@@ -8,7 +8,6 @@ pragma solidity 0.8.36;
 import {Test, console2} from "forge-std/Test.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
-import {MockWETH} from "./mocks/MockWETH.sol";
 
 /// @title GasBenchmarks
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
@@ -17,15 +16,13 @@ contract GasBenchmarks is Test {
     Swapboard internal _board;
     MockERC20 internal _tokenA;
     MockERC20 internal _tokenB;
-    MockWETH internal _mockWeth;
 
     address internal _maker = makeAddr("maker");
     address internal _taker = makeAddr("taker");
 
     /// @notice Deploys Swapboard, tokens, and approvals for gas benchmarks
     function setUp() public {
-        _mockWeth = new MockWETH();
-        _board = new Swapboard(address(_mockWeth));
+        _board = new Swapboard();
         _tokenA = new MockERC20("Token A", "TKA", 18);
         _tokenB = new MockERC20("Token B", "TKB", 18);
 

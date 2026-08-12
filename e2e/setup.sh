@@ -42,22 +42,12 @@ forge build
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 DEPLOYER_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 
-# Deploy MockWETH (needed as constructor arg for Swapboard)
-WETH_OUTPUT=$(forge create test/mocks/MockWETH.sol:MockWETH \
-  --rpc-url "$RPC_URL" \
-  --private-key $DEPLOYER_KEY \
-  --broadcast \
-  --json)
-WETH_ADDR=$(echo "$WETH_OUTPUT" | jq -r '.deployedTo')
-echo "WETH deployed at: $WETH_ADDR"
-
 # Deploy Swapboard
 DEPLOY_OUTPUT=$(forge create src/Swapboard.sol:Swapboard \
   --rpc-url "$RPC_URL" \
   --private-key $DEPLOYER_KEY \
   --broadcast \
-  --json \
-  --constructor-args "$WETH_ADDR")
+  --json)
 
 CONTRACT_ADDR=$(echo "$DEPLOY_OUTPUT" | jq -r '.deployedTo')
 DEPLOY_BLOCK=$(cast block-number --rpc-url "$RPC_URL")
@@ -165,7 +155,7 @@ cat > "$SCRIPT_DIR/.env.e2e" << EOF
 RPC_URL=$RPC_URL
 SUBGRAPH_URL=http://localhost:8100/subgraphs/name/swapboard
 CONTRACT_ADDR=$CONTRACT_ADDR
-WETH_ADDR=$WETH_ADDR
+ETH_ADDR=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE
 TOKENA_ADDR=$TOKENA_ADDR
 TOKENB_ADDR=$TOKENB_ADDR
 DEPLOYER_KEY=$DEPLOYER_KEY

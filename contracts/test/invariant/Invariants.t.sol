@@ -8,7 +8,6 @@ pragma solidity 0.8.36;
 import {Test, console2} from "forge-std/Test.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
-import {MockWETH} from "../mocks/MockWETH.sol";
 import {SwapboardHandler} from "./Handler.sol";
 
 /// @title SwapboardInvariantTest
@@ -18,13 +17,11 @@ contract SwapboardInvariantTest is Test {
     Swapboard internal _board;
     MockERC20 internal _tokenA;
     MockERC20 internal _tokenB;
-    MockWETH internal _mockWeth;
     SwapboardHandler internal _handler;
 
     /// @notice Deploys fixtures for each test
     function setUp() public {
-        _mockWeth = new MockWETH();
-        _board = new Swapboard(address(_mockWeth));
+        _board = new Swapboard();
         _tokenA = new MockERC20("Token A", "TKA", 18);
         _tokenB = new MockERC20("Token B", "TKB", 18);
         _handler = new SwapboardHandler(_board, _tokenA, _tokenB);
@@ -47,12 +44,28 @@ contract SwapboardInvariantTest is Test {
         assertEq(actualBalance, expectedBalance, "Solvency violated: balance mismatch");
     }
 
+    /// @notice Contract ETH balance must equal deposited minus withdrawn
+    function invariant_ethSolvency() public view {
+        uint256 actualBalance = address(_board).balance;
+        uint256 expectedBalance = _handler.getGhostTotalEthDeposited() - _handler.getGhostTotalEthWithdrawn();
+
+        assertEq(actualBalance, expectedBalance, "ETH solvency violated: balance mismatch");
+    }
+
     /// @notice Contract balance must equal sum of all active order amounts
     function invariant_balanceEqualsActiveOrderSum() public view {
         uint256 actualBalance = _tokenA.balanceOf(address(_board));
         uint256 activeOrderSum = _handler.sumActiveOrderAmounts();
 
         assertEq(actualBalance, activeOrderSum, "Balance does not equal sum of active orders");
+    }
+
+    /// @notice Contract ETH balance must equal sum of active ETH sell orders
+    function invariant_ethBalanceEqualsActiveOrderSum() public view {
+        uint256 actualBalance = address(_board).balance;
+        uint256 activeOrderSum = _handler.sumActiveEthOrderAmounts();
+
+        assertEq(actualBalance, activeOrderSum, "ETH balance does not equal sum of active ETH orders");
     }
 
     /// @notice Orders created must equal filled + cancelled + active
@@ -97,13 +110,16 @@ contract SwapboardInvariantTest is Test {
     function invariant_callSummary() public view {
         console2.log("--- Invariant Test Summary ---");
         console2.log("createOrder calls:", _handler.getCallsCreateOrder());
+        console2.log("createOrderSellEth calls:", _handler.getCallsCreateOrderSellEth());
+        console2.log("createOrderWantEth calls:", _handler.getCallsCreateOrderWantEth());
         console2.log("fillOrder calls:", _handler.getCallsFillOrder());
         console2.log("cancelOrder calls:", _handler.getCallsCancelOrder());
         console2.log("Orders created:", _handler.getGhostOrdersCreated());
         console2.log("Orders filled:", _handler.getGhostOrdersFilled());
         console2.log("Orders cancelled:", _handler.getGhostOrdersCancelled());
         console2.log("Active orders:", _handler.getGhostActiveOrders());
-        console2.log("Contract balance:", _tokenA.balanceOf(address(_board)));
+        console2.log("Contract tokenA balance:", _tokenA.balanceOf(address(_board)));
+        console2.log("Contract ETH balance:", address(_board).balance);
         console2.log("------------------------------");
     }
 }

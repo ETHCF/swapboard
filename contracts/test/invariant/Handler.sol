@@ -15,18 +15,21 @@ contract SwapboardHandler is Test {
     Swapboard internal _board;
     MockERC20 internal _tokenA;
     MockERC20 internal _tokenB;
+    address private immutable _ETH;
 
     // Ghost variables for tracking state
     uint256 private _ghostTotalTokenADeposited;
     uint256 private _ghostTotalTokenAWithdrawn;
+    uint256 private _ghostTotalEthDeposited;
+    uint256 private _ghostTotalEthWithdrawn;
     uint256 private _ghostOrdersCreated;
     uint256 private _ghostOrdersFilled;
     uint256 private _ghostOrdersCancelled;
     uint256 private _ghostActiveOrders;
 
     // Track individual order amounts for precise accounting
-    mapping(uint256 => uint256) private _ghostOrderAmounts;
-    mapping(uint256 => bool) private _ghostOrderActive;
+    mapping(uint256 orderId => uint256 amount) private _ghostOrderAmounts;
+    mapping(uint256 orderId => bool active) private _ghostOrderActive;
 
     // Actors
     address[] internal _actors;
@@ -34,6 +37,8 @@ contract SwapboardHandler is Test {
 
     // Counters for call tracking
     uint256 private _callsCreateOrder;
+    uint256 private _callsCreateOrderSellEth;
+    uint256 private _callsCreateOrderWantEth;
     uint256 private _callsFillOrder;
     uint256 private _callsCancelOrder;
 
@@ -54,6 +59,7 @@ contract SwapboardHandler is Test {
         _board = board;
         _tokenA = tokenA;
         _tokenB = tokenB;
+        _ETH = board.getEth();
 
         // Setup actors
         _actors.push(address(0x1001));
@@ -62,10 +68,11 @@ contract SwapboardHandler is Test {
         _actors.push(address(0x1004));
         _actors.push(address(0x1005));
 
-        // Mint tokens to all actors
+        // Mint tokens and ETH to all actors
         for (uint256 i = 0; i < _actors.length; ++i) {
             _tokenA.mint(_actors[i], 1_000_000 ether);
             _tokenB.mint(_actors[i], 1_000_000 ether);
+            vm.deal(_actors[i], 1000 ether);
 
             vm.prank(_actors[i]);
             _tokenA.approve(address(_board), type(uint256).max);
@@ -81,6 +88,14 @@ contract SwapboardHandler is Test {
 
     function getGhostTotalTokenAWithdrawn() external view returns (uint256) {
         return _ghostTotalTokenAWithdrawn;
+    }
+
+    function getGhostTotalEthDeposited() external view returns (uint256) {
+        return _ghostTotalEthDeposited;
+    }
+
+    function getGhostTotalEthWithdrawn() external view returns (uint256) {
+        return _ghostTotalEthWithdrawn;
     }
 
     function getGhostOrdersCreated() external view returns (uint256) {
@@ -115,6 +130,14 @@ contract SwapboardHandler is Test {
         return _callsCreateOrder;
     }
 
+    function getCallsCreateOrderSellEth() external view returns (uint256) {
+        return _callsCreateOrderSellEth;
+    }
+
+    function getCallsCreateOrderWantEth() external view returns (uint256) {
+        return _callsCreateOrderWantEth;
+    }
+
     function getCallsFillOrder() external view returns (uint256) {
         return _callsFillOrder;
     }
@@ -123,7 +146,7 @@ contract SwapboardHandler is Test {
         return _callsCancelOrder;
     }
 
-    /// @notice Creates a new order with bounded amounts
+    /// @notice Creates a new ERC20/ERC20 order with bounded amounts
     function createOrder(
         uint256 actorSeed,
         uint256 amountA,
@@ -148,7 +171,55 @@ contract SwapboardHandler is Test {
         _ghostOrderActive[orderId] = true;
     }
 
-    /// @notice Fills an existing order
+    /// @notice Creates an ETH sell order (tokenA = ETH)
+    function createOrderSellEth(
+        uint256 actorSeed,
+        uint256 amountA,
+        uint256 amountB
+    ) external useActor(actorSeed) {
+        amountA = bound(amountA, 1, 10 ether);
+        amountB = bound(amountB, 1, 1000 ether);
+
+        if (_currentActor.balance < amountA) {
+            return;
+        }
+
+        ++_callsCreateOrderSellEth;
+
+        uint256 orderId = _board.createOrder{value: amountA}(_ETH, amountA, address(_tokenB), amountB);
+
+        _ghostTotalEthDeposited += amountA;
+        ++_ghostOrdersCreated;
+        ++_ghostActiveOrders;
+        _ghostOrderAmounts[orderId] = amountA;
+        _ghostOrderActive[orderId] = true;
+    }
+
+    /// @notice Creates an order wanting ETH payment (tokenB = ETH)
+    function createOrderWantEth(
+        uint256 actorSeed,
+        uint256 amountA,
+        uint256 amountB
+    ) external useActor(actorSeed) {
+        amountA = bound(amountA, 1, 1000 ether);
+        amountB = bound(amountB, 1, 10 ether);
+
+        if (_tokenA.balanceOf(_currentActor) < amountA) {
+            return;
+        }
+
+        ++_callsCreateOrderWantEth;
+
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA, _ETH, amountB);
+
+        _ghostTotalTokenADeposited += amountA;
+        ++_ghostOrdersCreated;
+        ++_ghostActiveOrders;
+        _ghostOrderAmounts[orderId] = amountA;
+        _ghostOrderActive[orderId] = true;
+    }
+
+    /// @notice Fills an existing order (ERC20 or ETH payment as required)
     function fillOrder(
         uint256 actorSeed,
         uint256 orderIdSeed
@@ -165,16 +236,30 @@ contract SwapboardHandler is Test {
             return; // Order not active
         }
 
-        uint256 takerBalance = _tokenB.balanceOf(_currentActor);
-        if (takerBalance < order.amountB) {
-            return; // Insufficient balance
+        if (order.tokenB == _ETH) {
+            if (_currentActor.balance < order.amountB) {
+                return;
+            }
+        } else {
+            if (_tokenB.balanceOf(_currentActor) < order.amountB) {
+                return;
+            }
         }
 
         ++_callsFillOrder;
 
-        _board.fillOrder(orderId, 0);
+        if (order.tokenB == _ETH) {
+            _board.fillOrder{value: order.amountB}(orderId, 0);
+        } else {
+            _board.fillOrder(orderId, 0);
+        }
 
-        _ghostTotalTokenAWithdrawn += order.amountA;
+        if (order.tokenA == _ETH) {
+            _ghostTotalEthWithdrawn += order.amountA;
+        } else if (order.tokenA == address(_tokenA)) {
+            _ghostTotalTokenAWithdrawn += order.amountA;
+        }
+
         ++_ghostOrdersFilled;
         --_ghostActiveOrders;
         _ghostOrderActive[orderId] = false;
@@ -203,7 +288,12 @@ contract SwapboardHandler is Test {
 
         _board.cancelOrder(orderId);
 
-        _ghostTotalTokenAWithdrawn += order.amountA;
+        if (order.tokenA == _ETH) {
+            _ghostTotalEthWithdrawn += order.amountA;
+        } else if (order.tokenA == address(_tokenA)) {
+            _ghostTotalTokenAWithdrawn += order.amountA;
+        }
+
         ++_ghostOrdersCancelled;
         --_ghostActiveOrders;
         _ghostOrderActive[orderId] = false;
@@ -230,13 +320,25 @@ contract SwapboardHandler is Test {
         }
     }
 
-    /// @notice Get sum of all active order amounts
+    /// @notice Sum of active ERC20 tokenA escrow amounts
     function sumActiveOrderAmounts() external view returns (uint256 total) {
         uint256 nextId = _board.getNextOrderId();
 
         for (uint256 i = 0; i < nextId; ++i) {
             ISwapboard.Order memory order = _board.getOrder(i);
-            if (order.active) {
+            if (order.active && order.tokenA == address(_tokenA)) {
+                total += order.amountA;
+            }
+        }
+    }
+
+    /// @notice Sum of active ETH tokenA escrow amounts
+    function sumActiveEthOrderAmounts() external view returns (uint256 total) {
+        uint256 nextId = _board.getNextOrderId();
+
+        for (uint256 i = 0; i < nextId; ++i) {
+            ISwapboard.Order memory order = _board.getOrder(i);
+            if (order.active && order.tokenA == _ETH) {
                 total += order.amountA;
             }
         }
