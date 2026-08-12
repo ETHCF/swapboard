@@ -1141,6 +1141,9 @@ if (typeof window !== "undefined") {
     formatUsd,
     formatAmount,
 
+    // Price registry
+    COINGECKO_ID_MAP,
+
     // Protocol version
     VERSION_STORAGE_KEY,
     DEFAULT_VERSION,

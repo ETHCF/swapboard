@@ -717,6 +717,9 @@
    * @constant {Object.<string, number>}
    */
   const MOCK_PRICES = {
+    // Native ETH and WETH are the same asset, so they have to price alike —
+    // otherwise a v2 ETH order and its WETH twin show different USD values.
+    ethereum: 3500,
     weth: 3500,
     "usd-coin": 1.0,
     tether: 1.0,

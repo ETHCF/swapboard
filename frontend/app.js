@@ -24,6 +24,7 @@
     truncateAddress,
     formatUsd,
     formatAmount,
+    COINGECKO_ID_MAP,
     // Protocol version
     VERSION_STORAGE_KEY,
     SUPPORTED_VERSIONS,
@@ -389,25 +390,10 @@
   // Price Service (CoinGecko)
   // ============================================================================
 
-  /**
-   * Maps lowercase token addresses to CoinGecko coin IDs.
-   * Only tokens in this registry can have USD prices displayed.
-   * @constant {Object.<string, string>}
-   */
-  const COINGECKO_ID_MAP = {
-    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "weth",
-    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "usd-coin",
-    "0xdac17f958d2ee523a2206206994597c13d831ec7": "tether",
-    "0x6b175474e89094c44da98b954eedeac495271d0f": "dai",
-    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": "wrapped-bitcoin",
-    "0x514910771af9ca656af840dff83e8264ecf986ca": "chainlink",
-    "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": "aave",
-    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": "uniswap",
-    "0xae7ab96520de3a18e5e111b5eaab095312d7fe84": "staked-ether",
-    "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0": "matic-network",
-    "0x6982508145454ce325ddbe47a25d4ec3d2311933": "pepe",
-    "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce": "shiba-inu",
-  };
+  // COINGECKO_ID_MAP comes from lib.js. It used to be duplicated here, and the
+  // copy silently fell behind when lib.js gained the native-ETH sentinel — the
+  // local one shadowed it, so every v2 ETH order priced as "N/A" while the
+  // identical WETH order priced fine. One definition, no drift.
 
   const STABLE_ADDRESSES = new Set([
     "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // USDC
@@ -1388,6 +1374,29 @@
       decPart = decPart.padEnd(decimals, "0");
     }
     return BigInt(intPart + decPart);
+  }
+
+  /**
+   * `parseAmount` that reports a rejection instead of throwing.
+   *
+   * parseAmount rejects malformed input, and dust that would round to zero at
+   * the token's precision, by throwing — the messages are worth keeping, but
+   * every caller is an input listener or a form collector where an escaped
+   * throw means a dead control rather than a visible error. (lib.js exports a
+   * null-returning parseAmount, but this local one shadows it; callers written
+   * against lib's null contract silently got the throwing version.)
+   *
+   * @param {string} str - User-entered amount
+   * @param {number} decimals - Token decimals
+   * @returns {{amount: bigint|null, error: string|null}} Parsed amount, or the
+   *   rejection message with a null amount
+   */
+  function tryParseAmount(str, decimals) {
+    try {
+      return { amount: parseAmount(str, decimals), error: null };
+    } catch (e) {
+      return { amount: null, error: e.message };
+    }
   }
 
   let toastTimeout = null;
@@ -3477,8 +3486,8 @@
 
     input.addEventListener("input", () => {
       for (const other of presets.children) other.classList.remove("active");
-      const parsed = parseAmount(input.value, order.tokenA.decimals);
-      update(parsed === null ? 0n : parsed, false);
+      const { amount } = tryParseAmount(input.value, order.tokenA.decimals);
+      update(amount === null ? 0n : amount, false);
     });
 
     update(remainingA, false);
@@ -3996,10 +4005,10 @@
       return true;
     }
 
-    const amount = parseAmount(value, state.info.decimals);
+    const { amount, error } = tryParseAmount(value, state.info.decimals);
     if (amount === null) {
       input.classList.add("input-error");
-      errorSpan.textContent = "Invalid amount";
+      errorSpan.textContent = error;
       return false;
     }
 
@@ -4119,7 +4128,17 @@
 
   /**
    * Loads and displays the connected wallet's balance for a row side.
-   * Native ETH reads the account balance; everything else reads balanceOf.
+   *
+   * The balance shown has to be the one the order will actually spend. An
+   * offered side that settles as ETH spends the account balance even when the
+   * field holds a token address: v1 has no native sentinel and routes an
+   * offered WETH through createOrderWithEth, paying in ETH via msg.value. So
+   * the test is "does this side settle as ETH", not "is this address native" —
+   * the latter is never true in v1 and would show a v1 seller their WETH
+   * balance (typically 0) for an order paid out of their ETH.
+   *
+   * Only the offered side is spent, so only tokenA gets this treatment.
+   *
    * @param {HTMLElement} row - A .create-row element
    * @param {"tokenA"|"tokenB"} side - Which side of the order
    * @param {Object} info - Token info from fetchTokenInfo
@@ -4128,8 +4147,13 @@
     const balanceEl = rowField(row, side + "-balance");
     if (!userAddress || !provider) return;
 
+    const spendsEth =
+      side === "tokenA"
+        ? offersEthDirectly(info.address, ACTIVE_VERSION, isWeth)
+        : isNativeEth(info.address);
+
     try {
-      const balance = isNativeEth(info.address)
+      const balance = spendsEth
         ? await provider.getBalance(userAddress)
         : await new ethers.Contract(info.address, ERC20_ABI, provider).balanceOf(userAddress);
 
@@ -4349,12 +4373,14 @@
         return null;
       }
 
-      const amountA = parseAmount(amountAStr, tokenA.decimals);
-      const amountB = parseAmount(amountBStr, tokenB.decimals);
-      if (amountA === null || amountB === null) {
-        showToast(label + "Invalid amount", "error");
+      const parsedA = tryParseAmount(amountAStr, tokenA.decimals);
+      const parsedB = tryParseAmount(amountBStr, tokenB.decimals);
+      if (parsedA.error || parsedB.error) {
+        showToast(label + (parsedA.error || parsedB.error), "error");
         return null;
       }
+      const amountA = parsedA.amount;
+      const amountB = parsedB.amount;
       if (amountA === 0n || amountB === 0n) {
         showToast(label + "Amounts must be greater than 0", "error");
         return null;
@@ -4396,7 +4422,18 @@
       return;
     }
 
-    const params = await collectCreateParams();
+    // collectCreateParams reports its own validation failures and returns null.
+    // This catch is for the rest: fetchTokenInfo hits the network, so an RPC
+    // failure lands here too, and an escaped throw would leave the Create
+    // button looking simply dead — no toast, no modal, no state change.
+    let params;
+    try {
+      params = await collectCreateParams();
+    } catch (e) {
+      console.error("Create validation error:", e);
+      showToast(e.message || "Could not read the order details", "error");
+      return;
+    }
     if (!params) return;
 
     const body = document.createElement("div");
