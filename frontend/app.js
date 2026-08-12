@@ -5538,8 +5538,15 @@
       });
     });
 
-    if (window.ethereum) {
-      provider = new ethers.BrowserProvider(window.ethereum);
+    // Some wallet extensions define window.ethereum as a non-configurable
+    // getter, so mock mode cannot replace it and this path would reconnect the
+    // user's real wallet — real signer, real address, real contract calls — on
+    // a page where everything else is simulated. Mock mode owns this provider
+    // when it is active; window.ethereum stays the default everywhere else.
+    const eagerProvider = window.SWAPBOARD_MOCK_PROVIDER || window.ethereum;
+
+    if (eagerProvider) {
+      provider = new ethers.BrowserProvider(eagerProvider);
 
       // Check for existing connection
       provider

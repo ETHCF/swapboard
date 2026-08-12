@@ -944,7 +944,7 @@
     const mockAddress = MOCK_CONFIG.walletAddress;
     let connected = false;
 
-    window.ethereum = {
+    const mockProvider = {
       isMetaMask: true,
       chainId: "0x1", // Ethereum mainnet — see note above
       selectedAddress: null,
@@ -955,7 +955,9 @@
         switch (method) {
           case "eth_requestAccounts":
             connected = true;
-            this.selectedAddress = mockAddress;
+            // Named, not `this`: ethers hands the provider's request method
+            // around detached, so `this` is not reliably the provider.
+            mockProvider.selectedAddress = mockAddress;
             return [mockAddress];
 
           case "eth_accounts":
@@ -1052,14 +1054,50 @@
 
       on: function (event, callback) {
         // Store callbacks for potential use
-        this._callbacks = this._callbacks || {};
-        this._callbacks[event] = callback;
+        mockProvider._callbacks = mockProvider._callbacks || {};
+        mockProvider._callbacks[event] = callback;
       },
 
       removeListener: function () {},
 
       removeAllListeners: function () {},
     };
+
+    // ------------------------------------------------------------------------
+    // Installing over window.ethereum
+    // ------------------------------------------------------------------------
+    //
+    // This used to be a bare `window.ethereum = {...}`, which throws
+    // "Cannot set property ethereum of #<Window> which has only a getter"
+    // on any browser where an extension has already defined the property as
+    // accessor-only — Rabby and Keplr both do, and MetaMask logs its own
+    // "encountered an error setting the global Ethereum provider" when it
+    // loses that race. The throw escaped the top-level IIFE, so every line of
+    // mock.js below this point — including the EIP-6963 wiring — silently
+    // never ran, and mock mode fell back to whatever real wallets were
+    // installed. Nothing about the mock is worth taking the page down for:
+    // try the strongest install, fall back, and carry on either way.
+    // Always reachable under a name no extension competes for. app.js's
+    // eager-reconnect path reads a provider off the window directly, and when
+    // the override below loses, this is the only handle it has on the mock.
+    window.SWAPBOARD_MOCK_PROVIDER = mockProvider;
+
+    try {
+      Object.defineProperty(window, "ethereum", {
+        value: mockProvider,
+        writable: true,
+        configurable: true,
+      });
+    } catch (e) {
+      try {
+        window.ethereum = mockProvider;
+      } catch (e2) {
+        console.warn(
+          "[Mock] Could not override window.ethereum (locked by a wallet extension). " +
+            "Mock mode still works via EIP-6963."
+        );
+      }
+    }
 
     // ------------------------------------------------------------------------
     // EIP-6963 announcement
@@ -1091,7 +1129,10 @@
     const announceMockProvider = () => {
       window.dispatchEvent(
         new CustomEvent("eip6963:announceProvider", {
-          detail: Object.freeze({ info: mockProviderInfo, provider: window.ethereum }),
+          // mockProvider, never window.ethereum: the install above may have
+          // been refused, and extensions re-assign the global late, so reading
+          // it here can hand the app a real wallet labelled "Mock Wallet".
+          detail: Object.freeze({ info: mockProviderInfo, provider: mockProvider }),
         })
       );
     };
