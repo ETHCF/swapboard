@@ -72,7 +72,7 @@ contract SwapboardHandler is Test {
         for (uint256 i = 0; i < _actors.length; ++i) {
             _tokenA.mint(_actors[i], 1_000_000 ether);
             _tokenB.mint(_actors[i], 1_000_000 ether);
-            vm.deal(_actors[i], 1_000 ether);
+            vm.deal(_actors[i], 1000 ether);
 
             vm.prank(_actors[i]);
             _tokenA.approve(address(_board), type(uint256).max);
