@@ -515,6 +515,24 @@ contract SwapboardTest is Test {
         assertFalse(_board.getOrder(orderId).active);
     }
 
+    /// @notice Tests fillOrder succeeds when block.timestamp equals deadline
+    function test_fillOrder_deadlineEqual_succeeds() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        vm.stopPrank();
+
+        uint256 deadline = 1000;
+        vm.warp(deadline);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _board.fillOrder(orderId, deadline);
+        vm.stopPrank();
+
+        assertFalse(_board.getOrder(orderId).active);
+    }
+
     // ============ createOrder with ETH as tokenA ============
 
     /// @notice Tests createOrder selling ETH
@@ -568,6 +586,13 @@ contract SwapboardTest is Test {
         _board.createOrder{value: 0}(_eth, 0, address(_tokenB), AMOUNT_B);
     }
 
+    /// @notice Tests createOrder selling ETH reverts on zero amountB
+    function test_createOrder_sellEth_revert_zeroAmount_amountB() public {
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.createOrder{value: ETH_AMOUNT}(_eth, ETH_AMOUNT, address(_tokenB), 0);
+    }
+
     /// @notice Tests createOrder selling ETH reverts on zero address tokenB
     function test_createOrder_sellEth_revert_zeroAddress() public {
         vm.prank(_maker);
@@ -608,6 +633,70 @@ contract SwapboardTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0, 1 ether));
         _board.createOrder{value: 1 ether}(address(_tokenB), AMOUNT_B, address(_tokenA), 1 ether);
         vm.stopPrank();
+    }
+
+    /// @notice Tests createOrder wanting ETH reverts if ETH is sent on create
+    function test_createOrder_wantEth_revert_accidentalEth() public {
+        vm.startPrank(_maker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0, 1 ether));
+        _board.createOrder{value: 1 ether}(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT);
+        vm.stopPrank();
+    }
+
+    /// @notice Tests maker can self-fill an ETH sell order
+    function test_selfFill_sellEth() public {
+        uint256 makerEthBefore = _maker.balance;
+        uint256 makerTokenBefore = _tokenB.balanceOf(_maker);
+
+        vm.startPrank(_maker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B);
+        _board.fillOrder(orderId, 0);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(orderId));
+        assertEq(address(_board).balance, 0);
+        assertEq(_maker.balance, makerEthBefore);
+        assertEq(_tokenB.balanceOf(_maker), makerTokenBefore);
+    }
+
+    /// @notice Tests maker can self-fill an order paid in ETH
+    function test_selfFill_payEth() public {
+        uint256 makerEthBefore = _maker.balance;
+        uint256 makerTokenBefore = _tokenB.balanceOf(_maker);
+
+        vm.startPrank(_maker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        uint256 orderId = _board.createOrder(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT);
+        _board.fillOrder{value: ETH_AMOUNT}(orderId, 0);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(orderId));
+        assertEq(_tokenB.balanceOf(_maker), makerTokenBefore);
+        assertEq(_maker.balance, makerEthBefore);
+    }
+
+    /// @notice Tests ETH sell order views: getOrder, canFill, getOrders
+    function test_views_sellEthOrder() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B);
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, _maker);
+        assertEq(order.tokenA, _eth);
+        assertEq(order.amountA, ETH_AMOUNT);
+        assertEq(order.tokenB, address(_tokenB));
+        assertEq(order.amountB, AMOUNT_B);
+        assertTrue(order.active);
+        assertTrue(_board.canFill(orderId));
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = orderId;
+        ISwapboard.Order[] memory orders = _board.getOrders(ids);
+        assertEq(orders.length, 1);
+        assertEq(orders[0].tokenA, _eth);
+        assertEq(orders[0].amountA, ETH_AMOUNT);
     }
 
     // ============ fillOrder paying with ETH ============
@@ -708,6 +797,22 @@ contract SwapboardTest is Test {
         _board.fillOrder{value: ETH_AMOUNT}(orderId, 999);
     }
 
+    /// @notice Tests fillOrder paying ETH succeeds when timestamp equals deadline
+    function test_fillOrder_payEth_deadlineEqual_succeeds() public {
+        vm.startPrank(_maker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        uint256 orderId = _board.createOrder(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT);
+        vm.stopPrank();
+
+        uint256 deadline = 1000;
+        vm.warp(deadline);
+
+        vm.prank(_taker);
+        _board.fillOrder{value: ETH_AMOUNT}(orderId, deadline);
+
+        assertFalse(_board.canFill(orderId));
+    }
+
     /// @notice Tests fillOrder with ERC20 tokenB reverts if ETH is sent
     function test_fillOrder_erc20_revert_accidentalEth() public {
         vm.prank(_maker);
@@ -780,7 +885,7 @@ contract SwapboardTest is Test {
         _board.cancelOrder(orderId);
     }
 
-    /// @notice Tests cancelOrder reverts when maker rejects ETH
+    /// @notice Tests cancelOrder reverts when maker rejects ETH and leaves escrow intact
     function test_cancelOrder_returnEth_revert_ethTransferFailed() public {
         ETHRejecter rejecter = new ETHRejecter();
         vm.deal(address(rejecter), 10 ether);
@@ -788,9 +893,37 @@ contract SwapboardTest is Test {
         vm.prank(address(rejecter));
         uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B);
 
+        uint256 boardEthBefore = address(_board).balance;
+
         vm.prank(address(rejecter));
         vm.expectRevert(ETHRejecter.RejectETH.selector);
         _board.cancelOrder(orderId);
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(address(_board).balance, boardEthBefore);
+        assertEq(_board.getOrder(orderId).amountA, ETH_AMOUNT);
+    }
+
+    /// @notice Tests fillOrder paying ETH reverts when maker rejects ETH and leaves escrow intact
+    function test_fillOrder_payEth_revert_ethTransferFailed() public {
+        ETHRejecter rejecter = new ETHRejecter();
+        _tokenB.mint(address(rejecter), AMOUNT_B);
+
+        vm.startPrank(address(rejecter));
+        _tokenB.approve(address(_board), AMOUNT_B);
+        uint256 orderId = _board.createOrder(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT);
+        vm.stopPrank();
+
+        uint256 boardTokenBefore = _tokenB.balanceOf(address(_board));
+        uint256 takerEthBefore = _taker.balance;
+
+        vm.prank(_taker);
+        vm.expectRevert(ETHRejecter.RejectETH.selector);
+        _board.fillOrder{value: ETH_AMOUNT}(orderId, 0);
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenB.balanceOf(address(_board)), boardTokenBefore);
+        assertEq(_taker.balance, takerEthBefore);
     }
 
     // ============ fillOrder receiving ETH ============
@@ -851,7 +984,7 @@ contract SwapboardTest is Test {
         _board.fillOrder(orderId, 0);
     }
 
-    /// @notice Tests fillOrder receiving ETH reverts when taker rejects ETH
+    /// @notice Tests fillOrder receiving ETH reverts when taker rejects ETH and leaves escrow intact
     function test_fillOrder_receiveEth_revert_ethTransferFailed() public {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B);
@@ -859,11 +992,18 @@ contract SwapboardTest is Test {
         ETHRejecter rejecter = new ETHRejecter();
         _tokenB.mint(address(rejecter), AMOUNT_B);
 
+        uint256 boardEthBefore = address(_board).balance;
+        uint256 makerTokenBefore = _tokenB.balanceOf(_maker);
+
         vm.startPrank(address(rejecter));
         _tokenB.approve(address(_board), AMOUNT_B);
         vm.expectRevert(ETHRejecter.RejectETH.selector);
         _board.fillOrder(orderId, 0);
         vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(address(_board).balance, boardEthBefore);
+        assertEq(_tokenB.balanceOf(_maker), makerTokenBefore);
     }
 
     /// @notice Tests fillOrder receiving ETH reverts after deadline
