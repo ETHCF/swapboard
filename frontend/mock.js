@@ -94,11 +94,18 @@
   //
   // Pinned to the bottom: at the top it sat over the header, hiding the title
   // and clipping the version switcher and wallet button behind it.
+  //
+  // z-index 900 puts it above the page (the sticky table header and the token
+  // dropdown top out at 100) but below modals and the wallet menu at 1000 and
+  // toasts at 1001. It has to lose to those: a modal is fixed-position too, so
+  // the paddingBottom below does nothing to move it clear, and a banner that
+  // won on z-index would swallow clicks on any control in the bottom ~40px of
+  // an open modal.
   document.addEventListener("DOMContentLoaded", function () {
     const banner = document.createElement("div");
     banner.id = "mock-banner";
     banner.style.cssText =
-      "position:fixed;bottom:0;left:0;right:0;background:#ff6600;color:#fff;padding:8px 15px;font-size:13px;font-weight:bold;z-index:9999;display:flex;justify-content:space-between;align-items:center;font-family:monospace;";
+      "position:fixed;bottom:0;left:0;right:0;background:#ff6600;color:#fff;padding:8px 15px;font-size:13px;font-weight:bold;z-index:900;display:flex;justify-content:space-between;align-items:center;font-family:monospace;";
     banner.innerHTML =
       'MOCK MODE ACTIVE - Data is simulated <button id="mock-disable" style="background:#fff;color:#ff6600;border:none;padding:4px 10px;cursor:pointer;font-weight:bold;font-family:inherit;">Disable</button>';
     document.body.appendChild(banner);

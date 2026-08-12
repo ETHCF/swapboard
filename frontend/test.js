@@ -16,10 +16,16 @@
  *
  * Usage:
  *   node test.js [url]
+ *
+ * The suite targets the v2 layout and pins ?v=2 on whatever URL it is given
+ * unless that URL already carries a ?v= of its own.
  */
 
 const path = require("path");
 const fs = require("fs");
+
+/** Protocol version these tests are written against. */
+const TEST_VERSION = "2";
 
 // Expected values based on mock.js seeded PRNG output (seed: 12345), plus the
 // two appended cohorts. Deterministic, though computed at runtime by mock.js.
@@ -36,6 +42,30 @@ const EXPECTED = {
   },
 };
 
+/**
+ * Pins the protocol version in a test URL.
+ *
+ * These tests exercise the v2 layout — the select column, the batch controls,
+ * the [ETH] toggle — none of which exist in v1. Without an explicit `?v=`,
+ * resolveVersion() falls back to DEFAULT_VERSION (1) and the selectors miss.
+ * An explicit `?v=` in a supplied URL is left alone, so a caller can still
+ * point the suite at v1.
+ *
+ * @param {string} rawUrl - URL to test, file:// or http://
+ * @returns {string} URL carrying a `v` parameter
+ */
+function withVersion(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (!parsed.searchParams.has("v")) parsed.searchParams.set("v", TEST_VERSION);
+    return parsed.toString();
+  } catch {
+    // Not parseable as a URL (a bare path, say); fall back to string append.
+    if (/[?&]v=/.test(rawUrl)) return rawUrl;
+    return rawUrl + (rawUrl.includes("?") ? "&" : "?") + "v=" + TEST_VERSION;
+  }
+}
+
 async function runTests() {
   let puppeteer;
   try {
@@ -45,7 +75,7 @@ async function runTests() {
     process.exit(1);
   }
 
-  const url = process.argv[2] || "file://" + path.resolve(__dirname, "index.html");
+  const url = withVersion(process.argv[2] || "file://" + path.resolve(__dirname, "index.html"));
   console.log("Testing:", url);
   console.log("");
 

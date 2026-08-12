@@ -800,20 +800,36 @@
   }
 
   /**
-   * Searches tokens by symbol or name.
-   * @param {string} query - Search query
-   * @param {number} limit - Max results
-   * @returns {Array} Matching tokens
+   * The "ETH" entry offered by the token autocomplete, or null when there
+   * isn't one to offer yet.
+   *
+   * The address depends on the version: v2 has a NATIVE_ETH sentinel and the
+   * create path recognizes it, but v1 has no sentinel and reaches ETH by
+   * wrapping into WETH. Handing v1 the sentinel makes `offersEthDirectly`
+   * false, so the order takes the ERC20 path and builds a contract on an
+   * address with no code. Before WETH is known, v1 has no address to offer.
+   *
+   * @returns {{address: string, symbol: string, name: string,
+   *   decimals: number, logoURI: null}|null} Token entry, or null
    */
   function getEthToken() {
+    const address = CAPS.nativeEth ? NATIVE_ETH : cachedWethAddress;
+    if (!address) return null;
     return {
-      address: NATIVE_ETH,
+      address,
       symbol: "ETH",
       name: "Ether",
       decimals: 18,
       logoURI: null,
     };
   }
+
+  /**
+   * Searches tokens by symbol or name.
+   * @param {string} query - Search query
+   * @param {number} limit - Max results
+   * @returns {Array} Matching tokens
+   */
 
   function searchTokens(query, limit = 10) {
     if (!query || query.length < 1) return [];
