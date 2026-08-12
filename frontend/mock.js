@@ -1060,6 +1060,57 @@
 
       removeAllListeners: function () {},
     };
+
+    // ------------------------------------------------------------------------
+    // EIP-6963 announcement
+    // ------------------------------------------------------------------------
+    //
+    // Overriding window.ethereum is not enough. app.js discovers wallets via
+    // EIP-6963 and only falls back to window.ethereum when nothing announced
+    // itself, so on any browser with a real wallet extension installed the
+    // mock provider above was never reached: mock mode would open the real
+    // MetaMask/Rabby popup, and the header kept saying "[Connect Wallet]"
+    // whenever that popup was dismissed or the real wallet was on a chain
+    // other than mainnet. Announce the mock as a 6963 provider, and suppress
+    // the real ones, so mock mode overrides the wallet the way it claims to.
+    const MOCK_PROVIDER_UUID = "5c0mock00-0000-4000-8000-5w4pb0ard000";
+    const mockProviderInfo = {
+      uuid: MOCK_PROVIDER_UUID,
+      name: "Mock Wallet",
+      rdns: "xyz.swapboard.mock",
+      icon:
+        "data:image/svg+xml;base64," +
+        btoa(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96">' +
+            '<rect width="96" height="96" fill="#ff6600"/>' +
+            '<text x="48" y="62" font-family="monospace" font-size="40" ' +
+            'font-weight="bold" fill="#fff" text-anchor="middle">M</text></svg>'
+        ),
+    };
+
+    const announceMockProvider = () => {
+      window.dispatchEvent(
+        new CustomEvent("eip6963:announceProvider", {
+          detail: Object.freeze({ info: mockProviderInfo, provider: window.ethereum }),
+        })
+      );
+    };
+
+    // Registered before app.js loads (index.html orders mock.js first), so this
+    // runs ahead of app.js's own listener and can cut off announcements from
+    // real extensions before the app ever sees them. Without this, a browser
+    // with one real wallet would show a two-wallet picker in mock mode.
+    window.addEventListener("eip6963:announceProvider", function (event) {
+      if (event.detail?.info?.uuid === MOCK_PROVIDER_UUID) return;
+      console.log("[Mock] Suppressing real wallet:", event.detail?.info?.name || "unknown");
+      event.stopImmediatePropagation();
+    });
+
+    window.addEventListener("eip6963:requestProvider", announceMockProvider);
+
+    // Also announce unprompted, for any listener that registered before its
+    // own request went out.
+    announceMockProvider();
   }
 
   // ============================================================================
