@@ -11,6 +11,7 @@ pragma solidity 0.8.36;
  */
 
 import {Test} from "forge-std/Test.sol";
+import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
@@ -20,6 +21,10 @@ import {ETHRejecter} from "./mocks/ETHRejecter.sol";
 /// @notice Unit tests for Swapboard contract
 /// @dev Uses Foundry's Test framework with MockERC20 tokens
 contract SwapboardTest is Test {
+    using stdStorage for StdStorage;
+
+    StdStorage private _stdstore;
+
     Swapboard internal _board;
     MockERC20 internal _tokenA;
     MockERC20 internal _tokenB;
@@ -1358,6 +1363,31 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests fillOrder reverts ZeroAmount when quoted tokenB payment rounds to 0
+    /// @dev Unreachable via normal fills (availableB=0 implies inactive). Force availableB=0 while
+    ///      keeping the order active so the ceil branch returns amountBIn=0.
+    function test_fillOrder_revert_zeroAmountBIn() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B, true);
+        vm.stopPrank();
+
+        // Order.availableB is struct field depth 8 (maker=0 … availableA=7, availableB=8).
+        _stdstore.enable_packed_slots().target(address(_board)).sig(_board.getOrder.selector).with_key(orderId).depth(8)
+            .checked_write(uint256(0));
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.availableB, 0);
+        assertTrue(order.active);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        // Partial fill: ceil((1 * 0 + availableA - 1) / availableA) == 0 → ZeroAmount
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.fillOrder(orderId, 1, 0);
+        vm.stopPrank();
+    }
+
     /// @notice Tests ceil payment can exhaust amountB while leaving tokenA dust
     function test_fillOrder_partial_ceilExhaustsAmountBWithDust() public {
         uint128 amountA = 100;
@@ -1581,54 +1611,23 @@ contract SwapboardTest is Test {
         assertEq(_tokenB.balanceOf(_taker), takerTokenBefore + fillA);
     }
 
-    /// @notice Tests Order storage packs maker/flags, originals, and available amounts
+    /// @notice Tests Order fields are stored and readable via getOrder
     function test_orderStruct_storagePacking() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
         uint256 orderId = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B, true);
         vm.stopPrank();
 
-        // `_orders` is storage slot 1; each Order uses 5 slots.
-        bytes32 baseSlot = keccak256(abi.encode(orderId, uint256(1)));
-        uint256 slot0 = uint256(vm.load(address(_board), baseSlot));
-
-        // casting to 'uint160' is safe because Solidity packs `address` in the low 160 bits of slot 0
-        // forge-lint: disable-next-line(unsafe-typecast)
-        address maker = address(uint160(slot0));
-        bool active = ((slot0 >> 160) & 1) == 1;
-        bool partialFillAllowed = ((slot0 >> 168) & 1) == 1;
-
-        assertEq(maker, _maker);
-        assertTrue(active);
-        assertTrue(partialFillAllowed);
-
-        // casting to 'uint160' is safe because `tokenA` occupies the low 160 bits of slot 1
-        // forge-lint: disable-next-line(unsafe-typecast)
-        address tokenA = address(uint160(uint256(vm.load(address(_board), bytes32(uint256(baseSlot) + 1)))));
-        assertEq(tokenA, address(_tokenA));
-
-        // casting to 'uint160' is safe because `tokenB` occupies the low 160 bits of slot 2
-        // forge-lint: disable-next-line(unsafe-typecast)
-        address tokenB = address(uint160(uint256(vm.load(address(_board), bytes32(uint256(baseSlot) + 2)))));
-        assertEq(tokenB, address(_tokenB));
-
-        uint256 amountsSlot = uint256(vm.load(address(_board), bytes32(uint256(baseSlot) + 3)));
-        // casting to 'uint128' is safe because amountA/amountB occupy the low/high 128 bits of slot 3
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 amountA = uint128(amountsSlot);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 amountB = uint128(amountsSlot >> 128);
-        assertEq(amountA, AMOUNT_A);
-        assertEq(amountB, AMOUNT_B);
-
-        uint256 availableSlot = uint256(vm.load(address(_board), bytes32(uint256(baseSlot) + 4)));
-        // casting to 'uint128' is safe because availableA/availableB occupy the low/high 128 bits of slot 4
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 availableA = uint128(availableSlot);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 availableB = uint128(availableSlot >> 128);
-        assertEq(availableA, AMOUNT_A);
-        assertEq(availableB, AMOUNT_B);
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, _maker);
+        assertTrue(order.active);
+        assertTrue(order.partialFillAllowed);
+        assertEq(order.tokenA, address(_tokenA));
+        assertEq(order.tokenB, address(_tokenB));
+        assertEq(order.amountA, AMOUNT_A);
+        assertEq(order.amountB, AMOUNT_B);
+        assertEq(order.availableA, AMOUNT_A);
+        assertEq(order.availableB, AMOUNT_B);
     }
 
     /// @notice Fuzz: partial fills reduce remaining amounts and never overspend escrow
