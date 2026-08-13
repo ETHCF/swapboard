@@ -101,6 +101,12 @@ contract SwapboardInvariantTest is Test {
         assertLe(filled + cancelled, created, "More orders filled/cancelled than created");
     }
 
+    /// @notice Original amountA/amountB never change; available never exceeds them
+    /// @dev Also: active ⇒ both available > 0; inactive ⇒ at least one available is 0
+    function invariant_amountAccounting() public view {
+        _handler.assertAmountInvariants();
+    }
+
     /// @notice Token balance should never be negative (implicit via uint256 but good sanity check)
     function invariant_nonNegativeBalance() public view {
         uint256 balance = _tokenA.balanceOf(address(_board));

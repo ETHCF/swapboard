@@ -19,7 +19,8 @@ import {Semver} from "./Semver.sol";
 ///      - Partial fill size is specified as tokenA to receive (`amountA`); tokenB paid is ceiled
 ///      - Fee-on-transfer tokens are rejected for tokenA (selling token)
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
-///      - Order amounts use `uint128` (sufficient for practical sizes) and are packed together
+///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
+///        remaining amounts are packed separately so fill % is readable on-chain
 ///      - Reentrancy protected via OpenZeppelin ReentrancyGuardTransient (EIP-1153)
 ///
 ///      Security considerations:
@@ -80,7 +81,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             tokenA: tokenA,
             tokenB: tokenB,
             amountA: amountA,
-            amountB: amountB
+            amountB: amountB,
+            availableA: amountA,
+            availableB: amountB
         });
 
         emit OrderCreated({
@@ -133,8 +136,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) external nonReentrant {
         Order storage order = _orders[orderId];
 
-        (address maker, bool active, address tokenA, uint128 amountA) =
-            (order.maker, order.active, order.tokenA, order.amountA);
+        (address maker, bool active, address tokenA, uint128 availableA) =
+            (order.maker, order.active, order.tokenA, order.availableA);
         if (maker == address(0)) {
             revert OrderNotFound(orderId);
         }
@@ -146,14 +149,14 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         order.active = false;
-        order.amountA = 0;
-        order.amountB = 0;
+        order.availableA = 0;
+        order.availableB = 0;
 
         if (tokenA == _ETH) {
             // Forward all gas so maker contracts can execute receive/fallback.
-            payable(maker).sendValue(amountA);
+            payable(maker).sendValue(availableA);
         } else {
-            IERC20(tokenA).safeTransfer(maker, amountA);
+            IERC20(tokenA).safeTransfer(maker, availableA);
         }
 
         emit OrderCanceled({orderId: orderId});
@@ -260,28 +263,29 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert OrderNotActive(orderId);
         }
 
-        uint128 remainingA = order.amountA;
-        if (amountA > remainingA) {
-            revert FillAmountTooHigh(orderId, amountA, remainingA);
+        uint128 availableA = order.availableA;
+        if (amountA > availableA) {
+            revert FillAmountTooHigh(orderId, amountA, availableA);
         }
-        if (!order.partialFillAllowed && amountA != remainingA) {
+        if (!order.partialFillAllowed && amountA != availableA) {
             revert PartialFillNotAllowed(orderId);
         }
 
         tokenA = order.tokenA;
         tokenB = order.tokenB;
-        uint128 remainingB = order.amountB;
-        // Product of two uint128 values always fits in uint256; ceil result is <= remainingB.
+        uint128 availableB = order.availableB;
+        // Product of two uint128 values always fits in uint256; ceil result is <= availableB.
         // forge-lint: disable-next-line(unsafe-typecast)
-        amountBIn = amountA == remainingA
-            ? remainingB
-            : uint128((uint256(amountA) * uint256(remainingB) + uint256(remainingA) - 1) / uint256(remainingA));
+        amountBIn = amountA == availableA
+            ? availableB
+            : uint128((uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA));
         if (amountBIn == 0) {
             revert ZeroAmount();
         }
     }
 
     /// @notice Applies fill accounting effects before transfers (CEI)
+    /// @dev Decrements available amounts only; original `amountA`/`amountB` stay fixed for fill %.
     /// @param order Order storage slot to update
     /// @param amountA tokenA sent to the taker
     /// @param amountBIn tokenB paid by the taker
@@ -291,10 +295,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountBIn
     ) private {
         unchecked {
-            order.amountA -= amountA;
-            order.amountB -= amountBIn;
+            order.availableA -= amountA;
+            order.availableB -= amountBIn;
         }
-        if (order.amountA == 0 || order.amountB == 0) {
+        if (order.availableA == 0 || order.availableB == 0) {
             order.active = false;
         }
     }

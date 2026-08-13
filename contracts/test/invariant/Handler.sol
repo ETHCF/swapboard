@@ -30,6 +30,8 @@ contract SwapboardHandler is Test {
     // Track individual order amounts for precise accounting
     mapping(uint256 orderId => uint256 amount) private _ghostOrderAmounts;
     mapping(uint256 orderId => bool active) private _ghostOrderActive;
+    mapping(uint256 orderId => uint128 amountA) private _ghostOriginalAmountA;
+    mapping(uint256 orderId => uint128 amountB) private _ghostOriginalAmountB;
 
     // Actors
     address[] internal _actors;
@@ -175,10 +177,7 @@ contract SwapboardHandler is Test {
         uint256 orderId = _board.createOrder(address(_tokenA), amountA128, address(_tokenB), amountB128, false);
 
         _ghostTotalTokenADeposited += amountA;
-        ++_ghostOrdersCreated;
-        ++_ghostActiveOrders;
-        _ghostOrderAmounts[orderId] = amountA;
-        _ghostOrderActive[orderId] = true;
+        _trackCreatedOrder(orderId, amountA128, amountB128);
     }
 
     /// @notice Creates an ETH sell order (tokenA = ETH)
@@ -204,10 +203,7 @@ contract SwapboardHandler is Test {
         uint256 orderId = _board.createOrder{value: amountA}(_ETH, amountA128, address(_tokenB), amountB128, false);
 
         _ghostTotalEthDeposited += amountA;
-        ++_ghostOrdersCreated;
-        ++_ghostActiveOrders;
-        _ghostOrderAmounts[orderId] = amountA;
-        _ghostOrderActive[orderId] = true;
+        _trackCreatedOrder(orderId, amountA128, amountB128);
     }
 
     /// @notice Creates an order wanting ETH payment (tokenB = ETH)
@@ -233,10 +229,7 @@ contract SwapboardHandler is Test {
         uint256 orderId = _board.createOrder(address(_tokenA), amountA128, _ETH, amountB128, false);
 
         _ghostTotalTokenADeposited += amountA;
-        ++_ghostOrdersCreated;
-        ++_ghostActiveOrders;
-        _ghostOrderAmounts[orderId] = amountA;
-        _ghostOrderActive[orderId] = true;
+        _trackCreatedOrder(orderId, amountA128, amountB128);
     }
 
     /// @notice Creates an ERC20/ERC20 order that allows partial fills
@@ -262,10 +255,7 @@ contract SwapboardHandler is Test {
         uint256 orderId = _board.createOrder(address(_tokenA), amountA128, address(_tokenB), amountB128, true);
 
         _ghostTotalTokenADeposited += amountA;
-        ++_ghostOrdersCreated;
-        ++_ghostActiveOrders;
-        _ghostOrderAmounts[orderId] = amountA;
-        _ghostOrderActive[orderId] = true;
+        _trackCreatedOrder(orderId, amountA128, amountB128);
     }
 
     /// @notice Fills an existing order (full or partial when allowed)
@@ -286,20 +276,21 @@ contract SwapboardHandler is Test {
             return; // Order not active
         }
 
-        uint256 fillA = order.amountA;
+        uint256 fillA = order.availableA;
         if (order.partialFillAllowed) {
-            fillA = bound(fillAmountSeed, 1, order.amountA);
+            fillA = bound(fillAmountSeed, 1, order.availableA);
         }
 
-        uint256 amountBIn =
-            fillA == order.amountA ? order.amountB : (fillA * order.amountB + order.amountA - 1) / order.amountA;
+        uint256 amountBIn = fillA == order.availableA
+            ? order.availableB
+            : (fillA * order.availableB + order.availableA - 1) / order.availableA;
         if (amountBIn == 0 || !_actorCanPayTokenB(order.tokenB, amountBIn)) {
             return;
         }
 
         ++_callsFillOrder;
 
-        // casting to 'uint128' is safe because fillA is at most order.amountA (uint128)
+        // casting to 'uint128' is safe because fillA is at most order.availableA (uint128)
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 fillA128 = uint128(fillA);
         if (order.tokenB == _ETH) {
@@ -339,7 +330,7 @@ contract SwapboardHandler is Test {
             --_ghostActiveOrders;
             _ghostOrderActive[orderId] = false;
         } else {
-            _ghostOrderAmounts[orderId] = order.amountA - fillA;
+            _ghostOrderAmounts[orderId] = order.availableA - fillA;
         }
     }
 
@@ -367,14 +358,56 @@ contract SwapboardHandler is Test {
         _board.cancelOrder(orderId);
 
         if (order.tokenA == _ETH) {
-            _ghostTotalEthWithdrawn += order.amountA;
+            _ghostTotalEthWithdrawn += order.availableA;
         } else if (order.tokenA == address(_tokenA)) {
-            _ghostTotalTokenAWithdrawn += order.amountA;
+            _ghostTotalTokenAWithdrawn += order.availableA;
         }
 
         ++_ghostOrdersCancelled;
         --_ghostActiveOrders;
         _ghostOrderActive[orderId] = false;
+    }
+
+    /// @notice Records ghost state for a newly created order
+    function _trackCreatedOrder(
+        uint256 orderId,
+        uint128 amountA,
+        uint128 amountB
+    ) private {
+        ++_ghostOrdersCreated;
+        ++_ghostActiveOrders;
+        _ghostOrderAmounts[orderId] = amountA;
+        _ghostOrderActive[orderId] = true;
+        _ghostOriginalAmountA[orderId] = amountA;
+        _ghostOriginalAmountB[orderId] = amountB;
+    }
+
+    /// @notice Asserts amount/available invariants across all created orders
+    /// @dev Originals never change; available never exceeds originals; active iff both available > 0
+    function assertAmountInvariants() external view {
+        uint256 nextId = _board.getNextOrderId();
+
+        for (uint256 i = 0; i < nextId; ++i) {
+            ISwapboard.Order memory order = _board.getOrder(i);
+            if (order.maker == address(0)) {
+                continue;
+            }
+
+            assertEq(order.amountA, _ghostOriginalAmountA[i], "amountA mutated");
+            assertEq(order.amountB, _ghostOriginalAmountB[i], "amountB mutated");
+            assertTrue(order.amountA > 0 && order.amountB > 0, "original amounts must be non-zero");
+
+            assertTrue(!(order.availableA > order.amountA), "availableA exceeds amountA");
+            assertTrue(!(order.availableB > order.amountB), "availableB exceeds amountB");
+
+            if (order.active) {
+                assertTrue(order.availableA > 0 && order.availableB > 0, "active order has zero available");
+            } else {
+                assertTrue(
+                    order.availableA == 0 || order.availableB == 0, "inactive order still fully available"
+                );
+            }
+        }
     }
 
     /// @notice View function to get contract token balance
@@ -405,7 +438,7 @@ contract SwapboardHandler is Test {
         for (uint256 i = 0; i < nextId; ++i) {
             ISwapboard.Order memory order = _board.getOrder(i);
             if (order.tokenA == address(_tokenA)) {
-                total += order.amountA;
+                total += order.availableA;
             }
         }
     }
@@ -417,7 +450,7 @@ contract SwapboardHandler is Test {
         for (uint256 i = 0; i < nextId; ++i) {
             ISwapboard.Order memory order = _board.getOrder(i);
             if (order.tokenA == _ETH) {
-                total += order.amountA;
+                total += order.availableA;
             }
         }
     }

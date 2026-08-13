@@ -11,20 +11,18 @@ import {ISemver} from "./ISemver.sol";
 ///      Native ETH is represented by the sentinel returned from `getEth()`.
 interface ISwapboard is ISemver {
     /// @notice Represents a single OTC order
-    /// @dev Packed for storage:
-    ///      - slot 0: `maker` + `active` + `partialFillAllowed`
-    ///      - slot 1: `tokenA`
-    ///      - slot 2: `tokenB`
-    ///      - slot 3: `amountA` + `amountB` (both `uint128`)
-    ///      `uint128` amounts are sufficient for practical order sizes (e.g. ~3.4e20 wei ≈
+    /// @dev `uint128` amounts are sufficient for practical order sizes (e.g. ~3.4e20 wei ≈
     ///      340B tokens at 18 decimals).
+    ///      Fill progress is `(amountA - availableA) / amountA` (and likewise for B).
     /// @param maker Address that created the order and deposited tokenA
     /// @param active Whether the order can still be filled or cancelled
     /// @param partialFillAllowed Whether the order may be filled in multiple parts
     /// @param tokenA Address of the token being sold (held in escrow)
     /// @param tokenB Address of the token maker wants to receive
-    /// @param amountA Remaining amount of tokenA in escrow (in base units)
-    /// @param amountB Remaining amount of tokenB required to complete the order
+    /// @param amountA Original amount of tokenA deposited (unchanged by fills)
+    /// @param amountB Original amount of tokenB required (unchanged by fills)
+    /// @param availableA Remaining tokenA still in escrow / available to fill
+    /// @param availableB Remaining tokenB still required to complete the order
     struct Order {
         address maker;
         bool active;
@@ -33,6 +31,8 @@ interface ISwapboard is ISemver {
         address tokenB;
         uint128 amountA;
         uint128 amountB;
+        uint128 availableA;
+        uint128 availableB;
     }
 
     // solhint-disable gas-indexed-events
@@ -113,10 +113,10 @@ interface ISwapboard is ISemver {
     /// @param orderId The order ID
     error PartialFillNotAllowed(uint256 orderId);
 
-    /// @notice Thrown when the requested fill amountA exceeds the order's remaining amountA
+    /// @notice Thrown when the requested fill amountA exceeds the order's available amountA
     /// @param orderId The order ID
     /// @param requested The requested amountA
-    /// @param remaining The remaining amountA on the order
+    /// @param remaining The available amountA on the order
     error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining);
 
     /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
@@ -139,7 +139,7 @@ interface ISwapboard is ISemver {
 
     /// @notice Fills an existing order for the given amountA
     /// @dev Taker receives `amountA` of tokenA and pays proportional tokenB.
-    ///      tokenB in is ceiled (`(amountA * remainingB + remainingA - 1) / remainingA`) so the
+    ///      tokenB in is ceiled (`(amountA * availableB + availableA - 1) / availableA`) so the
     ///      taker never underpays. Residual tokenA dust is not refunded (not worth the gas); it
     ///      can be picked up by any user that rounds favorably on another order where the dust
     ///      token is tokenB.
@@ -154,8 +154,9 @@ interface ISwapboard is ISemver {
         uint256 deadline
     ) external payable;
 
-    /// @notice Cancels an existing order and returns remaining tokenA to maker
+    /// @notice Cancels an existing order and returns available tokenA to maker
     /// @dev Only callable by the order's maker. Returns ETH if tokenA is ETH.
+    ///      Original `amountA`/`amountB` are preserved; `availableA`/`availableB` are zeroed.
     /// @param orderId The unique identifier of the order to cancel
     function cancelOrder(
         uint256 orderId
