@@ -69,9 +69,8 @@ contract SwapboardStatelessInvariantTest is Test {
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 fillA = uint128(bound(fillASeed, 1, amountA));
 
-        uint256 amountBIn = fillA == amountA
-            ? amountB
-            : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+        uint256 amountBIn =
+            fillA == amountA ? amountB : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
         vm.assume(amountBIn > 0);
 
         vm.prank(_maker);

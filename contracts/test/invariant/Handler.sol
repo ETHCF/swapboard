@@ -403,9 +403,7 @@ contract SwapboardHandler is Test {
             if (order.active) {
                 assertTrue(order.availableA > 0 && order.availableB > 0, "active order has zero available");
             } else {
-                assertTrue(
-                    order.availableA == 0 || order.availableB == 0, "inactive order still fully available"
-                );
+                assertTrue(order.availableA == 0 || order.availableB == 0, "inactive order still fully available");
             }
         }
     }
