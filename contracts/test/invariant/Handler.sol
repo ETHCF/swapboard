@@ -395,15 +395,15 @@ contract SwapboardHandler is Test {
 
             assertEq(order.amountA, _ghostOriginalAmountA[i], "amountA mutated");
             assertEq(order.amountB, _ghostOriginalAmountB[i], "amountB mutated");
-            assertTrue(order.amountA > 0 && order.amountB > 0, "original amounts must be non-zero");
+            assertTrue(order.amountA > 0 && order.amountB > 0, "zero original amt");
 
-            assertTrue(!(order.availableA > order.amountA), "availableA exceeds amountA");
-            assertTrue(!(order.availableB > order.amountB), "availableB exceeds amountB");
+            assertTrue(!(order.availableA > order.amountA), "availableA > amountA");
+            assertTrue(!(order.availableB > order.amountB), "availableB > amountB");
 
             if (order.active) {
-                assertTrue(order.availableA > 0 && order.availableB > 0, "active order has zero available");
+                assertTrue(order.availableA > 0 && order.availableB > 0, "active zero avail");
             } else {
-                assertTrue(order.availableA == 0 || order.availableB == 0, "inactive order still fully available");
+                assertTrue(order.availableA == 0 || order.availableB == 0, "inactive still avail");
             }
         }
     }
