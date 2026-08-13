@@ -82,7 +82,7 @@ contract DeployTest is Test {
 
         vm.startPrank(taker);
         token.approve(address(board), 100e6);
-        board.fillOrder(fillId, 0);
+        board.fillOrder(fillId, 1 ether, 0);
         vm.stopPrank();
 
         assertFalse(board.canFill(fillId));
@@ -118,7 +118,7 @@ contract DeployTest is Test {
         uint256 makerEthBefore = maker.balance;
 
         vm.prank(taker);
-        board.fillOrder{value: 1 ether}(orderId, 0);
+        board.fillOrder{value: 1 ether}(orderId, 100e6, 0);
 
         assertFalse(board.canFill(orderId));
         assertEq(maker.balance, makerEthBefore + 1 ether);

@@ -65,8 +65,8 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_charlie);
         _usdc.approve(address(_board), 200_000e6);
-        _board.fillOrder(order0, 0);
-        _board.fillOrder(order3, 0);
+        _board.fillOrder(order0, 10 ether, 0);
+        _board.fillOrder(order3, 1e8, 0);
         vm.stopPrank();
 
         assertFalse(_board.canFill(order0));
@@ -92,7 +92,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 150_000e6);
-        _board.fillOrder(orderId, 0);
+        _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(_bob), bobWethBefore + 50 ether);
@@ -138,11 +138,11 @@ contract SwapboardIntegrationTest is Test {
         _usdc.approve(address(_board), 30_000e6);
 
         vm.prank(_bob);
-        _board.fillOrder(orderId, 0);
+        _board.fillOrder(orderId, 10 ether, 0);
 
         vm.prank(_charlie);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        _board.fillOrder(orderId, 0);
+        _board.fillOrder(orderId, 10 ether, 0);
 
         assertEq(_weth.balanceOf(_bob), 1000 ether + 10 ether);
         assertEq(_weth.balanceOf(_charlie), 0);
@@ -159,7 +159,7 @@ contract SwapboardIntegrationTest is Test {
         _usdc.approve(address(_board), 30_000e6);
 
         vm.prank(_bob);
-        _board.fillOrder(orderId, 0);
+        _board.fillOrder(orderId, 10 ether, 0);
 
         vm.prank(_alice);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
@@ -190,11 +190,11 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 150_000e6);
-        _board.fillOrder(orderIds[0], 0);
-        _board.fillOrder(orderIds[2], 0);
-        _board.fillOrder(orderIds[4], 0);
-        _board.fillOrder(orderIds[6], 0);
-        _board.fillOrder(orderIds[8], 0);
+        _board.fillOrder(orderIds[0], 10 ether, 0);
+        _board.fillOrder(orderIds[2], 10 ether, 0);
+        _board.fillOrder(orderIds[4], 10 ether, 0);
+        _board.fillOrder(orderIds[6], 10 ether, 0);
+        _board.fillOrder(orderIds[8], 10 ether, 0);
         vm.stopPrank();
 
         vm.startPrank(_alice);
@@ -220,7 +220,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_bob);
         _dai.approve(address(_board), 95_000 ether);
-        _board.fillOrder(orderId, 0);
+        _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
         vm.stopPrank();
 
         assertEq(_wbtc.balanceOf(_bob), 1e8);
@@ -242,7 +242,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 1e6);
-        _board.fillOrder(orderId, 0);
+        _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(_bob), 1000 ether + largeAmount);
@@ -257,7 +257,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 1);
-        _board.fillOrder(orderId, 0);
+        _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(_bob), 1000 ether + 1);
@@ -286,8 +286,8 @@ contract SwapboardIntegrationTest is Test {
         _usdc.approve(address(_board), 30_000e6);
 
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderFilled({orderId: orderId, taker: _bob});
-        _board.fillOrder(orderId, 0);
+        emit ISwapboard.OrderFilled({orderId: orderId, taker: _bob, amountA: 10 ether, amountB: 30_000e6});
+        _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
         vm.stopPrank();
     }
 
@@ -332,7 +332,7 @@ contract SwapboardIntegrationTest is Test {
         vm.startPrank(_bob);
         _usdc.approve(address(_board), numOrders * 3000e6);
         for (uint256 i = 0; i < numOrders; ++i) {
-            _board.fillOrder(i, 0);
+            _board.fillOrder(i, 1 ether, 0);
         }
         vm.stopPrank();
 
