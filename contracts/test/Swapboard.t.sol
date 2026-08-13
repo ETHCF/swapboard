@@ -94,6 +94,8 @@ contract SwapboardTest is Test {
         assertEq(order.amountA, AMOUNT_A);
         assertEq(order.tokenB, address(_tokenB));
         assertEq(order.amountB, AMOUNT_B);
+        assertEq(order.availableA, AMOUNT_A);
+        assertEq(order.availableB, AMOUNT_B);
         assertTrue(order.active);
         assertFalse(order.partialFillAllowed);
     }
@@ -106,6 +108,8 @@ contract SwapboardTest is Test {
         assertEq(order.amountA, 0);
         assertEq(order.tokenB, address(0));
         assertEq(order.amountB, 0);
+        assertEq(order.availableA, 0);
+        assertEq(order.availableB, 0);
         assertFalse(order.active);
         assertFalse(order.partialFillAllowed);
     }
@@ -127,6 +131,8 @@ contract SwapboardTest is Test {
         assertEq(order.amountA, AMOUNT_A);
         assertEq(order.tokenB, address(_tokenB));
         assertEq(order.amountB, AMOUNT_B);
+        assertEq(order.availableA, AMOUNT_A);
+        assertEq(order.availableB, AMOUNT_B);
         assertTrue(order.active);
         assertFalse(order.partialFillAllowed);
 
@@ -512,6 +518,8 @@ contract SwapboardTest is Test {
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.amountA, amountA);
         assertEq(order.amountB, amountB);
+        assertEq(order.availableA, amountA);
+        assertEq(order.availableB, amountB);
     }
 
     /// @notice Fuzz tests fillOrder
@@ -1367,9 +1375,11 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertFalse(order.active);
-        assertEq(order.amountB, 0);
+        assertEq(order.amountA, 100);
+        assertEq(order.amountB, 1);
+        assertEq(order.availableB, 0);
         // Dust remaining tokenA after amountB exhausted is expected (not worth gas to refund).
-        assertEq(order.amountA, 99);
+        assertEq(order.availableA, 99);
         assertEq(_tokenA.balanceOf(address(_board)), 99);
     }
 
@@ -1395,8 +1405,10 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertTrue(order.active);
-        assertEq(order.amountA, amountA - fillA);
-        assertEq(order.amountB, amountB - expectedBIn);
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, amountA - fillA);
+        assertEq(order.availableB, amountB - expectedBIn);
         assertEq(_tokenA.balanceOf(_taker), takerABefore + fillA);
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + expectedBIn);
         assertEq(_tokenA.balanceOf(address(_board)), amountA - fillA);
@@ -1422,8 +1434,10 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertFalse(order.active);
-        assertEq(order.amountA, 0);
-        assertEq(order.amountB, 0);
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, 0);
+        assertEq(order.availableB, 0);
         assertEq(_tokenA.balanceOf(address(_board)), 0);
     }
 
@@ -1449,8 +1463,10 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertTrue(order.active);
-        assertEq(order.amountA, amountA - fillA);
-        assertEq(order.amountB, amountB - expectedBIn);
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, amountA - fillA);
+        assertEq(order.availableB, amountB - expectedBIn);
         assertEq(_tokenA.balanceOf(_taker), takerABefore + fillA);
         // Ceil on tokenB can leave a richer residual A/B ratio; dust is not refunded (not worth
         // the gas) and can be picked up when this token is tokenB on another order.
@@ -1480,8 +1496,10 @@ contract SwapboardTest is Test {
         _board.cancelOrder(orderId);
 
         assertFalse(_board.canFill(orderId));
-        assertEq(_board.getOrder(orderId).amountA, 0);
-        assertEq(_board.getOrder(orderId).amountB, 0);
+        assertEq(_board.getOrder(orderId).amountA, amountA);
+        assertEq(_board.getOrder(orderId).amountB, amountB);
+        assertEq(_board.getOrder(orderId).availableA, 0);
+        assertEq(_board.getOrder(orderId).availableB, 0);
         assertEq(_tokenA.balanceOf(_maker), makerABefore + (amountA - fillA));
         assertEq(_tokenA.balanceOf(address(_board)), 0);
     }
@@ -1493,7 +1511,8 @@ contract SwapboardTest is Test {
         uint128 fillA = 25 ether;
         // casting to 'uint128' is safe because ceil result is <= amountB
         // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 expectedBIn = uint128((uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA));
+        uint128 expectedBIn =
+            uint128((uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA));
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), amountA);
@@ -1527,8 +1546,10 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertTrue(order.active);
-        assertEq(order.amountA, ethAmount - fillA);
-        assertEq(order.amountB, tokenAmount - expectedBIn);
+        assertEq(order.amountA, ethAmount);
+        assertEq(order.amountB, tokenAmount);
+        assertEq(order.availableA, ethAmount - fillA);
+        assertEq(order.availableB, tokenAmount - expectedBIn);
         assertEq(_taker.balance, takerEthBefore + fillA);
         assertEq(address(_board).balance, ethAmount - fillA);
     }
@@ -1553,20 +1574,22 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertTrue(order.active);
-        assertEq(order.amountA, tokenAmount - fillA);
-        assertEq(order.amountB, ethAmount - expectedEthIn);
+        assertEq(order.amountA, tokenAmount);
+        assertEq(order.amountB, ethAmount);
+        assertEq(order.availableA, tokenAmount - fillA);
+        assertEq(order.availableB, ethAmount - expectedEthIn);
         assertEq(_maker.balance, makerEthBefore + expectedEthIn);
         assertEq(_tokenB.balanceOf(_taker), takerTokenBefore + fillA);
     }
 
-    /// @notice Tests Order storage packs maker/flags and packs amountA+amountB
+    /// @notice Tests Order storage packs maker/flags, originals, and available amounts
     function test_orderStruct_storagePacking() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
         uint256 orderId = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B, true);
         vm.stopPrank();
 
-        // `_orders` is storage slot 1; each Order uses 4 slots.
+        // `_orders` is storage slot 1; each Order uses 5 slots.
         bytes32 baseSlot = keccak256(abi.encode(orderId, uint256(1)));
         uint256 slot0 = uint256(vm.load(address(_board), baseSlot));
 
@@ -1598,6 +1621,15 @@ contract SwapboardTest is Test {
         uint128 amountB = uint128(amountsSlot >> 128);
         assertEq(amountA, AMOUNT_A);
         assertEq(amountB, AMOUNT_B);
+
+        uint256 availableSlot = uint256(vm.load(address(_board), bytes32(uint256(baseSlot) + 4)));
+        // casting to 'uint128' is safe because availableA/availableB occupy the low/high 128 bits of slot 4
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 availableA = uint128(availableSlot);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 availableB = uint128(availableSlot >> 128);
+        assertEq(availableA, AMOUNT_A);
+        assertEq(availableB, AMOUNT_B);
     }
 
     /// @notice Fuzz: partial fills reduce remaining amounts and never overspend escrow
@@ -1614,8 +1646,9 @@ contract SwapboardTest is Test {
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 fillA = uint128(bound(fillASeed, 1, amountA));
 
-        uint256 amountBIn =
-            fillA == amountA ? amountB : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+        uint256 amountBIn = fillA == amountA
+            ? amountB
+            : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
         vm.assume(amountBIn > 0);
 
         _tokenA.mint(_maker, amountA);
@@ -1635,13 +1668,15 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertEq(order.amountA, amountA - fillA);
-        assertEq(order.amountB, amountB - amountBIn);
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, amountA - fillA);
+        assertEq(order.availableB, amountB - amountBIn);
         assertEq(_tokenA.balanceOf(_taker), takerABefore + fillA);
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + amountBIn);
         assertEq(_tokenA.balanceOf(address(_board)), amountA - fillA);
 
-        if (order.amountA == 0 || order.amountB == 0) {
+        if (order.availableA == 0 || order.availableB == 0) {
             assertFalse(order.active);
         } else {
             assertTrue(order.active);
@@ -1740,8 +1775,10 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertFalse(order.active);
-        assertEq(order.amountA, 0);
-        assertEq(order.amountB, 0);
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, 0);
+        assertEq(order.availableB, 0);
         assertEq(fillA1 + fillA2, amountA);
         assertEq(bIn1 + bIn2, amountB);
         assertEq(_tokenA.balanceOf(address(_board)), 0);

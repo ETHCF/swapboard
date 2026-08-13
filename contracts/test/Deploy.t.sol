@@ -57,6 +57,8 @@ contract DeployTest is Test {
         assertEq(order.amountA, 1 ether);
         assertEq(order.tokenB, address(token));
         assertEq(order.amountB, 100e6);
+        assertEq(order.availableA, 1 ether);
+        assertEq(order.availableB, 100e6);
         assertTrue(order.active);
         assertEq(board.getNextOrderId(), 1);
         assertEq(address(board).balance, 1 ether);

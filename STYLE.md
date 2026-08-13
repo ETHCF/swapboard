@@ -57,7 +57,9 @@ _orders[orderId] = Order({
     tokenA: tokenA,
     tokenB: tokenB,
     amountA: amountA,
-    amountB: amountB
+    amountB: amountB,
+    availableA: amountA,
+    availableB: amountB
 });
 
 emit OrderCreated({

@@ -92,7 +92,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 150_000e6);
-        _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
+        _board.fillOrder(orderId, _board.getOrder(orderId).availableA, 0);
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(_bob), bobWethBefore + 50 ether);
@@ -220,7 +220,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_bob);
         _dai.approve(address(_board), 95_000 ether);
-        _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
+        _board.fillOrder(orderId, _board.getOrder(orderId).availableA, 0);
         vm.stopPrank();
 
         assertEq(_wbtc.balanceOf(_bob), 1e8);
@@ -242,7 +242,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 1e6);
-        _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
+        _board.fillOrder(orderId, _board.getOrder(orderId).availableA, 0);
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(_bob), uint256(1000 ether) + uint256(largeAmount));
@@ -257,7 +257,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 1);
-        _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
+        _board.fillOrder(orderId, _board.getOrder(orderId).availableA, 0);
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(_bob), 1000 ether + 1);
@@ -287,7 +287,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _bob, amountA: 10 ether, amountB: 30_000e6});
-        _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
+        _board.fillOrder(orderId, _board.getOrder(orderId).availableA, 0);
         vm.stopPrank();
     }
 
