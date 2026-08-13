@@ -53,7 +53,7 @@ contract GasBenchmarks is Test {
 
         vm.prank(_taker);
         uint256 gasBefore = gasleft();
-        _board.fillOrder(orderId, 0);
+        _board.fillOrder(orderId, 100 ether, 0);
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("fillOrder gas:", gasUsed);

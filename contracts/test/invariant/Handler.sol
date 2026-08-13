@@ -39,6 +39,7 @@ contract SwapboardHandler is Test {
     uint256 private _callsCreateOrder;
     uint256 private _callsCreateOrderSellEth;
     uint256 private _callsCreateOrderWantEth;
+    uint256 private _callsCreateOrderAllowPartial;
     uint256 private _callsFillOrder;
     uint256 private _callsCancelOrder;
 
@@ -138,6 +139,10 @@ contract SwapboardHandler is Test {
         return _callsCreateOrderWantEth;
     }
 
+    function getCallsCreateOrderAllowPartial() external view returns (uint256) {
+        return _callsCreateOrderAllowPartial;
+    }
+
     function getCallsFillOrder() external view returns (uint256) {
         return _callsFillOrder;
     }
@@ -219,10 +224,35 @@ contract SwapboardHandler is Test {
         _ghostOrderActive[orderId] = true;
     }
 
-    /// @notice Fills an existing order (ERC20 or ETH payment as required)
+    /// @notice Creates an ERC20/ERC20 order that allows partial fills
+    function createOrderAllowPartial(
+        uint256 actorSeed,
+        uint256 amountA,
+        uint256 amountB
+    ) external useActor(actorSeed) {
+        amountA = bound(amountA, 1, 1000 ether);
+        amountB = bound(amountB, 1, 1000 ether);
+
+        if (_tokenA.balanceOf(_currentActor) < amountA) {
+            return;
+        }
+
+        ++_callsCreateOrderAllowPartial;
+
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, true);
+
+        _ghostTotalTokenADeposited += amountA;
+        ++_ghostOrdersCreated;
+        ++_ghostActiveOrders;
+        _ghostOrderAmounts[orderId] = amountA;
+        _ghostOrderActive[orderId] = true;
+    }
+
+    /// @notice Fills an existing order (full or partial when allowed)
     function fillOrder(
         uint256 actorSeed,
-        uint256 orderIdSeed
+        uint256 orderIdSeed,
+        uint256 fillAmountSeed
     ) external useActor(actorSeed) {
         uint256 nextId = _board.getNextOrderId();
         if (nextId == 0) {
@@ -236,12 +266,23 @@ contract SwapboardHandler is Test {
             return; // Order not active
         }
 
+        uint256 fillA = order.amountA;
+        if (order.partialFillAllowed) {
+            fillA = bound(fillAmountSeed, 1, order.amountA);
+        }
+
+        uint256 amountBIn =
+            fillA == order.amountA ? order.amountB : (fillA * order.amountB + order.amountA - 1) / order.amountA;
+        if (amountBIn == 0) {
+            return; // Would revert ZeroAmount
+        }
+
         if (order.tokenB == _ETH) {
-            if (_currentActor.balance < order.amountB) {
+            if (_currentActor.balance < amountBIn) {
                 return;
             }
         } else {
-            if (_tokenB.balanceOf(_currentActor) < order.amountB) {
+            if (_tokenB.balanceOf(_currentActor) < amountBIn) {
                 return;
             }
         }
@@ -249,20 +290,24 @@ contract SwapboardHandler is Test {
         ++_callsFillOrder;
 
         if (order.tokenB == _ETH) {
-            _board.fillOrder{value: order.amountB}(orderId, 0);
+            _board.fillOrder{value: amountBIn}(orderId, fillA, 0);
         } else {
-            _board.fillOrder(orderId, 0);
+            _board.fillOrder(orderId, fillA, 0);
         }
 
         if (order.tokenA == _ETH) {
-            _ghostTotalEthWithdrawn += order.amountA;
+            _ghostTotalEthWithdrawn += fillA;
         } else if (order.tokenA == address(_tokenA)) {
-            _ghostTotalTokenAWithdrawn += order.amountA;
+            _ghostTotalTokenAWithdrawn += fillA;
         }
 
-        ++_ghostOrdersFilled;
-        --_ghostActiveOrders;
-        _ghostOrderActive[orderId] = false;
+        if (!_board.canFill(orderId)) {
+            ++_ghostOrdersFilled;
+            --_ghostActiveOrders;
+            _ghostOrderActive[orderId] = false;
+        } else {
+            _ghostOrderAmounts[orderId] = order.amountA - fillA;
+        }
     }
 
     /// @notice Cancels an order (only by maker)
@@ -320,25 +365,25 @@ contract SwapboardHandler is Test {
         }
     }
 
-    /// @notice Sum of active ERC20 tokenA escrow amounts
+    /// @notice Sum of remaining ERC20 tokenA escrow across all orders (incl. inactive dust)
     function sumActiveOrderAmounts() external view returns (uint256 total) {
         uint256 nextId = _board.getNextOrderId();
 
         for (uint256 i = 0; i < nextId; ++i) {
             ISwapboard.Order memory order = _board.getOrder(i);
-            if (order.active && order.tokenA == address(_tokenA)) {
+            if (order.tokenA == address(_tokenA)) {
                 total += order.amountA;
             }
         }
     }
 
-    /// @notice Sum of active ETH tokenA escrow amounts
+    /// @notice Sum of remaining ETH tokenA escrow across all orders (incl. inactive dust)
     function sumActiveEthOrderAmounts() external view returns (uint256 total) {
         uint256 nextId = _board.getNextOrderId();
 
         for (uint256 i = 0; i < nextId; ++i) {
             ISwapboard.Order memory order = _board.getOrder(i);
-            if (order.active && order.tokenA == _ETH) {
+            if (order.tokenA == _ETH) {
                 total += order.amountA;
             }
         }

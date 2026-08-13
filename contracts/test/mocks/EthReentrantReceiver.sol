@@ -47,7 +47,7 @@ contract EthReentrantReceiver {
         _attacking = true;
 
         if (_attack == Attack.Fill) {
-            try _BOARD.fillOrder(_orderId, 0) {} catch {}
+            try _BOARD.fillOrder(_orderId, 1, 0) {} catch {}
         } else if (_attack == Attack.Cancel) {
             try _BOARD.cancelOrder(_orderId) {} catch {}
         } else if (_attack == Attack.Create) {

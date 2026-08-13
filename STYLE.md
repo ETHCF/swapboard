@@ -70,7 +70,7 @@ emit OrderCreated({
     partialFillAllowed: partialFillAllowed
 });
 
-emit OrderFilled({orderId: orderId, taker: msg.sender});
+emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB: amountBIn});
 ```
 
 Prefer the same style for any other named-argument call sites where Solidity supports them (e.g. nested struct construction).

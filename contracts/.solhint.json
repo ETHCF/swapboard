@@ -11,6 +11,6 @@
     "var-name-mixedcase": "off",
     "import-path-check": "off",
     "function-max-lines": ["warn", 60],
-    "max-states-count": ["warn", 20]
+    "max-states-count": ["warn", 30]
   }
 }

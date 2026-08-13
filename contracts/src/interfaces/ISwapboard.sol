@@ -15,9 +15,9 @@ interface ISwapboard is ISemver {
     /// @param active Whether the order can still be filled or cancelled
     /// @param partialFillAllowed Whether the order may be filled in multiple parts
     /// @param tokenA Address of the token being sold (held in escrow)
-    /// @param amountA Amount of tokenA deposited by maker (in base units)
+    /// @param amountA Remaining amount of tokenA in escrow (in base units)
     /// @param tokenB Address of the token maker wants to receive
-    /// @param amountB Amount of tokenB required to fill the order (in base units)
+    /// @param amountB Remaining amount of tokenB required to complete the order
     struct Order {
         address maker;
         bool active;
@@ -29,6 +29,7 @@ interface ISwapboard is ISemver {
     }
 
     // solhint-disable gas-indexed-events
+
     /// @notice Emitted when a new order is created
     /// @param orderId Unique identifier for the order
     /// @param maker Address that created the order
@@ -46,12 +47,15 @@ interface ISwapboard is ISemver {
         uint256 amountB,
         bool partialFillAllowed
     );
-    // solhint-enable gas-indexed-events
 
-    /// @notice Emitted when an order is filled by a taker
+    /// @notice Emitted when an order is filled (fully or partially) by a taker
     /// @param orderId Unique identifier for the filled order
     /// @param taker Address that filled the order
-    event OrderFilled(uint256 indexed orderId, address indexed taker);
+    /// @param amountA Amount of tokenA transferred to the taker
+    /// @param amountB Amount of tokenB paid by the taker
+    event OrderFilled(uint256 indexed orderId, address indexed taker, uint256 amountA, uint256 amountB);
+
+    // solhint-enable gas-indexed-events
 
     /// @notice Emitted when an order is cancelled by its maker
     /// @param orderId Unique identifier for the cancelled order
@@ -98,6 +102,16 @@ interface ISwapboard is ISemver {
     /// @notice Thrown when a fill is attempted after the specified deadline
     error DeadlineExpired();
 
+    /// @notice Thrown when a partial fill is attempted on an order that disallows it
+    /// @param orderId The order ID
+    error PartialFillNotAllowed(uint256 orderId);
+
+    /// @notice Thrown when the requested fill amountA exceeds the order's remaining amountA
+    /// @param orderId The order ID
+    /// @param requested The requested amountA
+    /// @param remaining The remaining amountA on the order
+    error FillAmountTooHigh(uint256 orderId, uint256 requested, uint256 remaining);
+
     /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
     /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer tokens.
     ///      For ETH tokenA (`getEth()`), requires `msg.value == amountA`.
@@ -115,17 +129,24 @@ interface ISwapboard is ISemver {
         bool partialFillAllowed
     ) external payable returns (uint256 orderId);
 
-    /// @notice Fills an existing order
-    /// @dev If tokenB is ETH, requires `msg.value == amountB`.
+    /// @notice Fills an existing order for the given amountA
+    /// @dev Taker receives `amountA` of tokenA and pays proportional tokenB.
+    ///      tokenB in is ceiled (`(amountA * remainingB + remainingA - 1) / remainingA`) so the
+    ///      taker never underpays. Residual tokenA dust is not refunded (not worth the gas); it
+    ///      can be picked up by any user that rounds favorably on another order where the dust
+    ///      token is tokenB.
+    ///      If tokenB is ETH, requires `msg.value` equal to the ceiled tokenB amount.
     ///      If tokenA is ETH, pays the taker in ETH.
     /// @param orderId The unique identifier of the order to fill
+    /// @param amountA Amount of tokenA to receive from the order
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrder(
         uint256 orderId,
+        uint256 amountA,
         uint256 deadline
     ) external payable;
 
-    /// @notice Cancels an existing order and returns tokenA to maker
+    /// @notice Cancels an existing order and returns remaining tokenA to maker
     /// @dev Only callable by the order's maker. Returns ETH if tokenA is ETH.
     /// @param orderId The unique identifier of the order to cancel
     function cancelOrder(

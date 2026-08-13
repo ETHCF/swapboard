@@ -52,20 +52,21 @@ contract SwapboardInvariantTest is Test {
         assertEq(actualBalance, expectedBalance, "ETH solvency violated: balance mismatch");
     }
 
-    /// @notice Contract balance must equal sum of all active order amounts
+    /// @notice Contract tokenA balance must equal sum of remaining escrow across all orders
+    /// @dev Includes inactive-order dust left by floor rounding on partial fills
     function invariant_balanceEqualsActiveOrderSum() public view {
         uint256 actualBalance = _tokenA.balanceOf(address(_board));
         uint256 activeOrderSum = _handler.sumActiveOrderAmounts();
 
-        assertEq(actualBalance, activeOrderSum, "Balance does not equal sum of active orders");
+        assertEq(actualBalance, activeOrderSum, "Balance does not equal sum of remaining order amounts");
     }
 
-    /// @notice Contract ETH balance must equal sum of active ETH sell orders
+    /// @notice Contract ETH balance must equal sum of remaining ETH escrow across all orders
     function invariant_ethBalanceEqualsActiveOrderSum() public view {
         uint256 actualBalance = address(_board).balance;
         uint256 activeOrderSum = _handler.sumActiveEthOrderAmounts();
 
-        assertEq(actualBalance, activeOrderSum, "ETH balance does not equal sum of active ETH orders");
+        assertEq(actualBalance, activeOrderSum, "ETH balance does not equal sum of remaining ETH order amounts");
     }
 
     /// @notice Orders created must equal filled + cancelled + active
@@ -112,6 +113,7 @@ contract SwapboardInvariantTest is Test {
         console2.log("createOrder calls:", _handler.getCallsCreateOrder());
         console2.log("createOrderSellEth calls:", _handler.getCallsCreateOrderSellEth());
         console2.log("createOrderWantEth calls:", _handler.getCallsCreateOrderWantEth());
+        console2.log("createOrderAllowPartial calls:", _handler.getCallsCreateOrderAllowPartial());
         console2.log("fillOrder calls:", _handler.getCallsFillOrder());
         console2.log("cancelOrder calls:", _handler.getCallsCancelOrder());
         console2.log("Orders created:", _handler.getGhostOrdersCreated());
