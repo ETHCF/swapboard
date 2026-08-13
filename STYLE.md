@@ -55,8 +55,8 @@ _orders[orderId] = Order({
     active: true,
     partialFillAllowed: partialFillAllowed,
     tokenA: tokenA,
-    amountA: amountA,
     tokenB: tokenB,
+    amountA: amountA,
     amountB: amountB
 });
 
@@ -96,8 +96,8 @@ Keep separate `if`s when the error encodes different data (e.g. `NotAContract(to
 - **Snapshot storage structs into locals** (tuple unpack) before a sequence of checks/transfers when multiple fields are read:
 
 ```solidity
-(address maker, bool active, address tokenA, uint256 amountA, address tokenB, uint256 amountB) =
-    (order.maker, order.active, order.tokenA, order.amountA, order.tokenB, order.amountB);
+(address maker, bool active, address tokenA, address tokenB, uint128 amountA, uint128 amountB) =
+    (order.maker, order.active, order.tokenA, order.tokenB, order.amountA, order.amountB);
 ```
 
 - Use **named mapping keys**: `mapping(uint256 orderId => Order order)`.

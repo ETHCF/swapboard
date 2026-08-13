@@ -19,6 +19,7 @@ import {Semver} from "./Semver.sol";
 ///      - Partial fill size is specified as tokenA to receive (`amountA`); tokenB paid is ceiled
 ///      - Fee-on-transfer tokens are rejected for tokenA (selling token)
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
+///      - Order amounts use `uint128` (sufficient for practical sizes) and are packed together
 ///      - Reentrancy protected via OpenZeppelin ReentrancyGuardTransient (EIP-1153)
 ///
 ///      Security considerations:
@@ -55,9 +56,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ///      addresses are treated as distinct tokens. Users must verify token addresses.
     function createOrder(
         address tokenA,
-        uint256 amountA,
+        uint128 amountA,
         address tokenB,
-        uint256 amountB,
+        uint128 amountB,
         bool partialFillAllowed
     ) external payable nonReentrant returns (uint256 orderId) {
         _validateCreateOrder(tokenA, amountA, tokenB, amountB);
@@ -77,8 +78,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             active: true,
             partialFillAllowed: partialFillAllowed,
             tokenA: tokenA,
-            amountA: amountA,
             tokenB: tokenB,
+            amountA: amountA,
             amountB: amountB
         });
 
@@ -101,7 +102,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ///      the dust token is tokenB.
     function fillOrder(
         uint256 orderId,
-        uint256 amountA,
+        uint128 amountA,
         uint256 deadline
     ) external payable nonReentrant {
         if (deadline != 0 && block.timestamp > deadline) {
@@ -112,7 +113,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         Order storage order = _orders[orderId];
-        (address maker, address tokenA, address tokenB, uint256 amountBIn) =
+        (address maker, address tokenA, address tokenB, uint128 amountBIn) =
             _validateAndQuoteFill(order, orderId, amountA);
 
         uint256 requiredEth = tokenB == _ETH ? amountBIn : 0;
@@ -132,7 +133,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) external nonReentrant {
         Order storage order = _orders[orderId];
 
-        (address maker, bool active, address tokenA, uint256 amountA) =
+        (address maker, bool active, address tokenA, uint128 amountA) =
             (order.maker, order.active, order.tokenA, order.amountA);
         if (maker == address(0)) {
             revert OrderNotFound(orderId);
@@ -206,9 +207,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param amountB Amount of tokenB required to fill
     function _validateCreateOrder(
         address tokenA,
-        uint256 amountA,
+        uint128 amountA,
         address tokenB,
-        uint256 amountB
+        uint128 amountB
     ) private view {
         if (tokenA == address(0) || tokenB == address(0)) {
             revert ZeroAddress();
@@ -238,6 +239,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Validates a fill and quotes the ceiled tokenB payment
     /// @dev Ceil division benefits escrow/maker. Residual tokenA dust is not refunded.
+    ///      Intermediate math widens to uint256; both factors are uint128 so the product fits.
     /// @param order Order storage slot to read
     /// @param orderId Order id for error payloads
     /// @param amountA Requested tokenA out
@@ -248,8 +250,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function _validateAndQuoteFill(
         Order storage order,
         uint256 orderId,
-        uint256 amountA
-    ) private view returns (address maker, address tokenA, address tokenB, uint256 amountBIn) {
+        uint128 amountA
+    ) private view returns (address maker, address tokenA, address tokenB, uint128 amountBIn) {
         maker = order.maker;
         if (maker == address(0)) {
             revert OrderNotFound(orderId);
@@ -258,7 +260,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert OrderNotActive(orderId);
         }
 
-        uint256 remainingA = order.amountA;
+        uint128 remainingA = order.amountA;
         if (amountA > remainingA) {
             revert FillAmountTooHigh(orderId, amountA, remainingA);
         }
@@ -268,8 +270,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         tokenA = order.tokenA;
         tokenB = order.tokenB;
-        uint256 remainingB = order.amountB;
-        amountBIn = amountA == remainingA ? remainingB : (amountA * remainingB + remainingA - 1) / remainingA;
+        uint128 remainingB = order.amountB;
+        // Product of two uint128 values always fits in uint256; ceil result is <= remainingB.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amountBIn = amountA == remainingA
+            ? remainingB
+            : uint128((uint256(amountA) * uint256(remainingB) + uint256(remainingA) - 1) / uint256(remainingA));
         if (amountBIn == 0) {
             revert ZeroAmount();
         }
@@ -281,8 +287,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param amountBIn tokenB paid by the taker
     function _applyFillEffects(
         Order storage order,
-        uint256 amountA,
-        uint256 amountBIn
+        uint128 amountA,
+        uint128 amountBIn
     ) private {
         unchecked {
             order.amountA -= amountA;
@@ -303,8 +309,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address maker,
         address tokenA,
         address tokenB,
-        uint256 amountA,
-        uint256 amountBIn
+        uint128 amountA,
+        uint128 amountBIn
     ) private {
         if (tokenB == _ETH) {
             // Forward all gas so maker contracts can execute receive/fallback.

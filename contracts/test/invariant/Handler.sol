@@ -167,7 +167,12 @@ contract SwapboardHandler is Test {
 
         ++_callsCreateOrder;
 
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
+        // casting to 'uint128' is safe because amounts are bounded well below uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA128 = uint128(amountA);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB128 = uint128(amountB);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA128, address(_tokenB), amountB128, false);
 
         _ghostTotalTokenADeposited += amountA;
         ++_ghostOrdersCreated;
@@ -191,7 +196,12 @@ contract SwapboardHandler is Test {
 
         ++_callsCreateOrderSellEth;
 
-        uint256 orderId = _board.createOrder{value: amountA}(_ETH, amountA, address(_tokenB), amountB, false);
+        // casting to 'uint128' is safe because amounts are bounded well below uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA128 = uint128(amountA);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB128 = uint128(amountB);
+        uint256 orderId = _board.createOrder{value: amountA}(_ETH, amountA128, address(_tokenB), amountB128, false);
 
         _ghostTotalEthDeposited += amountA;
         ++_ghostOrdersCreated;
@@ -215,7 +225,12 @@ contract SwapboardHandler is Test {
 
         ++_callsCreateOrderWantEth;
 
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, _ETH, amountB, false);
+        // casting to 'uint128' is safe because amounts are bounded well below uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA128 = uint128(amountA);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB128 = uint128(amountB);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA128, _ETH, amountB128, false);
 
         _ghostTotalTokenADeposited += amountA;
         ++_ghostOrdersCreated;
@@ -239,7 +254,12 @@ contract SwapboardHandler is Test {
 
         ++_callsCreateOrderAllowPartial;
 
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, true);
+        // casting to 'uint128' is safe because amounts are bounded well below uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA128 = uint128(amountA);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB128 = uint128(amountB);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA128, address(_tokenB), amountB128, true);
 
         _ghostTotalTokenADeposited += amountA;
         ++_ghostOrdersCreated;
@@ -273,28 +293,41 @@ contract SwapboardHandler is Test {
 
         uint256 amountBIn =
             fillA == order.amountA ? order.amountB : (fillA * order.amountB + order.amountA - 1) / order.amountA;
-        if (amountBIn == 0) {
-            return; // Would revert ZeroAmount
-        }
-
-        if (order.tokenB == _ETH) {
-            if (_currentActor.balance < amountBIn) {
-                return;
-            }
-        } else {
-            if (_tokenB.balanceOf(_currentActor) < amountBIn) {
-                return;
-            }
+        if (amountBIn == 0 || !_actorCanPayTokenB(order.tokenB, amountBIn)) {
+            return;
         }
 
         ++_callsFillOrder;
 
+        // casting to 'uint128' is safe because fillA is at most order.amountA (uint128)
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 fillA128 = uint128(fillA);
         if (order.tokenB == _ETH) {
-            _board.fillOrder{value: amountBIn}(orderId, fillA, 0);
+            _board.fillOrder{value: amountBIn}(orderId, fillA128, 0);
         } else {
-            _board.fillOrder(orderId, fillA, 0);
+            _board.fillOrder(orderId, fillA128, 0);
         }
 
+        _recordFillGhosts(order, orderId, fillA);
+    }
+
+    /// @notice Returns whether the current actor can pay `amount` of `tokenB`
+    function _actorCanPayTokenB(
+        address tokenB,
+        uint256 amount
+    ) private view returns (bool) {
+        if (tokenB == _ETH) {
+            return !(_currentActor.balance < amount);
+        }
+        return !(_tokenB.balanceOf(_currentActor) < amount);
+    }
+
+    /// @notice Updates ghost accounting after a successful fill
+    function _recordFillGhosts(
+        ISwapboard.Order memory order,
+        uint256 orderId,
+        uint256 fillA
+    ) private {
         if (order.tokenA == _ETH) {
             _ghostTotalEthWithdrawn += fillA;
         } else if (order.tokenA == address(_tokenA)) {

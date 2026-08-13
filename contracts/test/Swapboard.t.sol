@@ -28,9 +28,9 @@ contract SwapboardTest is Test {
     address internal _maker = address(0x1);
     address internal _taker = address(0x2);
 
-    uint256 private constant AMOUNT_A = 100 ether;
-    uint256 private constant AMOUNT_B = 250_000e6;
-    uint256 private constant ETH_AMOUNT = 1 ether;
+    uint128 private constant AMOUNT_A = 100 ether;
+    uint128 private constant AMOUNT_B = 250_000e6;
+    uint128 private constant ETH_AMOUNT = 1 ether;
 
     /// @notice Deploys fixtures for each test
     function setUp() public {
@@ -493,11 +493,14 @@ contract SwapboardTest is Test {
 
     /// @notice Fuzz tests createOrder
     function testFuzz_createOrder(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, type(uint128).max);
-        amountB = bound(amountB, 1, type(uint128).max);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         _tokenA.mint(_maker, amountA);
 
@@ -513,11 +516,14 @@ contract SwapboardTest is Test {
 
     /// @notice Fuzz tests fillOrder
     function testFuzz_fillOrder(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, type(uint128).max);
-        amountB = bound(amountB, 1, type(uint128).max);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         _tokenA.mint(_maker, amountA);
         _tokenB.mint(_taker, amountB);
@@ -1181,11 +1187,14 @@ contract SwapboardTest is Test {
 
     /// @notice Fuzz tests createOrder selling ETH
     function testFuzz_createOrder_sellEth(
-        uint256 ethAmount,
-        uint256 amountB
+        uint256 ethAmountSeed,
+        uint256 amountBSeed
     ) public {
-        ethAmount = bound(ethAmount, 1, 100 ether);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is within uint128 range
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 ethAmount = uint128(bound(ethAmountSeed, 1, 100 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         vm.deal(_maker, ethAmount + 1 ether);
 
@@ -1201,11 +1210,13 @@ contract SwapboardTest is Test {
 
     /// @notice Fuzz tests createOrder selling ETH reverts on excess msg.value
     function testFuzz_createOrder_sellEth_revert_excess(
-        uint256 ethAmount,
-        uint256 excess
+        uint256 ethAmountSeed,
+        uint256 excessSeed
     ) public {
-        ethAmount = bound(ethAmount, 1, 50 ether);
-        excess = bound(excess, 1, 50 ether);
+        // casting to 'uint128' is safe because bound is within uint128 range
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 ethAmount = uint128(bound(ethAmountSeed, 1, 50 ether));
+        uint256 excess = bound(excessSeed, 1, 50 ether);
 
         vm.deal(_maker, ethAmount + excess);
 
@@ -1216,11 +1227,14 @@ contract SwapboardTest is Test {
 
     /// @notice Fuzz tests fillOrder paying with ETH
     function testFuzz_fillOrder_payEth(
-        uint256 tokenAmount,
-        uint256 ethAmount
+        uint256 tokenAmountSeed,
+        uint256 ethAmountSeed
     ) public {
-        tokenAmount = bound(tokenAmount, 1, 1e30);
-        ethAmount = bound(ethAmount, 1, 100 ether);
+        // casting to 'uint128' is safe because bound is within uint128 range
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 tokenAmount = uint128(bound(tokenAmountSeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 ethAmount = uint128(bound(ethAmountSeed, 1, 100 ether));
 
         _tokenB.mint(_maker, tokenAmount);
         vm.deal(_taker, ethAmount + 1 ether);
@@ -1242,9 +1256,11 @@ contract SwapboardTest is Test {
 
     /// @notice Fuzz tests cancelOrder returning ETH
     function testFuzz_cancelOrder_returnEth(
-        uint256 ethAmount
+        uint256 ethAmountSeed
     ) public {
-        ethAmount = bound(ethAmount, 1, 100 ether);
+        // casting to 'uint128' is safe because bound is within uint128 range
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 ethAmount = uint128(bound(ethAmountSeed, 1, 100 ether));
         vm.deal(_maker, ethAmount);
 
         vm.prank(_maker);
@@ -1260,11 +1276,14 @@ contract SwapboardTest is Test {
 
     /// @notice Fuzz tests fillOrder receiving ETH
     function testFuzz_fillOrder_receiveEth(
-        uint256 ethAmount,
-        uint256 tokenAmount
+        uint256 ethAmountSeed,
+        uint256 tokenAmountSeed
     ) public {
-        ethAmount = bound(ethAmount, 1, 100 ether);
-        tokenAmount = bound(tokenAmount, 1, 1e30);
+        // casting to 'uint128' is safe because bound is within uint128 range
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 ethAmount = uint128(bound(ethAmountSeed, 1, 100 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 tokenAmount = uint128(bound(tokenAmountSeed, 1, type(uint128).max));
 
         vm.deal(_maker, ethAmount);
         _tokenB.mint(_taker, tokenAmount);
@@ -1333,8 +1352,8 @@ contract SwapboardTest is Test {
 
     /// @notice Tests ceil payment can exhaust amountB while leaving tokenA dust
     function test_fillOrder_partial_ceilExhaustsAmountBWithDust() public {
-        uint256 amountA = 100;
-        uint256 amountB = 1;
+        uint128 amountA = 100;
+        uint128 amountB = 1;
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), amountA);
@@ -1356,10 +1375,10 @@ contract SwapboardTest is Test {
 
     /// @notice Tests a single partial fill reduces remaining amounts and keeps the order active
     function test_fillOrder_partial_updatesRemaining() public {
-        uint256 amountA = 100 ether;
-        uint256 amountB = 250_000e6;
-        uint256 fillA = 40 ether;
-        uint256 expectedBIn = (fillA * amountB + amountA - 1) / amountA;
+        uint128 amountA = 100 ether;
+        uint128 amountB = 250_000e6;
+        uint128 fillA = 40 ether;
+        uint256 expectedBIn = (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), amountA);
@@ -1385,8 +1404,8 @@ contract SwapboardTest is Test {
 
     /// @notice Tests multiple partial fills can complete an order
     function test_fillOrder_partial_multipleFillsComplete() public {
-        uint256 amountA = 100 ether;
-        uint256 amountB = 4e6;
+        uint128 amountA = 100 ether;
+        uint128 amountB = 4e6;
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), amountA);
@@ -1410,9 +1429,9 @@ contract SwapboardTest is Test {
 
     /// @notice Tests ceil rounding can exhaust amountB while leaving tokenA dust (expected)
     function test_fillOrder_partial_roundingLeavesDust() public {
-        uint256 amountA = 100;
-        uint256 amountB = 3;
-        uint256 fillA = 34;
+        uint128 amountA = 100;
+        uint128 amountB = 3;
+        uint128 fillA = 34;
         // Exact B share would be 1.02; ceil charges 2.
         uint256 expectedBIn = 2;
 
@@ -1441,10 +1460,10 @@ contract SwapboardTest is Test {
 
     /// @notice Tests partial fill then cancel returns remaining tokenA
     function test_fillOrder_partial_thenCancel() public {
-        uint256 amountA = 100 ether;
-        uint256 amountB = 4e6;
-        uint256 fillA = 25 ether;
-        uint256 expectedBIn = (fillA * amountB + amountA - 1) / amountA;
+        uint128 amountA = 100 ether;
+        uint128 amountB = 4e6;
+        uint128 fillA = 25 ether;
+        uint256 expectedBIn = (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), amountA);
@@ -1469,10 +1488,12 @@ contract SwapboardTest is Test {
 
     /// @notice Tests partial fill emits OrderFilled with filled amounts
     function test_fillOrder_partial_event() public {
-        uint256 amountA = 100 ether;
-        uint256 amountB = 4e6;
-        uint256 fillA = 25 ether;
-        uint256 expectedBIn = (fillA * amountB + amountA - 1) / amountA;
+        uint128 amountA = 100 ether;
+        uint128 amountB = 4e6;
+        uint128 fillA = 25 ether;
+        // casting to 'uint128' is safe because ceil result is <= amountB
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 expectedBIn = uint128((uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA));
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), amountA);
@@ -1489,10 +1510,10 @@ contract SwapboardTest is Test {
 
     /// @notice Tests ETH sell order can be partially filled by requesting amountA ETH
     function test_fillOrder_partial_receiveEth() public {
-        uint256 ethAmount = 4 ether;
-        uint256 tokenAmount = 400e6;
-        uint256 fillA = 1 ether;
-        uint256 expectedBIn = (fillA * tokenAmount + ethAmount - 1) / ethAmount;
+        uint128 ethAmount = 4 ether;
+        uint128 tokenAmount = 400e6;
+        uint128 fillA = 1 ether;
+        uint256 expectedBIn = (uint256(fillA) * uint256(tokenAmount) + uint256(ethAmount) - 1) / uint256(ethAmount);
 
         vm.prank(_maker);
         uint256 orderId = _board.createOrder{value: ethAmount}(_eth, ethAmount, address(_tokenB), tokenAmount, true);
@@ -1514,10 +1535,10 @@ contract SwapboardTest is Test {
 
     /// @notice Tests want-ETH order can be partially filled with exact ceiled msg.value
     function test_fillOrder_partial_payEth() public {
-        uint256 tokenAmount = 400e6;
-        uint256 ethAmount = 4 ether;
-        uint256 fillA = 100e6;
-        uint256 expectedEthIn = (fillA * ethAmount + tokenAmount - 1) / tokenAmount;
+        uint128 tokenAmount = 400e6;
+        uint128 ethAmount = 4 ether;
+        uint128 fillA = 100e6;
+        uint256 expectedEthIn = (uint256(fillA) * uint256(ethAmount) + uint256(tokenAmount) - 1) / uint256(tokenAmount);
 
         vm.startPrank(_maker);
         _tokenB.approve(address(_board), tokenAmount);
@@ -1538,15 +1559,16 @@ contract SwapboardTest is Test {
         assertEq(_tokenB.balanceOf(_taker), takerTokenBefore + fillA);
     }
 
-    /// @notice Tests Order storage packs maker + active + partialFillAllowed into slot 0
+    /// @notice Tests Order storage packs maker/flags and packs amountA+amountB
     function test_orderStruct_storagePacking() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
         uint256 orderId = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B, true);
         vm.stopPrank();
 
-        bytes32 orderSlot = keccak256(abi.encode(orderId, uint256(1)));
-        uint256 slot0 = uint256(vm.load(address(_board), orderSlot));
+        // `_orders` is storage slot 1; each Order uses 4 slots.
+        bytes32 baseSlot = keccak256(abi.encode(orderId, uint256(1)));
+        uint256 slot0 = uint256(vm.load(address(_board), baseSlot));
 
         // casting to 'uint160' is safe because Solidity packs `address` in the low 160 bits of slot 0
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -1558,23 +1580,42 @@ contract SwapboardTest is Test {
         assertTrue(active);
         assertTrue(partialFillAllowed);
 
-        // casting to 'uint160' is safe because `tokenA` occupies the low 160 bits of the next slot
+        // casting to 'uint160' is safe because `tokenA` occupies the low 160 bits of slot 1
         // forge-lint: disable-next-line(unsafe-typecast)
-        address tokenA = address(uint160(uint256(vm.load(address(_board), bytes32(uint256(orderSlot) + 1)))));
+        address tokenA = address(uint160(uint256(vm.load(address(_board), bytes32(uint256(baseSlot) + 1)))));
         assertEq(tokenA, address(_tokenA));
+
+        // casting to 'uint160' is safe because `tokenB` occupies the low 160 bits of slot 2
+        // forge-lint: disable-next-line(unsafe-typecast)
+        address tokenB = address(uint160(uint256(vm.load(address(_board), bytes32(uint256(baseSlot) + 2)))));
+        assertEq(tokenB, address(_tokenB));
+
+        uint256 amountsSlot = uint256(vm.load(address(_board), bytes32(uint256(baseSlot) + 3)));
+        // casting to 'uint128' is safe because amountA/amountB occupy the low/high 128 bits of slot 3
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(amountsSlot);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(amountsSlot >> 128);
+        assertEq(amountA, AMOUNT_A);
+        assertEq(amountB, AMOUNT_B);
     }
 
     /// @notice Fuzz: partial fills reduce remaining amounts and never overspend escrow
     function testFuzz_fillOrder_partial(
-        uint256 amountA,
-        uint256 amountB,
-        uint256 fillA
+        uint256 amountASeed,
+        uint256 amountBSeed,
+        uint256 fillASeed
     ) public {
-        amountA = bound(amountA, 1, type(uint128).max);
-        amountB = bound(amountB, 1, type(uint128).max);
-        fillA = bound(fillA, 1, amountA);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 fillA = uint128(bound(fillASeed, 1, amountA));
 
-        uint256 amountBIn = fillA == amountA ? amountB : (fillA * amountB + amountA - 1) / amountA;
+        uint256 amountBIn =
+            fillA == amountA ? amountB : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
         vm.assume(amountBIn > 0);
 
         _tokenA.mint(_maker, amountA);
@@ -1609,13 +1650,17 @@ contract SwapboardTest is Test {
 
     /// @notice Fuzz: non-partial orders reject any amountA other than the full remaining
     function testFuzz_fillOrder_partialFillNotAllowed(
-        uint256 amountA,
-        uint256 amountB,
-        uint256 fillA
+        uint256 amountASeed,
+        uint256 amountBSeed,
+        uint256 fillASeed
     ) public {
-        amountA = bound(amountA, 2, type(uint128).max);
-        amountB = bound(amountB, 2, type(uint128).max);
-        fillA = bound(fillA, 1, amountA - 1);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 2, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 2, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 fillA = uint128(bound(fillASeed, 1, amountA - 1));
 
         _tokenA.mint(_maker, amountA);
         _tokenB.mint(_taker, amountB);
@@ -1634,13 +1679,15 @@ contract SwapboardTest is Test {
 
     /// @notice Fuzz: fillAmountTooHigh when requested amountA exceeds remaining
     function testFuzz_fillOrder_fillAmountTooHigh(
-        uint256 amountA,
-        uint256 amountB,
-        uint256 extra
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, type(uint128).max);
-        amountB = bound(amountB, 1, type(uint128).max);
-        extra = bound(extra, 1, type(uint128).max);
+        // casting to 'uint128' is safe because bound is capped below uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max - 1));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
+        uint128 requested = amountA + 1;
 
         _tokenA.mint(_maker, amountA);
         _tokenB.mint(_taker, amountB);
@@ -1652,30 +1699,30 @@ contract SwapboardTest is Test {
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), amountB);
-        vm.expectRevert(
-            abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, amountA + extra, amountA)
-        );
-        _board.fillOrder(orderId, amountA + extra, 0);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, requested, amountA));
+        _board.fillOrder(orderId, requested, 0);
         vm.stopPrank();
     }
 
     /// @notice Fuzz: two partial fills never exceed original escrow
     function testFuzz_fillOrder_partial_twoFills(
-        uint256 amountA,
-        uint256 amountB,
-        uint256 fillA1
+        uint256 amountASeed,
+        uint256 amountBSeed,
+        uint256 fillA1Seed
     ) public {
-        amountA = bound(amountA, 2, type(uint64).max);
-        amountB = bound(amountB, 2, type(uint64).max);
-        fillA1 = bound(fillA1, 1, amountA - 1);
+        // casting to 'uint128' is safe because bound is capped at uint64.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 2, type(uint64).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 2, type(uint64).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 fillA1 = uint128(bound(fillA1Seed, 1, amountA - 1));
 
-        uint256 bIn1 = (fillA1 * amountB + amountA - 1) / amountA;
+        uint256 bIn1 = (uint256(fillA1) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
         vm.assume(bIn1 > 0 && bIn1 < amountB);
 
-        uint256 remainingA = amountA - fillA1;
-        uint256 remainingB = amountB - bIn1;
-        uint256 fillA2 = remainingA;
-        uint256 bIn2 = remainingB;
+        uint128 fillA2 = amountA - fillA1;
+        uint256 bIn2 = amountB - bIn1;
 
         _tokenA.mint(_maker, amountA);
         _tokenB.mint(_taker, amountB);
