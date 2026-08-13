@@ -1511,8 +1511,7 @@ contract SwapboardTest is Test {
         uint128 fillA = 25 ether;
         // casting to 'uint128' is safe because ceil result is <= amountB
         // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 expectedBIn =
-            uint128((uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA));
+        uint128 expectedBIn = uint128((uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA));
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), amountA);
@@ -1646,9 +1645,8 @@ contract SwapboardTest is Test {
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 fillA = uint128(bound(fillASeed, 1, amountA));
 
-        uint256 amountBIn = fillA == amountA
-            ? amountB
-            : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+        uint256 amountBIn =
+            fillA == amountA ? amountB : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
         vm.assume(amountBIn > 0);
 
         _tokenA.mint(_maker, amountA);
