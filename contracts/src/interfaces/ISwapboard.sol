@@ -11,21 +11,28 @@ import {ISemver} from "./ISemver.sol";
 ///      Native ETH is represented by the sentinel returned from `getEth()`.
 interface ISwapboard is ISemver {
     /// @notice Represents a single OTC order
+    /// @dev Packed for storage:
+    ///      - slot 0: `maker` + `active` + `partialFillAllowed`
+    ///      - slot 1: `tokenA`
+    ///      - slot 2: `tokenB`
+    ///      - slot 3: `amountA` + `amountB` (both `uint128`)
+    ///      `uint128` amounts are sufficient for practical order sizes (e.g. ~3.4e20 wei ≈
+    ///      340B tokens at 18 decimals).
     /// @param maker Address that created the order and deposited tokenA
     /// @param active Whether the order can still be filled or cancelled
     /// @param partialFillAllowed Whether the order may be filled in multiple parts
     /// @param tokenA Address of the token being sold (held in escrow)
-    /// @param amountA Remaining amount of tokenA in escrow (in base units)
     /// @param tokenB Address of the token maker wants to receive
+    /// @param amountA Remaining amount of tokenA in escrow (in base units)
     /// @param amountB Remaining amount of tokenB required to complete the order
     struct Order {
         address maker;
         bool active;
         bool partialFillAllowed;
         address tokenA;
-        uint256 amountA;
         address tokenB;
-        uint256 amountB;
+        uint128 amountA;
+        uint128 amountB;
     }
 
     // solhint-disable gas-indexed-events
@@ -42,9 +49,9 @@ interface ISwapboard is ISemver {
         uint256 indexed orderId,
         address indexed maker,
         address tokenA,
-        uint256 amountA,
+        uint128 amountA,
         address tokenB,
-        uint256 amountB,
+        uint128 amountB,
         bool partialFillAllowed
     );
 
@@ -53,7 +60,7 @@ interface ISwapboard is ISemver {
     /// @param taker Address that filled the order
     /// @param amountA Amount of tokenA transferred to the taker
     /// @param amountB Amount of tokenB paid by the taker
-    event OrderFilled(uint256 indexed orderId, address indexed taker, uint256 amountA, uint256 amountB);
+    event OrderFilled(uint256 indexed orderId, address indexed taker, uint128 amountA, uint128 amountB);
 
     // solhint-enable gas-indexed-events
 
@@ -110,11 +117,12 @@ interface ISwapboard is ISemver {
     /// @param orderId The order ID
     /// @param requested The requested amountA
     /// @param remaining The remaining amountA on the order
-    error FillAmountTooHigh(uint256 orderId, uint256 requested, uint256 remaining);
+    error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining);
 
     /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
     /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer tokens.
     ///      For ETH tokenA (`getEth()`), requires `msg.value == amountA`.
+    ///      Amounts use `uint128`, which is sufficient for practical order sizes.
     /// @param tokenA Address of the asset to sell (`getEth()` for native ETH)
     /// @param amountA Amount of tokenA to deposit (in base units / wei)
     /// @param tokenB Address of the asset wanted in exchange (`getEth()` for native ETH)
@@ -123,9 +131,9 @@ interface ISwapboard is ISemver {
     /// @return orderId The unique identifier for the created order
     function createOrder(
         address tokenA,
-        uint256 amountA,
+        uint128 amountA,
         address tokenB,
-        uint256 amountB,
+        uint128 amountB,
         bool partialFillAllowed
     ) external payable returns (uint256 orderId);
 
@@ -142,7 +150,7 @@ interface ISwapboard is ISemver {
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrder(
         uint256 orderId,
-        uint256 amountA,
+        uint128 amountA,
         uint256 deadline
     ) external payable;
 

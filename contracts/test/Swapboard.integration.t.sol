@@ -229,7 +229,7 @@ contract SwapboardIntegrationTest is Test {
 
     /// @notice Tests creating and filling large amount orders
     function test_largeAmounts() public {
-        uint256 largeAmount = type(uint128).max;
+        uint128 largeAmount = type(uint128).max;
         _weth.mint(_alice, largeAmount);
 
         vm.startPrank(_alice);
@@ -245,7 +245,7 @@ contract SwapboardIntegrationTest is Test {
         _board.fillOrder(orderId, _board.getOrder(orderId).amountA, 0);
         vm.stopPrank();
 
-        assertEq(_weth.balanceOf(_bob), 1000 ether + largeAmount);
+        assertEq(_weth.balanceOf(_bob), uint256(1000 ether) + uint256(largeAmount));
     }
 
     /// @notice Tests creating and filling dust-sized orders

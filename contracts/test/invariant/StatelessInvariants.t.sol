@@ -36,11 +36,14 @@ contract SwapboardStatelessInvariantTest is Test {
 
     /// @notice Property: After createOrder, _maker loses exactly amountA
     function testFuzz_createOrder_makerBalanceDecrease(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         uint256 balanceBefore = _tokenA.balanceOf(_maker);
 
@@ -53,11 +56,14 @@ contract SwapboardStatelessInvariantTest is Test {
 
     /// @notice Property: After createOrder, contract gains exactly amountA
     function testFuzz_createOrder_contractBalanceIncrease(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         uint256 balanceBefore = _tokenA.balanceOf(address(_board));
 
@@ -70,11 +76,14 @@ contract SwapboardStatelessInvariantTest is Test {
 
     /// @notice Property: After fillOrder, _taker gains exactly amountA
     function testFuzz_fillOrder_takerGainsTokenA(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
@@ -90,11 +99,14 @@ contract SwapboardStatelessInvariantTest is Test {
 
     /// @notice Property: After fillOrder, _maker gains exactly amountB
     function testFuzz_fillOrder_makerGainsTokenB(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
@@ -110,11 +122,14 @@ contract SwapboardStatelessInvariantTest is Test {
 
     /// @notice Property: After cancelOrder, _maker regains exactly amountA
     function testFuzz_cancelOrder_makerRegainsTokenA(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         uint256 balanceInitial = _tokenA.balanceOf(_maker);
 
@@ -130,11 +145,14 @@ contract SwapboardStatelessInvariantTest is Test {
 
     /// @notice Property: Order state transitions are final
     function testFuzz_orderStateFinal_afterFill(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
