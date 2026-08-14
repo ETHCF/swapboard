@@ -1,4 +1,4 @@
-.PHONY: all build build-contracts test test-contracts test-e2e clean install fmt fmt-check lint coverage
+.PHONY: all build build-contracts test test-contracts test-e2e clean install fmt fmt-check lint coverage coverage-html
 
 # Host port for local Anvil (e2e Docker maps 18545:8545; avoids clashes with RPC tunnels on 8545)
 ANVIL_RPC_URL ?= http://localhost:18545
@@ -37,6 +37,10 @@ test-e2e:
 # Run contract tests with coverage (src only; mocks/tests excluded from report)
 coverage:
 	cd contracts && forge coverage --report summary --report lcov --exclude-tests --no-match-coverage 'test/'
+
+# Coverage summary + HTML report at contracts/coverage/
+coverage-html: coverage
+	cd contracts && genhtml -o coverage lcov.info
 
 # Format code
 fmt:
@@ -91,6 +95,7 @@ help:
 	@echo "  test-contracts  - Run contract tests only"
 	@echo "  test-e2e        - Run full Docker e2e stack (setup + test + teardown)"
 	@echo "  coverage        - Run contract tests with coverage"
+	@echo "  coverage-html   - Coverage + HTML report (contracts/coverage/)"
 	@echo "  fmt             - Format Solidity code"
 	@echo "  fmt-check       - Check Solidity formatting"
 	@echo "  lint            - Lint Solidity (forge lint + solhint)"
