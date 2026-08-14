@@ -16,7 +16,7 @@ Enforce formatting with Foundry (`make fmt`) and lint with `make lint` (`forge l
 | --- | --- | --- |
 | Compiler | `0.8.36` (pinned in `foundry.toml`) | Interfaces use `^0.8.0` |
 | Indentation | 4 spaces | Matches the Solidity guide |
-| Line length | **120** | Matches the Solidity guide |
+| Line length | **120** (solhint) | `forge fmt` uses `line_length = 119` (forge can leave +1); solhint `max-line-length` is 120 |
 | Quotes | Double | `forge fmt` |
 | Integers | Explicit width (`uint256`, …) | `int_types = "long"` |
 | Multiline headers | Params first | `multiline_func_header = "params_first"` |
