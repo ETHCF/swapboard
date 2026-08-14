@@ -68,6 +68,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             _pullExactToken(tokenA, amountA);
         }
 
+        // Unchecked is safe: order IDs are sequential from 0; wrapping would require 2^256 orders.
         unchecked {
             orderId = _nextOrderId;
 
@@ -124,7 +125,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert ETHAmountMismatch(requiredEth, msg.value);
         }
 
-        _applyFillEffects(order, amountA, amountBIn);
+        // Unchecked is safe: _validateAndQuoteFill ensures amountA <= availableA and
+        // amountBIn <= availableB (exact remaining or ceiled proportion).
+        unchecked {
+            order.availableA -= amountA;
+            order.availableB -= amountBIn;
+        }
+        if (order.availableA == 0 || order.availableB == 0) {
+            order.active = false;
+        }
+
         _transferFill(maker, tokenA, tokenB, amountA, amountBIn);
 
         emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB: amountBIn});
@@ -186,11 +196,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) external view returns (Order[] memory) {
         Order[] memory result = new Order[](orderIds.length);
 
-        for (uint256 i; i < orderIds.length;) {
+        for (uint256 i; i < orderIds.length; ++i) {
             result[i] = _orders[orderIds[i]];
-            unchecked {
-                ++i;
-            }
         }
 
         return result;
@@ -281,25 +288,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             : uint128((uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA));
         if (amountBIn == 0) {
             revert ZeroAmount();
-        }
-    }
-
-    /// @notice Applies fill accounting effects before transfers (CEI)
-    /// @dev Decrements available amounts only; original `amountA`/`amountB` stay fixed for fill %.
-    /// @param order Order storage slot to update
-    /// @param amountA tokenA sent to the taker
-    /// @param amountBIn tokenB paid by the taker
-    function _applyFillEffects(
-        Order storage order,
-        uint128 amountA,
-        uint128 amountBIn
-    ) private {
-        unchecked {
-            order.availableA -= amountA;
-            order.availableB -= amountBIn;
-        }
-        if (order.availableA == 0 || order.availableB == 0) {
-            order.active = false;
         }
     }
 
