@@ -60,6 +60,20 @@ contract GasBenchmarks is Test {
         assertLt(gasUsed, 150_000, "fillOrder exceeds gas ceiling");
     }
 
+    /// @notice Benchmarks gas used by a partial fillOrder
+    function test_gas_fillOrder_partial() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(address(_tokenA), 100 ether, address(_tokenB), 100 ether, true);
+
+        vm.prank(_taker);
+        uint256 gasBefore = gasleft();
+        _board.fillOrder(orderId, 40 ether, 0);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        console2.log("fillOrder partial gas:", gasUsed);
+        assertLt(gasUsed, 150_000, "partial fillOrder exceeds gas ceiling");
+    }
+
     /// @notice Benchmarks gas used by cancelOrder
     function test_gas_cancelOrder() public {
         vm.prank(_maker);
