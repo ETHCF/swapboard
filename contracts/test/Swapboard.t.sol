@@ -1373,8 +1373,8 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         // Order.availableB is struct field depth 8 (maker=0 … availableA=7, availableB=8).
-        _stdstore.enable_packed_slots().target(address(_board)).sig(_board.getOrder.selector).with_key(orderId).depth(8)
-            .checked_write(uint256(0));
+        _stdstore.enable_packed_slots().target(address(_board)).sig(_board.getOrder.selector).with_key(orderId)
+            .depth(8).checked_write(uint256(0));
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.availableB, 0);
@@ -1641,7 +1641,9 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         vm.prank(_taker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, expectedEthIn, expectedEthIn - 1));
+        vm.expectRevert(
+            abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, expectedEthIn, expectedEthIn - 1)
+        );
         _board.fillOrder{value: expectedEthIn - 1}(orderId, fillA, 0);
     }
 

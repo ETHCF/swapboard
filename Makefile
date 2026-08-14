@@ -50,8 +50,9 @@ fmt:
 fmt-check:
 	cd contracts && forge fmt --check
 
-# Lint contracts (forge lint + solhint). Non-zero exit on any forge lint warnings or solhint issues.
+# Lint contracts (fmt check + forge lint + solhint). Non-zero exit on any issues.
 lint:
+	cd contracts && forge fmt --check
 	cd contracts && forge lint --deny warnings
 	cd contracts && npx --yes solhint --max-warnings 0 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 
@@ -98,7 +99,7 @@ help:
 	@echo "  coverage-html   - Coverage + HTML report (contracts/coverage/)"
 	@echo "  fmt             - Format Solidity code"
 	@echo "  fmt-check       - Check Solidity formatting"
-	@echo "  lint            - Lint Solidity (forge lint + solhint)"
+	@echo "  lint            - Check fmt + forge lint + solhint"
 	@echo "  clean           - Clean build artifacts"
 	@echo "  anvil           - Start local Anvil on port $(ANVIL_PORT)"
 	@echo "  deploy-local    - Deploy to local Anvil ($(ANVIL_RPC_URL))"
