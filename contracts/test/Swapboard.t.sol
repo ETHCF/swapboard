@@ -1611,6 +1611,178 @@ contract SwapboardTest is Test {
         assertEq(_tokenB.balanceOf(_taker), takerTokenBefore + fillA);
     }
 
+    /// @notice Tests want-ETH create stores partialFillAllowed=true
+    function test_createOrder_wantEth_partialFillAllowed_true() public {
+        vm.startPrank(_maker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        uint256 orderId = _board.createOrder(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT, true);
+        vm.stopPrank();
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertTrue(order.partialFillAllowed);
+        assertEq(order.tokenA, address(_tokenB));
+        assertEq(order.tokenB, _eth);
+        assertEq(order.amountA, AMOUNT_B);
+        assertEq(order.amountB, ETH_AMOUNT);
+        assertEq(order.availableA, AMOUNT_B);
+        assertEq(order.availableB, ETH_AMOUNT);
+    }
+
+    /// @notice Tests partial want-ETH fill reverts when msg.value is not the ceiled tokenB amount
+    function test_fillOrder_partial_payEth_revert_amountMismatch() public {
+        uint128 tokenAmount = 400e6;
+        uint128 ethAmount = 4 ether;
+        uint128 fillA = 100e6;
+        uint256 expectedEthIn = (uint256(fillA) * uint256(ethAmount) + uint256(tokenAmount) - 1) / uint256(tokenAmount);
+
+        vm.startPrank(_maker);
+        _tokenB.approve(address(_board), tokenAmount);
+        uint256 orderId = _board.createOrder(address(_tokenB), tokenAmount, _eth, ethAmount, true);
+        vm.stopPrank();
+
+        vm.prank(_taker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, expectedEthIn, expectedEthIn - 1));
+        _board.fillOrder{value: expectedEthIn - 1}(orderId, fillA, 0);
+    }
+
+    /// @notice Tests FillAmountTooHigh uses remaining availableA after a prior partial fill
+    function test_fillOrder_partial_then_revert_fillAmountTooHigh() public {
+        uint128 amountA = 100 ether;
+        uint128 amountB = 4e6;
+        uint128 fillA = 25 ether;
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), amountA);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, true);
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), amountB);
+        _board.fillOrder(orderId, fillA, 0);
+
+        uint128 remainingA = _board.getOrder(orderId).availableA;
+        assertEq(remainingA, amountA - fillA);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, remainingA + 1, remainingA)
+        );
+        _board.fillOrder(orderId, remainingA + 1, 0);
+        vm.stopPrank();
+    }
+
+    /// @notice Tests a partial fill then an exact remaining fill completes the order
+    function test_fillOrder_partial_thenExactRemainingCompletes() public {
+        uint128 amountA = 100 ether;
+        uint128 amountB = 4e6;
+        uint128 fillA1 = 40 ether;
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), amountA);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, true);
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), amountB);
+        _board.fillOrder(orderId, fillA1, 0);
+
+        uint128 remainingA = _board.getOrder(orderId).availableA;
+        _board.fillOrder(orderId, remainingA, 0);
+        vm.stopPrank();
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertFalse(order.active);
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, 0);
+        assertEq(order.availableB, 0);
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Tests partial fill reverts when deadline has expired
+    function test_fillOrder_partial_revert_deadlineExpired() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B, true);
+        vm.stopPrank();
+
+        vm.warp(1000);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        vm.expectRevert(ISwapboard.DeadlineExpired.selector);
+        _board.fillOrder(orderId, AMOUNT_A / 2, 999);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_board.getOrder(orderId).availableA, AMOUNT_A);
+    }
+
+    /// @notice Tests FOT tokenB on a partial fill: maker receives less, available still decrements fully
+    function test_fillOrder_partial_fotTokenB_makerReceivesLess() public {
+        MockFOT fotB = new MockFOT();
+        uint128 amountA = 100 ether;
+        uint128 amountB = 100 ether;
+        uint128 fillA = 40 ether;
+        uint256 expectedBIn = (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+
+        fotB.mint(_taker, 1000 ether);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), amountA);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(fotB), amountB, true);
+        vm.stopPrank();
+
+        uint256 makerFotBefore = fotB.balanceOf(_maker);
+        uint256 takerABefore = _tokenA.balanceOf(_taker);
+
+        vm.startPrank(_taker);
+        fotB.approve(address(_board), expectedBIn);
+        _board.fillOrder(orderId, fillA, 0);
+        vm.stopPrank();
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertTrue(order.active);
+        assertEq(order.availableA, amountA - fillA);
+        assertEq(order.availableB, amountB - expectedBIn);
+        // 5% FOT fee on the transferred amountBIn
+        assertEq(fotB.balanceOf(_maker) - makerFotBefore, (expectedBIn * 95) / 100);
+        assertEq(_tokenA.balanceOf(_taker) - takerABefore, fillA);
+    }
+
+    /// @notice Tests getOrders reflects original vs available after a partial fill
+    function test_getOrders_afterPartialFill() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        uint256 order0 = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B, true);
+        uint256 order1 = _board.createOrder(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B * 2, false);
+        vm.stopPrank();
+
+        uint128 fillA = AMOUNT_A / 4;
+        uint256 expectedBIn = (uint256(fillA) * uint256(AMOUNT_B) + uint256(AMOUNT_A) - 1) / uint256(AMOUNT_A);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), expectedBIn);
+        _board.fillOrder(order0, fillA, 0);
+        vm.stopPrank();
+
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = order0;
+        ids[1] = order1;
+        ISwapboard.Order[] memory orders = _board.getOrders(ids);
+
+        assertEq(orders[0].amountA, AMOUNT_A);
+        assertEq(orders[0].amountB, AMOUNT_B);
+        assertEq(orders[0].availableA, AMOUNT_A - fillA);
+        assertEq(orders[0].availableB, AMOUNT_B - expectedBIn);
+        assertTrue(orders[0].active);
+
+        assertEq(orders[1].amountA, AMOUNT_A);
+        assertEq(orders[1].amountB, AMOUNT_B * 2);
+        assertEq(orders[1].availableA, AMOUNT_A);
+        assertEq(orders[1].availableB, AMOUNT_B * 2);
+        assertTrue(orders[1].active);
+    }
+
     /// @notice Tests Order fields are stored and readable via getOrder
     function test_orderStruct_storagePacking() public {
         vm.startPrank(_maker);

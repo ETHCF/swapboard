@@ -339,4 +339,107 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_weth.balanceOf(address(_board)), 0);
         assertEq(_weth.balanceOf(_bob), 1000 ether + numOrders * 1 ether);
     }
+
+    /// @notice Multi-user partial fills against one order, then completion
+    function test_partialFill_multiUserThenComplete() public {
+        vm.startPrank(_alice);
+        _weth.approve(address(_board), 100 ether);
+        uint256 orderId = _board.createOrder(address(_weth), 100 ether, address(_usdc), 300_000e6, true);
+        vm.stopPrank();
+
+        vm.startPrank(_bob);
+        _usdc.approve(address(_board), 200_000e6);
+        _board.fillOrder(orderId, 40 ether, 0);
+        vm.stopPrank();
+
+        ISwapboard.Order memory afterBob = _board.getOrder(orderId);
+        assertTrue(afterBob.active);
+        assertEq(afterBob.amountA, 100 ether);
+        assertEq(afterBob.availableA, 60 ether);
+
+        vm.startPrank(_charlie);
+        _usdc.approve(address(_board), 200_000e6);
+        _board.fillOrder(orderId, 60 ether, 0);
+        vm.stopPrank();
+
+        ISwapboard.Order memory done = _board.getOrder(orderId);
+        assertFalse(done.active);
+        assertEq(done.availableA, 0);
+        assertEq(done.availableB, 0);
+        assertEq(_weth.balanceOf(_bob), 1000 ether + 40 ether);
+        assertEq(_weth.balanceOf(_charlie), 60 ether);
+        assertEq(_weth.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Race: second filler cannot take more than remaining availableA
+    function test_partialFill_race_secondFillerTooHigh() public {
+        vm.startPrank(_alice);
+        _weth.approve(address(_board), 10 ether);
+        uint256 orderId = _board.createOrder(address(_weth), 10 ether, address(_usdc), 30_000e6, true);
+        vm.stopPrank();
+
+        vm.startPrank(_bob);
+        _usdc.approve(address(_board), 30_000e6);
+        _board.fillOrder(orderId, 7 ether, 0);
+        vm.stopPrank();
+
+        uint128 remainingA = _board.getOrder(orderId).availableA;
+        assertEq(remainingA, 3 ether);
+
+        vm.startPrank(_charlie);
+        _usdc.approve(address(_board), 30_000e6);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, 4 ether, remainingA));
+        _board.fillOrder(orderId, 4 ether, 0);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_board.getOrder(orderId).availableA, 3 ether);
+    }
+
+    /// @notice Lifecycle: create → partial fill → cancel returns remaining tokenA
+    function test_partialFill_lifecycle_createPartialCancel() public {
+        uint256 aliceWethBefore = _weth.balanceOf(_alice);
+
+        vm.startPrank(_alice);
+        _weth.approve(address(_board), 50 ether);
+        uint256 orderId = _board.createOrder(address(_weth), 50 ether, address(_usdc), 150_000e6, true);
+        vm.stopPrank();
+
+        vm.startPrank(_bob);
+        _usdc.approve(address(_board), 150_000e6);
+        _board.fillOrder(orderId, 20 ether, 0);
+        vm.stopPrank();
+
+        vm.prank(_alice);
+        _board.cancelOrder(orderId);
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertFalse(order.active);
+        assertEq(order.amountA, 50 ether);
+        assertEq(order.availableA, 0);
+        assertEq(order.availableB, 0);
+        assertEq(_weth.balanceOf(_alice), aliceWethBefore - 20 ether);
+        assertEq(_weth.balanceOf(_bob), 1000 ether + 20 ether);
+        assertEq(_weth.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Lifecycle: create → partial → fill exact remaining
+    function test_partialFill_lifecycle_createPartialComplete() public {
+        vm.startPrank(_alice);
+        _weth.approve(address(_board), 50 ether);
+        uint256 orderId = _board.createOrder(address(_weth), 50 ether, address(_usdc), 150_000e6, true);
+        vm.stopPrank();
+
+        vm.startPrank(_bob);
+        _usdc.approve(address(_board), 150_000e6);
+        _board.fillOrder(orderId, 15 ether, 0);
+        uint128 remainingA = _board.getOrder(orderId).availableA;
+        _board.fillOrder(orderId, remainingA, 0);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(orderId));
+        assertEq(_board.getOrder(orderId).availableA, 0);
+        assertEq(_weth.balanceOf(_bob), 1000 ether + 50 ether);
+        assertEq(_weth.balanceOf(address(_board)), 0);
+    }
 }
