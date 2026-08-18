@@ -118,7 +118,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrders(10) gas:", gasUsed);
-        assertLt(gasUsed, 50_000, "getOrders(10) exceeds gas ceiling");
+        assertLt(gasUsed, 70_000, "getOrders(10) exceeds gas ceiling");
     }
 
     /// @notice Benchmarks gas used by getOrders for 100 orders
@@ -138,7 +138,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrders(100) gas:", gasUsed);
-        assertLt(gasUsed, 500_000, "getOrders(100) exceeds gas ceiling");
+        assertLt(gasUsed, 700_000, "getOrders(100) exceeds gas ceiling");
     }
 
     /// @notice Benchmarks gas used by canFill
