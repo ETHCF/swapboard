@@ -21,8 +21,12 @@ const {
   parseAmount,
   getCachedPrice,
   getTokenPrice,
+  fetchPrices,
+  coinGeckoUrl,
+  priceRatio,
   calculateMarketDeviation,
   searchTokens,
+  orderStatus,
   RECENT_TOKENS_KEY,
   MAX_RECENT_TOKENS,
   FILTERS_KEY,
@@ -39,6 +43,9 @@ const {
   saveSortPreferences,
   loadSortPreferences,
   sortOrders,
+  ERROR_SIGNATURES,
+  ERROR_MESSAGES,
+  decodeErrorArgs,
   decodeContractError,
   parseContractError,
   validateConfig,
@@ -450,55 +457,73 @@ describe("formatNumber", () => {
 describe("formatTimeAgo", () => {
   const now = Math.floor(Date.now() / 1000);
 
-  // MUTATION: Change threshold from 60 to 30
-  // BREAKS: 45 seconds ago shows "0m ago" instead of "just now"
-  test("shows just now for timestamps within 60 seconds", () => {
-    expect(formatTimeAgo(now - 1)).toBe("just now");
-    expect(formatTimeAgo(now - 59)).toBe("just now");
-    expect(formatTimeAgo(now - 60)).toBe("1m ago"); // Exactly 60 = 1m
+  // MUTATION: Drop the seconds bucket, folding it into "just now"
+  // BREAKS: A just-placed order reads as ageless while it is the freshest row
+  test("shows seconds under a minute", () => {
+    expect(formatTimeAgo(now - 1)).toBe("1s ago");
+    expect(formatTimeAgo(now - 45)).toBe("45s ago");
+    expect(formatTimeAgo(now - 59)).toBe("59s ago");
   });
 
   // MUTATION: Divide by 3600 instead of 60 for minutes
   // BREAKS: 120 seconds shows "0h ago" instead of "2m ago"
-  test("shows minutes for timestamps 1-59 minutes ago", () => {
-    expect(formatTimeAgo(now - 60)).toBe("1m ago");
+  test("shows minutes for 1-59 minutes ago", () => {
+    expect(formatTimeAgo(now - 60)).toBe("1m ago"); // Exactly 60 = 1m
     expect(formatTimeAgo(now - 120)).toBe("2m ago");
     expect(formatTimeAgo(now - 3540)).toBe("59m ago");
   });
 
   // MUTATION: Change hour threshold from 86400 to 43200
   // BREAKS: 13 hours shows "1d ago" instead of "13h ago"
-  test("shows hours for timestamps 1-23 hours ago", () => {
+  test("shows hours for 1-23 hours ago", () => {
     expect(formatTimeAgo(now - 3600)).toBe("1h ago");
     expect(formatTimeAgo(now - 7200)).toBe("2h ago");
     expect(formatTimeAgo(now - 82800)).toBe("23h ago");
   });
 
   // MUTATION: Change day threshold from 604800 to 172800
-  // BREAKS: 3 days shows formatted date instead of "3d ago"
-  test("shows days for timestamps 1-6 days ago", () => {
+  // BREAKS: 3 days jumps straight to weeks
+  test("shows days for 1-6 days ago", () => {
     expect(formatTimeAgo(now - 86400)).toBe("1d ago");
     expect(formatTimeAgo(now - 172800)).toBe("2d ago");
     expect(formatTimeAgo(now - 518400)).toBe("6d ago");
   });
 
-  // MUTATION: Continue showing "Xd ago" for all past dates
-  // BREAKS: Would show "365d ago" instead of a date
-  test("shows formatted date for timestamps >= 7 days ago", () => {
-    const result = formatTimeAgo(now - 604800); // Exactly 7 days
-    expect(result).not.toContain("ago");
-    expect(result).toMatch(/\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2}\.\d{1,2}\.\d{4}/); // Date format
+  // MUTATION: Fall back to a locale date at 7 days
+  // BREAKS: The age column mixes relative ages with absolute dates
+  test("shows weeks from 7 days to 30 days", () => {
+    expect(formatTimeAgo(now - 604800)).toBe("1w ago"); // Exactly 7 days
+    expect(formatTimeAgo(now - 1209600)).toBe("2w ago");
+    expect(formatTimeAgo(now - 2591999)).toBe("4w ago");
   });
 
-  // MUTATION: Change timestamp * 1000 to timestamp / 1000
-  // BREAKS: Date would be near 1970 instead of the actual date
-  test("multiplies timestamp by 1000 for Date constructor (* not /)", () => {
-    // 7 days ago should show a date in the current year (or last year at boundary)
-    const result = formatTimeAgo(now - 604800);
-    const currentYear = new Date().getFullYear();
-    const lastYear = currentYear - 1;
-    // The date string should contain the current or last year, not 1970
-    expect(result).toMatch(new RegExp(`(${currentYear}|${lastYear})`));
+  // MUTATION: Cap the scale at weeks
+  // BREAKS: A year-old order reads as "52w ago"
+  test("shows months beyond 30 days, and stays relative indefinitely", () => {
+    expect(formatTimeAgo(now - 2592000)).toBe("1mo ago"); // Exactly 30 days
+    expect(formatTimeAgo(now - 5184000)).toBe("2mo ago");
+    expect(formatTimeAgo(now - 31536000)).toBe("12mo ago"); // A year
+  });
+
+  // MUTATION: Remove the falsy guard
+  // BREAKS: An unfilled order's absent filledAt renders as 12/31/1969
+  test("renders nothing when there is no timestamp", () => {
+    expect(formatTimeAgo(null)).toBe("");
+    expect(formatTimeAgo(undefined)).toBe("");
+    expect(formatTimeAgo(0)).toBe("");
+  });
+
+  // MUTATION: Drop the string coercion
+  // BREAKS: Subgraph timestamps arrive as strings; "now - str" is NaN
+  test("accepts the string timestamps the subgraph returns", () => {
+    expect(formatTimeAgo(String(now - 7200))).toBe("2h ago");
+    expect(formatTimeAgo(String(now - 172800))).toBe("2d ago");
+  });
+
+  // MUTATION: Let a negative diff fall through to the seconds bucket
+  // BREAKS: Clock skew renders as "-3s ago"
+  test("treats a timestamp ahead of the clock as just now", () => {
+    expect(formatTimeAgo(now + 300)).toBe("just now");
   });
 });
 
@@ -573,103 +598,98 @@ describe("parseAmount", () => {
     expect(parseAmount("100", 18)).toBe(BigInt("100000000000000000000"));
   });
 
-  // MUTATION: Ignore decimal part
+  // MUTATION: Ignore the fractional part
   // BREAKS: "1.5" parses as 1e18 instead of 1.5e18
   test("handles decimal input correctly", () => {
     expect(parseAmount("1.5", 18)).toBe(BigInt("1500000000000000000"));
     expect(parseAmount("0.5", 6)).toBe(BigInt("500000"));
   });
 
-  // MUTATION: Don't strip commas before parsing
-  // BREAKS: Throws or returns null for "1,000"
+  // MUTATION: Don't strip commas before validating
+  // BREAKS: A pasted "1,000" is rejected as malformed
   test("strips commas from input", () => {
     expect(parseAmount("1,000", 6)).toBe(BigInt("1000000000"));
     expect(parseAmount("1,000,000", 18)).toBe(BigInt("1000000000000000000000000"));
   });
 
-  // MUTATION: Don't truncate excess decimals
-  // BREAKS: Extra decimals cause wrong value
-  test("truncates decimals exceeding token precision", () => {
-    expect(parseAmount("1.1234567", 6)).toBe(BigInt("1123456")); // Truncated to 6
-    expect(parseAmount("1.123456789012345678901", 18)).toBe(BigInt("1123456789012345678")); // Truncated to 18
-  });
-
-  // MUTATION: Don't pad short decimals
-  // BREAKS: "1.5" with 6 decimals gives 15n instead of 1500000n
-  test("pads short decimal input", () => {
-    expect(parseAmount("1.5", 6)).toBe(BigInt("1500000")); // 1.5 * 10^6
-    expect(parseAmount("1.1", 18)).toBe(BigInt("1100000000000000000")); // 1.1 * 10^18
-  });
-
-  // MUTATION: Don't handle leading decimal
-  // BREAKS: ".5" throws or returns null
-  test("handles leading decimal (.5 = 0.5)", () => {
-    expect(parseAmount(".5", 18)).toBe(BigInt("500000000000000000"));
-  });
-
-  // MUTATION: Don't handle trailing decimal
-  // BREAKS: "5." throws or returns null
-  test("handles trailing decimal (5. = 5)", () => {
-    expect(parseAmount("5.", 18)).toBe(BigInt("5000000000000000000"));
-  });
-
-  // MUTATION: Return 0n instead of null for invalid input
-  // BREAKS: Invalid input returns 0n instead of null
-  test("returns null for invalid input", () => {
-    expect(parseAmount("abc", 18)).toBe(null);
-    expect(parseAmount("", 18)).toBe(null);
-    expect(parseAmount(".", 18)).toBe(null);
-    expect(parseAmount(null, 18)).toBe(null);
-    expect(parseAmount("1.2.3", 18)).toBe(null);
-    expect(parseAmount("-1", 18)).toBe(null);
-  });
-
-  // MUTATION: Change fracPart.length > decimals to >= decimals
-  // BREAKS: Decimal with exactly decimals digits would be truncated
-  test("boundary: decimals at exactly token precision not truncated (> not >=)", () => {
-    // 6 decimal places for 6-decimal token should work exactly
-    expect(parseAmount("1.123456", 6)).toBe(BigInt("1123456"));
-    // 18 decimal places for 18-decimal token should work exactly
-    expect(parseAmount("1.123456789012345678", 18)).toBe(BigInt("1123456789012345678"));
-  });
-
-  // MUTATION: Remove .trim() from input cleaning
-  // BREAKS: " 1.5 " would fail validation
+  // MUTATION: Remove .trim()
+  // BREAKS: A value pasted with surrounding space is rejected
   test("trims whitespace from input", () => {
     expect(parseAmount(" 1.5 ", 6)).toBe(BigInt("1500000"));
     expect(parseAmount("  100  ", 18)).toBe(BigInt("100000000000000000000"));
   });
 
-  // MUTATION: Use "" instead of "0" for empty wholePart
-  // BREAKS: ".5" would become "5" (missing leading zero)
-  test("leading decimal defaults wholePart to 0", () => {
-    expect(parseAmount(".123456", 6)).toBe(BigInt("123456"));
-    expect(parseAmount(".1", 18)).toBe(BigInt("100000000000000000"));
+  // MUTATION: Don't pad short fractions
+  // BREAKS: "1.5" at 6 decimals gives 15n instead of 1500000n
+  test("pads short decimal input", () => {
+    expect(parseAmount("1.5", 6)).toBe(BigInt("1500000"));
+    expect(parseAmount("1.1", 18)).toBe(BigInt("1100000000000000000"));
   });
 
-  // MUTATION: Change !str to false or change && to ||
-  // BREAKS: Non-string input would pass validation
-  test("type validation rejects non-string input (!str and typeof check)", () => {
-    expect(parseAmount(123, 18)).toBe(null);
-    expect(parseAmount(["1.5"], 18)).toBe(null);
-    expect(parseAmount({}, 18)).toBe(null);
-    expect(parseAmount(true, 18)).toBe(null);
+  // MUTATION: Change fracPart.length > decimals to >= decimals
+  // BREAKS: A fraction at exactly the token's precision loses its last digit
+  test("boundary: a fraction at exactly token precision is not truncated", () => {
+    expect(parseAmount("1.123456", 6)).toBe(BigInt("1123456"));
+    expect(parseAmount("1.123456789012345678", 18)).toBe(BigInt("1123456789012345678"));
   });
 
-  // MUTATION: Change cleaned === "" to false or "Stryker was here!"
-  // BREAKS: Empty string after cleaning would pass
-  test("rejects empty string after cleaning", () => {
-    expect(parseAmount("", 18)).toBe(null);
-    expect(parseAmount("   ", 18)).toBe(null); // Whitespace only
+  // MUTATION: Throw whenever decimals are truncated, not only when the result is zero
+  // BREAKS: A legitimate 1.0000001 WETH order is refused as "too many decimals"
+  test("truncates excess decimals silently when a non-zero amount survives", () => {
+    expect(parseAmount("1.1234567", 6)).toBe(BigInt("1123456"));
+    expect(parseAmount("1.0000001", 6)).toBe(BigInt("1000000"));
+    // Dust below the precision still counts when other digits survive it
+    expect(parseAmount("0.0000015", 6)).toBe(BigInt("1"));
   });
 
-  // MUTATION: if (fracPart.length > decimals) to if (true)
-  // BREAKS: All fractional parts would be truncated
-  test("only truncates when fraction exceeds decimals (> not always)", () => {
-    // Exact precision should not be truncated
-    expect(parseAmount("1.12", 2)).toBe(BigInt("112")); // Exactly 2 decimals
-    expect(parseAmount("1.1", 2)).toBe(BigInt("110")); // Less than 2 decimals, padded
-    expect(parseAmount("1.123", 2)).toBe(BigInt("112")); // More than 2 decimals, truncated
+  // MUTATION: Drop the intPart === "0" check, or the /^0*$/ test
+  // BREAKS: Dust silently becomes a zero-amount order the contract then reverts
+  test("throws when truncation would take the whole amount to zero", () => {
+    expect(() => parseAmount("0.0000001", 6)).toThrow(
+      "Too many decimals. This token only supports 6 decimal places."
+    );
+    expect(() => parseAmount("0.0000000000000000001", 18)).toThrow(/only supports 18 decimal/);
+  });
+
+  // MUTATION: Return 0n / null instead of throwing
+  // BREAKS: Malformed input silently becomes a zero-amount transaction
+  test("throws on malformed input", () => {
+    expect(() => parseAmount("abc", 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount("1.2.3", 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount("-1", 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount("1e18", 18)).toThrow("Invalid amount format. Use numbers only.");
+  });
+
+  // MUTATION: Relax the regex to /^\d*\.?\d*$/
+  // BREAKS: Half-typed values like "." parse instead of rejecting
+  test("requires digits on both sides of the decimal point", () => {
+    expect(() => parseAmount(".5", 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount("5.", 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount(".", 18)).toThrow("Invalid amount format. Use numbers only.");
+  });
+
+  // MUTATION: Remove the typeof guard ahead of .trim()
+  // BREAKS: A non-string escapes as "str.trim is not a function", which the
+  //         form then shows the user verbatim
+  test("rejects non-strings with the same message as other bad input", () => {
+    expect(() => parseAmount(null, 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount(undefined, 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount(123, 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount({}, 18)).toThrow("Invalid amount format. Use numbers only.");
+  });
+
+  // MUTATION: Throw on an empty string instead of returning 0n
+  // BREAKS: An untouched amount field errors on every keystroke elsewhere
+  test("an empty or blank string is zero, not a rejection", () => {
+    expect(parseAmount("", 18)).toBe(BigInt(0));
+    expect(parseAmount("   ", 18)).toBe(BigInt(0));
+  });
+
+  // MUTATION: Assume decimals is always > 0
+  // BREAKS: A 0-decimal token drags its fraction into the integer part
+  test("handles a zero-decimal token", () => {
+    expect(parseAmount("5", 0)).toBe(BigInt(5));
+    expect(parseAmount("5.9", 0)).toBe(BigInt(5));
   });
 });
 
@@ -763,6 +783,158 @@ describe("getTokenPrice", () => {
     // Unknown token should still return null, not some cached value
     const price = getTokenPrice("0x0000000000000000000000000000000000000001", cache, 60000);
     expect(price).toBe(null);
+  });
+});
+
+// ============================================================================
+// fetchPrices
+// ============================================================================
+
+describe("fetchPrices", () => {
+  const ok = (body) => ({ ok: true, status: 200, json: async () => body });
+  let warn;
+
+  beforeEach(() => {
+    warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warn.mockRestore();
+    jest.useRealTimers();
+  });
+
+  // MUTATION: Write the raw response instead of {usd, fetchedAt}
+  // BREAKS: getCachedPrice cannot read a TTL off the entry and every price expires
+  test("populates the cache with a usd price and a fetch time", async () => {
+    global.fetch.mockImplementation(async () => ok({ weth: { usd: 3500 } }));
+    const cache = new Map();
+
+    await fetchPrices(["weth"], cache);
+
+    expect(cache.get("weth").usd).toBe(3500);
+    expect(typeof cache.get("weth").fetchedAt).toBe("number");
+    expect(getTokenPrice("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", cache, 60000)).toBe(3500);
+  });
+
+  // MUTATION: Request every id rather than only the uncached ones
+  // BREAKS: Every render re-requests prices already held, and CoinGecko rate limits
+  test("requests only the ids that are not already cached", async () => {
+    global.fetch.mockImplementation(async () => ok({ dai: { usd: 1 } }));
+    const cache = new Map([["weth", { usd: 3500, fetchedAt: Date.now() }]]);
+
+    await fetchPrices(["weth", "dai"], cache);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toContain("ids=dai");
+    expect(global.fetch.mock.calls[0][0]).not.toContain("weth");
+  });
+
+  // MUTATION: Drop the early return when nothing needs fetching
+  // BREAKS: A no-op call still hits the network
+  test("makes no request when every id is cached", async () => {
+    const cache = new Map([["weth", { usd: 3500, fetchedAt: Date.now() }]]);
+
+    await fetchPrices(["weth"], cache);
+
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  // MUTATION: Ignore res.ok
+  // BREAKS: An error body is parsed as prices and poisons the cache
+  test("a failed response leaves the cache untouched", async () => {
+    global.fetch.mockImplementation(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+    }));
+    const cache = new Map();
+
+    await fetchPrices(["weth"], cache);
+
+    expect(cache.size).toBe(0);
+    expect(warn).toHaveBeenCalledWith("[Price] Rate limited by CoinGecko");
+  });
+
+  // MUTATION: Let the fetch rejection escape
+  // BREAKS: A network blip rejects into a render path and blanks the table
+  test("a network failure is swallowed, not thrown", async () => {
+    global.fetch.mockImplementation(async () => {
+      throw new Error("network down");
+    });
+    const cache = new Map();
+
+    await expect(fetchPrices(["weth"], cache)).resolves.toBeUndefined();
+    expect(cache.size).toBe(0);
+    expect(warn).toHaveBeenCalledWith("[Price] Fetch failed:", "network down");
+  });
+
+  // MUTATION: Report an abort as a generic failure
+  // BREAKS: A timeout is indistinguishable from a real error in the console
+  test("an aborted request is reported as a timeout", async () => {
+    global.fetch.mockImplementation(async () => {
+      const e = new Error("aborted");
+      e.name = "AbortError";
+      throw e;
+    });
+
+    await fetchPrices(["weth"], new Map());
+
+    expect(warn).toHaveBeenCalledWith("[Price] Request timed out");
+  });
+
+  // MUTATION: Skip the typeof check on the usd field
+  // BREAKS: A null or string price is cached and renders as NaN
+  test("ignores entries whose price is not a number", async () => {
+    global.fetch.mockImplementation(async () =>
+      ok({ weth: { usd: null }, dai: { usd: "1" }, tether: { usd: 1 } })
+    );
+    const cache = new Map();
+
+    await fetchPrices(["weth", "dai", "tether"], cache);
+
+    expect(cache.has("weth")).toBe(false);
+    expect(cache.has("dai")).toBe(false);
+    expect(cache.get("tether").usd).toBe(1);
+  });
+
+  // MUTATION: Never arm the abort timer
+  // BREAKS: A hung CoinGecko request pins priceFetchInProgress and no price ever
+  //         refreshes again for the life of the page
+  test("aborts a request that outruns the timeout", async () => {
+    jest.useFakeTimers();
+    global.fetch.mockImplementation(
+      (url, { signal }) =>
+        new Promise((_resolve, reject) =>
+          signal.addEventListener("abort", () => {
+            const e = new Error("aborted");
+            e.name = "AbortError";
+            reject(e);
+          })
+        )
+    );
+
+    const pending = fetchPrices(["weth"], new Map());
+    await Promise.resolve();
+    jest.advanceTimersByTime(10000);
+    await pending;
+
+    expect(warn).toHaveBeenCalledWith("[Price] Request timed out");
+  });
+
+  // MUTATION: Drop the in-flight guard
+  // BREAKS: Every concurrent caller fires its own request
+  test("concurrent calls coalesce onto one request", async () => {
+    let resolveFetch;
+    global.fetch.mockImplementation(
+      () => new Promise((r) => (resolveFetch = () => r(ok({ weth: { usd: 3500 } }))))
+    );
+    const cache = new Map();
+
+    const both = Promise.all([fetchPrices(["weth"], cache), fetchPrices(["weth"], cache)]);
+    await Promise.resolve();
+    resolveFetch();
+    await both;
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1165,6 +1337,132 @@ describe("searchTokens", () => {
 // localStorage: Recent Tokens
 // ============================================================================
 
+describe("searchTokens prepend", () => {
+  const LIST = [
+    { symbol: "WETH", name: "Wrapped Ether" },
+    { symbol: "ETHFI", name: "ether.fi" },
+    { symbol: "USDC", name: "USD Coin" },
+  ];
+  const ETH = { symbol: "ETH", name: "Ether" };
+
+  // MUTATION: Append the seed instead of prepending it
+  // BREAKS: Native ETH sorts below WETH in the token dropdown
+  test("seeded entries come first", () => {
+    const results = searchTokens("eth", LIST, 10, [ETH]);
+    expect(results[0]).toBe(ETH);
+  });
+
+  // MUTATION: Exclude the seed from the limit count
+  // BREAKS: The dropdown renders one row more than it was asked for
+  test("seeded entries count toward the limit", () => {
+    expect(searchTokens("eth", LIST, 2, [ETH])).toHaveLength(2);
+  });
+
+  // MUTATION: Default prepend to something other than []
+  // BREAKS: Every existing three-argument caller changes behavior
+  test("omitting prepend leaves behavior unchanged", () => {
+    expect(searchTokens("eth", LIST, 10)).toEqual(searchTokens("eth", LIST, 10, []));
+  });
+
+  // MUTATION: Seed before the empty-query guard
+  // BREAKS: An empty search box shows a lone ETH row
+  test("an empty query returns nothing, seed included", () => {
+    expect(searchTokens("", LIST, 10, [ETH])).toEqual([]);
+  });
+});
+
+// ============================================================================
+// coinGeckoUrl
+// ============================================================================
+
+describe("coinGeckoUrl", () => {
+  // MUTATION: Drop the toLowerCase() before the lookup
+  // BREAKS: Checksummed addresses miss the all-lowercase registry keys
+  test("resolves a listed token regardless of address casing", () => {
+    expect(coinGeckoUrl("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")).toBe(
+      "https://www.coingecko.com/en/coins/weth"
+    );
+    expect(coinGeckoUrl("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")).toBe(
+      "https://www.coingecko.com/en/coins/usd-coin"
+    );
+  });
+
+  // MUTATION: Return the bare URL prefix instead of null for unknown tokens
+  // BREAKS: Unlisted tokens link to a CoinGecko 404
+  test("returns null for a token with no CoinGecko id", () => {
+    expect(coinGeckoUrl("0x1111111111111111111111111111111111111111")).toBeNull();
+  });
+
+  // MUTATION: Skip the typeof guard
+  // BREAKS: Throws on a token whose address never loaded
+  test("returns null rather than throwing on bad input", () => {
+    expect(coinGeckoUrl(null)).toBeNull();
+    expect(coinGeckoUrl(undefined)).toBeNull();
+    expect(coinGeckoUrl(42)).toBeNull();
+  });
+});
+
+// ============================================================================
+// priceRatio
+// ============================================================================
+
+describe("priceRatio", () => {
+  // MUTATION: Flip the sign of the decimals exponent
+  // BREAKS: A WETH/USDC price comes out as 1e-24 instead of ~2000
+  test("scales the decimals of both sides back out", () => {
+    // 1 WETH (18dp) for 2000 USDC (6dp) -> 2000 USDC per WETH
+    const price = priceRatio("2000000000", "1000000000000000000", 6, 18);
+    expect(price).toBeCloseTo(2000, 6);
+  });
+
+  // MUTATION: Drop the exponent entirely
+  // BREAKS: Same-decimal pairs happen to pass, so this pins the equal case too
+  test("needs no scaling when both sides share decimals", () => {
+    expect(priceRatio("300", "100", 18, 18)).toBeCloseTo(3, 9);
+  });
+
+  // MUTATION: Divide anyway when the denominator is zero
+  // BREAKS: Returns Infinity/NaN, which sorts ahead of every real price
+  test("returns 0 for an empty denominator", () => {
+    expect(priceRatio("100", "0", 18, 18)).toBe(0);
+  });
+
+  // MUTATION: Accept Numbers only
+  // BREAKS: Subgraph amounts arrive as strings and overflow Number precision
+  test("accepts base units as strings or bigints", () => {
+    expect(priceRatio(300n, 100n, 18, 18)).toBeCloseTo(3, 9);
+  });
+});
+
+// ============================================================================
+// orderStatus
+// ============================================================================
+
+describe("orderStatus", () => {
+  // MUTATION: Return "Filled" for an active order
+  // BREAKS: Open orders show as filled and fire spurious watch notifications
+  test("an active order is Open", () => {
+    expect(orderStatus({ active: true, taker: null })).toBe("Open");
+  });
+
+  // MUTATION: Check `active` only
+  // BREAKS: Filled and cancelled orders become indistinguishable
+  test("an inactive order with a taker is Filled", () => {
+    expect(orderStatus({ active: false, taker: "0xabc" })).toBe("Filled");
+  });
+
+  test("an inactive order with no taker is Cancelled", () => {
+    expect(orderStatus({ active: false, taker: null })).toBe("Cancelled");
+    expect(orderStatus({ active: false, taker: "" })).toBe("Cancelled");
+  });
+
+  // MUTATION: Test `taker` before `active`
+  // BREAKS: An active order that already has a taker recorded reads as Filled
+  test("active wins over a recorded taker", () => {
+    expect(orderStatus({ active: true, taker: "0xabc" })).toBe("Open");
+  });
+});
+
 describe("getRecentTokens / addRecentToken", () => {
   // MUTATION: Return null instead of []
   // BREAKS: Callers doing .map() would crash
@@ -1380,394 +1678,130 @@ describe("filter/sort preferences", () => {
 // ============================================================================
 
 describe("sortOrders", () => {
+  // WETH 18dp, USDC 6dp, DAI 18dp -- deliberately mixed precision, because
+  // that is exactly what base-unit comparison gets wrong.
+  const WETH = { symbol: "WETH", address: "0xweth", decimals: 18 };
+  const USDC = { symbol: "USDC", address: "0xusdc", decimals: 6 };
+  const DAI = { symbol: "DAI", address: "0xdai", decimals: 18 };
+
   const orders = [
-    {
-      orderId: "2",
-      maker: "0xbbb",
-      tokenA: { symbol: "USDC" },
-      tokenB: { symbol: "WETH" },
-      amountA: "2000000000",
-      amountB: "1000000000000000000",
-      _usdValue: 2000,
-      _price: 0.0005,
-    },
+    // 1 WETH for 3500 USDC
     {
       orderId: "1",
       maker: "0xaaa",
-      tokenA: { symbol: "WETH" },
-      tokenB: { symbol: "USDC" },
+      tokenA: WETH,
+      tokenB: USDC,
       amountA: "1000000000000000000",
       amountB: "3500000000",
-      _usdValue: 3500,
-      _price: 3500,
     },
+    // 2000 USDC for 0.5 WETH
+    {
+      orderId: "2",
+      maker: "0xbbb",
+      tokenA: USDC,
+      tokenB: WETH,
+      amountA: "2000000000",
+      amountB: "500000000000000000",
+    },
+    // 5000 DAI for 5000 USDC
     {
       orderId: "3",
       maker: "0xccc",
-      tokenA: { symbol: "DAI" },
-      tokenB: { symbol: "USDT" },
-      amountA: "5000000000000000000",
-      amountB: "5000000",
-      _usdValue: 5000,
-      _price: 1,
+      tokenA: DAI,
+      tokenB: USDC,
+      amountA: "5000000000000000000000",
+      amountB: "5000000000",
     },
   ];
+  const ids = (result) => result.map((o) => o.orderId);
 
   // MUTATION: Use string comparison for orderId
   // BREAKS: "10" sorts before "2"
   test("sorts orderId numerically", () => {
-    const withTen = [
-      ...orders,
-      {
-        orderId: "10",
-        maker: "",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        amountA: "1",
-        amountB: "1",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(withTen, "orderId", "asc");
-    expect(sorted.map((o) => o.orderId)).toEqual(["1", "2", "3", "10"]);
+    expect(ids(sortOrders(orders, "orderId", "asc"))).toEqual(["1", "2", "3"]);
+    expect(ids(sortOrders(orders, "orderId", "desc"))).toEqual(["3", "2", "1"]);
   });
 
-  // MUTATION: Invert asc/desc comparison
-  // BREAKS: desc shows ascending order
-  test("respects sort direction", () => {
-    const sorted = sortOrders(orders, "orderId", "desc");
-    expect(sorted[0].orderId).toBe("3");
-    expect(sorted[2].orderId).toBe("1");
+  // MUTATION: Drop the .toLowerCase()
+  // BREAKS: Uppercase symbols sort ahead of every lowercase one
+  test("sorts symbol columns alphabetically", () => {
+    expect(ids(sortOrders(orders, "tokenA", "asc"))).toEqual(["3", "2", "1"]); // DAI, USDC, WETH
+    expect(ids(sortOrders(orders, "maker", "asc"))).toEqual(["1", "2", "3"]);
   });
 
-  // MUTATION: Use Number() instead of BigInt for amounts
-  // BREAKS: Large amounts overflow and sort wrong
-  test("sorts amountA as BigInt (handles large values)", () => {
-    const bigOrders = [
-      {
-        orderId: "1",
-        amountA: "999999999999999999999999999",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(bigOrders, "amountA", "asc");
-    expect(sorted[0].orderId).toBe("2"); // Smaller first
+  // MUTATION: Read tokenA's symbol in the tokenB case
+  // BREAKS: The Wanted column sorts by the offered token
+  test("sorts the wanted column by tokenB's symbol", () => {
+    // tokenB symbols: 1=USDC, 2=WETH, 3=USDC -- WETH sorts last ascending
+    expect(ids(sortOrders(orders, "tokenB", "desc"))[0]).toBe("2");
+    expect(ids(sortOrders(orders, "tokenB", "asc"))[2]).toBe("2");
   });
 
-  // MUTATION: Sort in place instead of copying
-  // BREAKS: Original array is mutated
-  test("does not mutate original array", () => {
-    const original = orders.map((o) => o.orderId);
-    sortOrders(orders, "orderId", "asc");
-    expect(orders.map((o) => o.orderId)).toEqual(original);
+  // MUTATION: Compare BigInt base units instead of scaling by decimals
+  // BREAKS: 1 WETH (1e18 base units) outranks 5000 DAI and 2000 USDC purely
+  //         because it has more decimal places
+  test("compares amounts in human units, not base units", () => {
+    // Human amounts: 5000 DAI > 2000 USDC > 1 WETH
+    expect(ids(sortOrders(orders, "amountA", "desc"))).toEqual(["3", "2", "1"]);
+    expect(ids(sortOrders(orders, "amountA", "asc"))).toEqual(["1", "2", "3"]);
+    // Base units would have ordered these 3, 1, 2 -- pin that it does not
+    expect(ids(sortOrders(orders, "amountA", "desc"))).not.toEqual(["3", "1", "2"]);
   });
 
-  // MUTATION: Throw for unknown column
-  // BREAKS: App crashes on typo
-  test("handles unknown column gracefully", () => {
-    const sorted = sortOrders(orders, "nonexistent", "asc");
-    expect(sorted.length).toBe(3);
+  // MUTATION: Read amountB's scale from tokenA
+  // BREAKS: The wanted-side amount is scaled by the wrong token's decimals
+  test("scales amountB by tokenB's decimals", () => {
+    // Human amountB: 5000 USDC > 3500 USDC > 0.5 WETH
+    expect(ids(sortOrders(orders, "amountB", "desc"))).toEqual(["3", "1", "2"]);
   });
 
-  // MUTATION: Don't lowercase when sorting maker
-  // BREAKS: "0xAAA" sorts differently than "0xaaa"
-  test("sorts maker case-insensitively", () => {
-    const sorted = sortOrders(orders, "maker", "asc");
-    expect(sorted[0].maker).toBe("0xaaa");
+  // MUTATION: Ignore getPriceFn and read a precomputed field
+  // BREAKS: The USD column silently stops sorting
+  test("computes USD value from the injected price function", () => {
+    const prices = { "0xweth": 3500, "0xusdc": 1, "0xdai": 1 };
+    const getPrice = (addr) => prices[addr] ?? null;
+    // USD of the offered side: 5000 DAI > 3500 (1 WETH) > 2000 USDC
+    expect(ids(sortOrders(orders, "usdVal", "desc", getPrice))).toEqual(["3", "1", "2"]);
   });
 
-  // MUTATION: Don't lowercase tokenA symbol for comparison
-  // BREAKS: "DAI" sorts after "USDC" if uppercase not lowercased
-  test("sorts tokenA by symbol case-insensitively", () => {
-    const sorted = sortOrders(orders, "tokenA", "asc");
-    expect(sorted[0].tokenA.symbol).toBe("DAI");
-    expect(sorted[1].tokenA.symbol).toBe("USDC");
-    expect(sorted[2].tokenA.symbol).toBe("WETH");
+  // MUTATION: Treat an unknown price as 0 rather than -1
+  // BREAKS: Unpriced orders tie with genuinely zero-value ones instead of sinking
+  test("orders with no known price sink to the bottom", () => {
+    const getPrice = (addr) => (addr === "0xusdc" ? 1 : null);
+    expect(ids(sortOrders(orders, "usdVal", "desc", getPrice))[0]).toBe("2");
   });
 
-  // MUTATION: Don't lowercase tokenB symbol for comparison
-  // BREAKS: Sorts by ASCII code instead of case-insensitive
-  test("sorts tokenB by symbol case-insensitively", () => {
-    const sorted = sortOrders(orders, "tokenB", "asc");
-    expect(sorted[0].tokenB.symbol).toBe("USDC");
-    expect(sorted[1].tokenB.symbol).toBe("USDT");
-    expect(sorted[2].tokenB.symbol).toBe("WETH");
+  // MUTATION: Ignore quoteSideFn and always quote wanted-per-offered
+  // BREAKS: The Price column sorts on a different number than it displays
+  test("sorts price on the side quoteSideFn selects", () => {
+    const quoteB = () => "B"; // wanted per offered
+    const quoteA = () => "A"; // offered per wanted
+    expect(ids(sortOrders(orders, "price", "desc", undefined, quoteB))).toEqual(["1", "3", "2"]);
+    // Quoting the other side inverts every ratio, so the order reverses
+    expect(ids(sortOrders(orders, "price", "desc", undefined, quoteA))).toEqual(["2", "3", "1"]);
   });
 
-  // MUTATION: Use Number() instead of BigInt for amountB
-  // BREAKS: Large amountB values overflow and sort incorrectly
-  test("sorts amountB as BigInt (handles large values)", () => {
-    const bigOrders = [
-      {
-        orderId: "1",
-        amountA: "1",
-        amountB: "999999999999999999999999999",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(bigOrders, "amountB", "asc");
-    expect(sorted[0].orderId).toBe("2"); // Smaller first
+  // MUTATION: Make the injected functions required
+  // BREAKS: Every caller that only wants to sort by id or symbol has to supply them
+  test("the injected functions are optional", () => {
+    expect(() => sortOrders(orders, "usdVal", "asc")).not.toThrow();
+    expect(() => sortOrders(orders, "price", "asc")).not.toThrow();
+    // With no prices at all every order ties at -1, so input order survives
+    expect(ids(sortOrders(orders, "usdVal", "desc"))).toEqual(["1", "2", "3"]);
   });
 
-  // MUTATION: Invert comparison result for desc direction
-  // BREAKS: desc order returns wrong sequence
-  test("sorts amountA descending correctly", () => {
-    const bigOrders = [
-      {
-        orderId: "1",
-        amountA: "1",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "999999999999999999999999999",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(bigOrders, "amountA", "desc");
-    expect(sorted[0].orderId).toBe("2"); // Larger first in desc
-    expect(sorted[1].orderId).toBe("1");
+  // MUTATION: Sort in place
+  // BREAKS: The caller's array is reordered underneath it
+  test("does not mutate the input array", () => {
+    const before = ids(orders);
+    sortOrders(orders, "orderId", "desc");
+    expect(ids(orders)).toEqual(before);
   });
 
-  // MUTATION: Invert comparison result for desc direction
-  // BREAKS: desc order returns wrong sequence
-  test("sorts amountB descending correctly", () => {
-    const bigOrders = [
-      {
-        orderId: "1",
-        amountA: "1",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1",
-        amountB: "999999999999999999999999999",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(bigOrders, "amountB", "desc");
-    expect(sorted[0].orderId).toBe("2"); // Larger first in desc
-    expect(sorted[1].orderId).toBe("1");
-  });
-
-  // MUTATION: Sort by _usdValue * -1
-  // BREAKS: Order with usdValue 5000 appears before 2000 in asc
-  test("sorts usdVal numerically", () => {
-    const sorted = sortOrders(orders, "usdVal", "asc");
-    expect(sorted[0]._usdValue).toBe(2000);
-    expect(sorted[1]._usdValue).toBe(3500);
-    expect(sorted[2]._usdValue).toBe(5000);
-  });
-
-  // MUTATION: Sort by _price * -1
-  // BREAKS: Order with price 0.0005 appears after 3500 in asc
-  test("sorts price numerically", () => {
-    const sorted = sortOrders(orders, "price", "asc");
-    expect(sorted[0]._price).toBe(0.0005);
-    expect(sorted[1]._price).toBe(1);
-    expect(sorted[2]._price).toBe(3500);
-  });
-
-  // MUTATION: Return -1 instead of 0 when values are equal
-  // BREAKS: Identical orders have unstable sort order
-  test("returns 0 for equal values (stable sort)", () => {
-    const equalOrders = [
-      {
-        orderId: "1",
-        maker: "0xaaa",
-        tokenA: { symbol: "A" },
-        tokenB: { symbol: "B" },
-        amountA: "100",
-        amountB: "100",
-        _usdValue: 100,
-        _price: 1,
-      },
-      {
-        orderId: "2",
-        maker: "0xaaa",
-        tokenA: { symbol: "A" },
-        tokenB: { symbol: "B" },
-        amountA: "100",
-        amountB: "100",
-        _usdValue: 100,
-        _price: 1,
-      },
-    ];
-    const sorted = sortOrders(equalOrders, "maker", "asc");
-    // With stable sort (return 0), original order is preserved
-    expect(sorted[0].orderId).toBe("1");
-    expect(sorted[1].orderId).toBe("2");
-  });
-
-  // MUTATION: Change aVal < bVal to aVal <= bVal in amountA
-  // BREAKS: Equal amounts would incorrectly return -1 instead of falling through to return 0
-  test("amountA boundary: equal values return 0 (< not <=)", () => {
-    const equalAmounts = [
-      {
-        orderId: "1",
-        amountA: "1000000000000000000",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1000000000000000000",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(equalAmounts, "amountA", "asc");
-    // Equal amounts should preserve original order (stable sort)
-    expect(sorted[0].orderId).toBe("1");
-    expect(sorted[1].orderId).toBe("2");
-  });
-
-  // MUTATION: Change aVal < bVal to aVal <= bVal in amountB
-  // BREAKS: Equal amounts would incorrectly return -1 instead of falling through to return 0
-  test("amountB boundary: equal values return 0 (< not <=)", () => {
-    const equalAmounts = [
-      {
-        orderId: "1",
-        amountA: "1",
-        amountB: "1000000000000000000",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1",
-        amountB: "1000000000000000000",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(equalAmounts, "amountB", "asc");
-    // Equal amounts should preserve original order (stable sort)
-    expect(sorted[0].orderId).toBe("1");
-    expect(sorted[1].orderId).toBe("2");
-  });
-
-  // MUTATION: Change aVal > bVal to aVal >= bVal in amountA
-  // BREAKS: Equal amounts in desc would return 1 instead of falling through
-  test("amountA boundary desc: equal values return 0 (> not >=)", () => {
-    const equalAmounts = [
-      {
-        orderId: "1",
-        amountA: "5000",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "5000",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(equalAmounts, "amountA", "desc");
-    expect(sorted[0].orderId).toBe("1");
-    expect(sorted[1].orderId).toBe("2");
-  });
-
-  // MUTATION: Change aVal > bVal to aVal >= bVal in amountB
-  // BREAKS: Equal amounts in desc would return 1 instead of falling through
-  test("amountB boundary desc: equal values return 0 (> not >=)", () => {
-    const equalAmounts = [
-      {
-        orderId: "1",
-        amountA: "1",
-        amountB: "5000",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1",
-        amountB: "5000",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(equalAmounts, "amountB", "desc");
-    expect(sorted[0].orderId).toBe("1");
-    expect(sorted[1].orderId).toBe("2");
+  // MUTATION: Fall through to a comparison for an unknown column
+  // BREAKS: Sorting on a column that does not exist scrambles the table
+  test("an unknown column leaves the order untouched", () => {
+    expect(ids(sortOrders(orders, "nope", "asc"))).toEqual(["1", "2", "3"]);
   });
 });
 
@@ -1776,49 +1810,129 @@ describe("sortOrders", () => {
 // ============================================================================
 
 describe("decodeContractError", () => {
+  const pad = (n) => n.toString(16).padStart(64, "0");
+
   // MUTATION: Wrong selector in ERROR_SIGNATURES
-  // BREAKS: Returns wrong error name
-  test("maps selector 0xd92e233d to ZeroAddress", () => {
-    const result = decodeContractError("0xd92e233d");
-    expect(result.name).toBe("ZeroAddress");
-    expect(result.message).toBe("Token address cannot be zero");
+  // BREAKS: The error is not recognized and falls through to a generic message
+  test("maps a selector to its error name and message", () => {
+    expect(decodeContractError("0xd92e233d")).toEqual({
+      name: "ZeroAddress",
+      message: "Invalid token address",
+    });
   });
 
-  // MUTATION: Use exact string match instead of slice(0,10)
-  // BREAKS: Fails when error has additional data
-  test("handles selector with ABI-encoded parameters", () => {
-    const result = decodeContractError("0xd92e233d0000000000000000000000001234");
-    expect(result.name).toBe("ZeroAddress");
+  // MUTATION: Use an exact string match instead of slice(0, 10)
+  // BREAKS: Any error carrying arguments stops being recognized
+  test("reads the selector off data that carries arguments", () => {
+    expect(decodeContractError("0xd92e233d" + pad(4660)).name).toBe("ZeroAddress");
   });
 
-  // MUTATION: Don't lowercase before lookup
-  // BREAKS: Returns null for uppercase selector
-  test("selector lookup is case-insensitive", () => {
+  // MUTATION: Drop the argument decoding and use a static string
+  // BREAKS: "Order #7 is no longer active" degrades to "Order is not active"
+  test("interpolates decoded arguments into the message", () => {
+    expect(decodeContractError("0xd2c02610" + pad(7)).message).toBe("Order #7 is no longer active");
+    expect(decodeContractError("0x4e90badc" + pad(1234)).message).toBe("Order #1234 not found");
+  });
+
+  // MUTATION: Omit DeadlineExpired from the table
+  // BREAKS: A fill that sat too long in the mempool reports a generic failure
+  test("recognizes DeadlineExpired", () => {
+    expect(decodeContractError("0x1ab7da6b")).toEqual({
+      name: "DeadlineExpired",
+      message: "Transaction deadline passed. Please try again.",
+    });
+  });
+
+  // MUTATION: Return a partial object instead of null
+  // BREAKS: An unknown revert renders as "undefined"
+  test("returns null for input it cannot decode", () => {
+    expect(decodeContractError("0xdeadbeef")).toBeNull();
+    expect(decodeContractError("0x")).toBeNull();
+    expect(decodeContractError("")).toBeNull();
+    expect(decodeContractError(null)).toBeNull();
+    expect(decodeContractError(undefined)).toBeNull();
+    expect(decodeContractError(12345)).toBeNull();
+  });
+
+  // MUTATION: Lower-case only the table keys, not the input
+  // BREAKS: A provider that upper-cases hex stops matching
+  test("matches a selector case-insensitively", () => {
     expect(decodeContractError("0xD92E233D").name).toBe("ZeroAddress");
   });
 
-  // MUTATION: Throw for unknown selector
-  // BREAKS: App crashes on unknown error
-  test("returns null for unknown selector", () => {
-    expect(decodeContractError("0xdeadbeef")).toBe(null);
+  // MUTATION: Assume every selector maps to a template
+  // BREAKS: Adding a signature without a message throws instead of degrading
+  test("every known signature has a message", () => {
+    for (const name of Object.values(ERROR_SIGNATURES)) {
+      expect(ERROR_MESSAGES[name]).toBeDefined();
+    }
+  });
+});
+
+// ============================================================================
+// decodeErrorArgs
+// ============================================================================
+
+describe("decodeErrorArgs", () => {
+  const pad = (n) => n.toString(16).padStart(64, "0");
+
+  // MUTATION: Read 32 hex characters per word instead of 64
+  // BREAKS: Every decoded order id is wrong
+  test("reads one bigint per 32-byte word", () => {
+    expect(decodeErrorArgs("0xd2c02610" + pad(7))).toEqual([7n]);
+    expect(decodeErrorArgs("0x98cd7222" + pad(1) + pad(2) + pad(3))).toEqual([1n, 2n, 3n]);
   });
 
-  // MUTATION: Don't type-check input
-  // BREAKS: Crashes on null.slice()
-  test("returns null for invalid input", () => {
-    expect(decodeContractError(null)).toBe(null);
-    expect(decodeContractError(123)).toBe(null);
+  // MUTATION: Emit a trailing partial word
+  // BREAKS: Truncated revert data yields a garbage final argument
+  test("ignores a trailing partial word", () => {
+    expect(decodeErrorArgs("0xd2c02610" + pad(7) + "abcd")).toEqual([7n]);
   });
 
-  // All known selectors
-  test("decodes all known error selectors", () => {
-    expect(decodeContractError("0x1f2a2005").name).toBe("ZeroAmount");
-    expect(decodeContractError("0x201b580a").name).toBe("SameToken");
-    expect(decodeContractError("0x8a8b41ec").name).toBe("NotAContract");
-    expect(decodeContractError("0x6e65ed84").name).toBe("BalanceMismatch");
-    expect(decodeContractError("0x4e90badc").name).toBe("OrderNotFound");
-    expect(decodeContractError("0xd2c02610").name).toBe("OrderNotActive");
-    expect(decodeContractError("0x98cd7222").name).toBe("NotMaker");
+  test("returns an empty list for an argument-free error", () => {
+    expect(decodeErrorArgs("0xd92e233d")).toEqual([]);
+  });
+
+  // MUTATION: Let the BigInt conversion throw
+  // BREAKS: Malformed revert data throws out of the error handler itself
+  test("stops at the first word it cannot read", () => {
+    const pad = (n) => n.toString(16).padStart(64, "0");
+    expect(decodeErrorArgs("0xd2c02610" + pad(7) + "z".repeat(64))).toEqual([7n]);
+    expect(decodeErrorArgs("0xd2c02610" + "z".repeat(64))).toEqual([]);
+  });
+});
+
+// ============================================================================
+// extractRevertData
+// ============================================================================
+
+describe("parseContractError data locations", () => {
+  // MUTATION: Check only e.data
+  // BREAKS: ethers v6 puts revert data in three different places depending on
+  //         how the call failed; two of them stop being decoded
+  test("finds revert data wherever the provider put it", () => {
+    expect(parseContractError({ data: "0x98cd7222" })).toBe("You are not the maker of this order");
+    expect(parseContractError({ error: { data: "0x98cd7222" } })).toBe(
+      "You are not the maker of this order"
+    );
+    expect(parseContractError({ info: { error: { data: "0x98cd7222" } } })).toBe(
+      "You are not the maker of this order"
+    );
+  });
+
+  // MUTATION: Drop the message regex
+  // BREAKS: Providers that only embed data in the message text lose it
+  test('extracts revert data embedded in the message as data="0x..."', () => {
+    const e = { message: 'execution reverted (data="0x1f2a2005", code=CALL_EXCEPTION)' };
+    expect(parseContractError(e)).toBe("Amount too small (check decimal places)");
+  });
+
+  // MUTATION: Accept any string as revert data
+  // BREAKS: A non-hex `data` field is fed to the decoder
+  test("ignores a data field that is not hex", () => {
+    expect(parseContractError({ data: "nope", message: "timeout" })).toBe(
+      "Request timed out. Please try again."
+    );
   });
 });
 
@@ -1827,59 +1941,100 @@ describe("decodeContractError", () => {
 // ============================================================================
 
 describe("parseContractError", () => {
-  // MUTATION: Don't check e.data
-  // BREAKS: Known contract error shows generic message
-  test("extracts error from e.data", () => {
-    expect(parseContractError({ data: "0xd92e233d" })).toBe("Token address cannot be zero");
-  });
-
-  // MUTATION: Don't check nested e.info.error.data
-  // BREAKS: ethers.js v6 errors not decoded
-  test("extracts error from e.info.error.data (ethers v6)", () => {
-    expect(parseContractError({ info: { error: { data: "0x1f2a2005" } } })).toBe(
-      "Amount cannot be zero"
+  // MUTATION: Detect rejection by message text only
+  // BREAKS: A wallet reporting code 4001 with terse wording is not recognized
+  test("recognizes a user rejection by error code", () => {
+    expect(parseContractError({ code: 4001, message: "denied" })).toBe("Transaction cancelled");
+    expect(parseContractError({ code: "ACTION_REJECTED", message: "x" })).toBe(
+      "Transaction cancelled"
     );
   });
 
-  // MUTATION: Don't handle code 4001
-  // BREAKS: MetaMask rejection shows raw error
-  test("handles user rejection code 4001", () => {
-    expect(parseContractError({ code: 4001 })).toBe("Transaction rejected by user");
-  });
-
-  // MUTATION: Only handle numeric codes
-  // BREAKS: ethers string code not recognized
-  test("handles ACTION_REJECTED string code", () => {
-    expect(parseContractError({ code: "ACTION_REJECTED" })).toBe("Transaction rejected by user");
-  });
-
-  // MUTATION: Don't handle -32000 code
-  // BREAKS: Insufficient funds shows raw RPC error
-  test("handles insufficient funds code -32000", () => {
-    expect(parseContractError({ code: -32000 })).toBe("Insufficient funds for transaction");
-  });
-
-  // MUTATION: Don't parse reason from message
-  // BREAKS: Shows full ugly revert message
-  test("extracts reason from execution reverted message", () => {
-    expect(parseContractError({ message: 'execution reverted: reason="Custom error"' })).toBe(
-      "Custom error"
+  // MUTATION: Remove the text fallback for rejection
+  // BREAKS: Wallets that set no code but say "user rejected" fall through
+  test("recognizes a user rejection by message text", () => {
+    expect(parseContractError({ message: "MetaMask Tx Signature: User rejected" })).toBe(
+      "Transaction cancelled"
+    );
+    expect(parseContractError({ message: "User denied transaction signature" })).toBe(
+      "Transaction cancelled"
     );
   });
 
-  // MUTATION: Return raw revert message instead of fallback
-  // BREAKS: Shows "execution reverted" instead of "Transaction would fail"
-  test("returns fallback for execution reverted without reason", () => {
-    expect(parseContractError({ message: "execution reverted" })).toBe("Transaction would fail");
-    expect(parseContractError({ message: "call revert exception; execution reverted" })).toBe(
-      "Transaction would fail"
+  // MUTATION: Return a fixed string for execution reverted
+  // BREAKS: A require() message from the chain is discarded
+  test('surfaces a reason="..." string from the chain', () => {
+    const e = { message: 'execution reverted (reason="Pausable: paused")' };
+    expect(parseContractError(e)).toBe("Pausable: paused");
+  });
+
+  // MUTATION: Test "insufficient" before "allowance"
+  // BREAKS: "ERC20: insufficient allowance" reports a balance problem instead
+  //         of an approval one, sending the user to fix the wrong thing
+  test("an allowance failure is not mistaken for a balance failure", () => {
+    expect(parseContractError({ message: "ERC20: insufficient allowance" })).toBe(
+      "Token approval failed"
+    );
+    expect(parseContractError({ message: "transfer amount exceeds balance" })).toBe(
+      "Insufficient token balance"
+    );
+    expect(parseContractError({ message: "insufficient funds for gas * price" })).toBe(
+      "Insufficient funds for transaction"
     );
   });
 
-  // MUTATION: Return undefined for empty error
-  // BREAKS: UI shows "undefined"
-  test("returns generic message for unknown error", () => {
-    expect(parseContractError({})).toBe("Transaction failed");
+  // MUTATION: Drop individual entries from ERROR_PATTERNS
+  // BREAKS: Recognizable provider failures degrade to a generic message
+  test("maps provider failures to actionable text", () => {
+    const cases = [
+      ["nonce has already been used", "Transaction conflict, try again"],
+      ["could not decode result data", "Token contract not found on this network"],
+      ["missing revert data", "Transaction failed. Order may already be filled or cancelled."],
+      ["gas estimation failed", "Transaction would fail. Check order status and try again."],
+      ["network is disconnected", "Network error. Check your connection."],
+      ["Request TIMEOUT after 30s", "Request timed out. Please try again."],
+      ["replacement transaction underpriced", "Gas price too low. Try again with higher gas."],
+      ["execution reverted", "Transaction failed. The order may no longer be available."],
+    ];
+    for (const [message, expected] of cases) {
+      expect(parseContractError({ message })).toBe(expected);
+    }
+  });
+
+  // MUTATION: Fall back to e.message
+  // BREAKS: A multi-line ethers error with a docs URL lands in a toast
+  test("never surfaces a raw technical message", () => {
+    const e = {
+      message:
+        "cannot estimate gas; transaction may fail [ See: https://links.ethers.org/v5-errors ] (reason=null, code=UNPREDICTABLE_GAS_LIMIT)",
+    };
+    expect(parseContractError(e)).toBe("Transaction failed. Please try again.");
+  });
+
+  // MUTATION: Drop the length cap on shortMessage
+  // BREAKS: An arbitrarily long "short" message is shown verbatim
+  test("uses shortMessage only when it is short enough to read", () => {
+    expect(parseContractError({ message: "zzz", shortMessage: "could not coalesce error" })).toBe(
+      "could not coalesce error"
+    );
+    expect(parseContractError({ message: "zzz", shortMessage: "x".repeat(150) })).toBe(
+      "Transaction failed. Please try again."
+    );
+  });
+
+  // MUTATION: Check revert data after the text patterns
+  // BREAKS: A decodable contract error is reported as a generic revert
+  test("revert data wins over the message text", () => {
+    const e = { data: "0xd2c02610" + "7".padStart(64, "0"), message: "execution reverted" };
+    expect(parseContractError(e)).toMatch(/is no longer active/);
+  });
+
+  // MUTATION: Dereference e without a guard
+  // BREAKS: Throws while handling an error, masking the original failure
+  test("survives a missing or empty error object", () => {
+    expect(parseContractError(null)).toBe("Transaction failed. Please try again.");
+    expect(parseContractError(undefined)).toBe("Transaction failed. Please try again.");
+    expect(parseContractError({})).toBe("Transaction failed. Please try again.");
   });
 });
 
