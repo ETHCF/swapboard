@@ -974,59 +974,6 @@
   }
 
   /**
-   * Creates a recent tokens dropdown for a token input field.
-   * @param {HTMLInputElement} input - Token input element
-   * @param {string} infoId - Info element selector
-   */
-  function createRecentTokensDropdown(input, infoId) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "recent-tokens-wrapper";
-    wrapper.style.position = "relative";
-
-    input.parentNode.insertBefore(wrapper, input);
-    wrapper.appendChild(input);
-
-    const dropdown = document.createElement("div");
-    dropdown.className = "recent-tokens-dropdown hidden";
-    wrapper.appendChild(dropdown);
-
-    function showDropdown() {
-      const recent = getRecentTokens();
-      if (recent.length === 0) return;
-
-      dropdown.textContent = "";
-      const title = document.createElement("div");
-      title.className = "recent-tokens-title";
-      title.textContent = "Recent:";
-      dropdown.appendChild(title);
-
-      recent.forEach((token) => {
-        const item = document.createElement("div");
-        item.className = "recent-token-item";
-        item.textContent = token.symbol;
-        item.title = token.address;
-        item.addEventListener("click", () => {
-          input.value = token.address;
-          input.dispatchEvent(new Event("input"));
-          dropdown.classList.add("hidden");
-        });
-        dropdown.appendChild(item);
-      });
-
-      dropdown.classList.remove("hidden");
-    }
-
-    function hideDropdown() {
-      setTimeout(() => {
-        dropdown.classList.add("hidden");
-      }, 200);
-    }
-
-    input.addEventListener("focus", showDropdown);
-    input.addEventListener("blur", hideDropdown);
-  }
-
-  /**
    * Creates a copy button that copies text to clipboard.
    * @param {string} text - Text to copy
    * @returns {HTMLElement} Copy button element
@@ -5172,7 +5119,6 @@
       connectWallet,
       connectWithProvider,
       createCopyButton,
-      createRecentTokensDropdown,
       createTokenSelector,
       disconnectWallet,
       estimateGasCost,

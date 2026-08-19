@@ -3180,58 +3180,6 @@ describe("createCopyButton", () => {
   });
 });
 
-describe("createRecentTokensDropdown", () => {
-  // Currently unreferenced in app.js -- superseded by createTokenSelector, but
-  // still shipped, so it is still measured. Driven through the export.
-  function mount(mod) {
-    const host = document.createElement("div");
-    const input = document.createElement("input");
-    host.appendChild(input);
-    document.body.appendChild(host);
-    mod.createRecentTokensDropdown(input, "info");
-    return { input, dropdown: host.querySelector(".recent-tokens-dropdown") };
-  }
-
-  test("focus with no recents leaves the dropdown closed", () => {
-    const { input, dropdown } = mount(app);
-    input.dispatchEvent(new Event("focus"));
-    expect(dropdown.classList.contains("hidden")).toBe(true);
-  });
-
-  test("focus lists recent tokens", () => {
-    app.addRecentToken("0x1111111111111111111111111111111111111111", "AAA");
-    const { input, dropdown } = mount(app);
-    input.dispatchEvent(new Event("focus"));
-    expect(dropdown.classList.contains("hidden")).toBe(false);
-    expect(dropdown.querySelector(".recent-tokens-title").textContent).toBe("Recent:");
-    expect(dropdown.querySelector(".recent-token-item").textContent).toBe("AAA");
-  });
-
-  test("picking a recent token fills the input", () => {
-    app.addRecentToken("0x1111111111111111111111111111111111111111", "AAA");
-    const { input, dropdown } = mount(app);
-    input.dispatchEvent(new Event("focus"));
-    dropdown.querySelector(".recent-token-item").click();
-    expect(input.value).toBe("0x1111111111111111111111111111111111111111");
-    expect(dropdown.classList.contains("hidden")).toBe(true);
-  });
-
-  test("blur closes the dropdown after a grace period", () => {
-    jest.useFakeTimers();
-    try {
-      const fresh = loadApp();
-      fresh.addRecentToken("0x1111111111111111111111111111111111111111", "AAA");
-      const { input, dropdown } = mount(fresh);
-      input.dispatchEvent(new Event("focus"));
-      input.dispatchEvent(new Event("blur"));
-      jest.advanceTimersByTime(200);
-      expect(dropdown.classList.contains("hidden")).toBe(true);
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-});
-
 describe("openOrderModal", () => {
   /** Loads orders then opens the detail modal for the first one. */
   async function open(mod, order, connectFirst = false) {
