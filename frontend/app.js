@@ -408,6 +408,9 @@
   /** @param {string} sel - CSS selector */
   const $ = (sel) => document.querySelector(sel);
 
+  /** @param {string} sel - CSS selector */
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
   /**
    * Resolves an address to its ENS name if available.
    * Results are cached to avoid redundant lookups.
@@ -5116,16 +5119,162 @@
     }, AUTO_REFRESH_MS);
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
-
-  // Register service worker for PWA support
-  if ("serviceWorker" in navigator) {
+  /**
+   * Registers the service worker for PWA support. No-op where unsupported.
+   */
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) {
+      return;
+    }
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     });
+  }
+
+  /**
+   * Boots the app once the DOM is ready, then registers the service worker.
+   */
+  function bootstrap() {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+    registerServiceWorker();
+  }
+
+  // index.html loads this as a classic <script>, where `module` is undefined, so the
+  // app boots normally. Under Jest the module is required instead: expose the closure
+  // surface for tests and skip bootstrap so require() has no side effects.
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      // The version connectors. Exported so each adapter method can be asserted
+      // against the call it makes, including the defensive v1 stubs that the
+      // capability gates deliberately keep unreachable from the UI.
+      V1,
+      V2,
+      addCreateRow,
+      addRecentToken,
+      appendBatchTxNote,
+      appendTotalRow,
+      applyVersionUi,
+      applyWalletFilter,
+      batchResolveEns,
+      bootstrap,
+      buildAmountCell,
+      buildBatchItem,
+      buildPartialFillControls,
+      buildTokenCell,
+      cancelSelectedOrders,
+      checkWatchedOrders,
+      clearSelection,
+      collectCreateParams,
+      connectWallet,
+      connectWithProvider,
+      createCopyButton,
+      createRecentTokensDropdown,
+      createTokenSelector,
+      disconnectWallet,
+      estimateGasCost,
+      exportMyOrders,
+      fakeTxHash,
+      fetchTokenInfo,
+      fetchUniswapTokenList,
+      fillOrderModalAmount,
+      fillSelectedOrders,
+      findOrderById,
+      getCachedEns,
+      getCreateRows,
+      getEthToken,
+      getOrderIdFromHash,
+      getOrderShareUrl,
+      getRecentTokens,
+      getRowState,
+      getSelectedOrders,
+      getSelectionAnchor,
+      getWatchedOrders,
+      handleCancelOrder,
+      handleCreateOrder,
+      handleFillOrder,
+      handleSort,
+      hideToast,
+      init,
+      initApp,
+      initTheme,
+      isOrderWatched,
+      isStable,
+      isWeth,
+      loadFilterPreferences,
+      loadOrders,
+      loadPopularPairs,
+      loadRowBalance,
+      loadSortPreferences,
+      loadStats,
+      loadTokenFilters,
+      loadUserApprovals,
+      logV2Call,
+      openOrderModal,
+      orderColumnCount,
+      preferredQuoteSide,
+      pruneSelection,
+      querySubgraph,
+      readStoredVersion,
+      refreshCreateRows,
+      registerServiceWorker,
+      renderOrders,
+      renderRowQuickAmounts,
+      renderSelectionBar,
+      renderSkeletonRows,
+      renderTokenInfoLine,
+      requestNotificationPermission,
+      resetCreateForm,
+      resolveBuildInfo,
+      resolveEns,
+      retryRpc,
+      revokeApproval,
+      rowField,
+      runBatchTransactions,
+      saveFilterPreferences,
+      saveSortPreferences,
+      searchTokens,
+      selectAllOwnOrders,
+      setRevokeStatus,
+      setTextWithDots,
+      setVersion,
+      setupEIP6963Discovery,
+      setupProviderListeners,
+      setupRowTokenField,
+      showModal,
+      showNotification,
+      showToast,
+      showWalletModal,
+      sortOrders,
+      startAutoRefresh,
+      switchToExpectedNetwork,
+      switchWallet,
+      toCreateParams,
+      toggleNotifications,
+      toggleOrderSelection,
+      toggleRowNativeEth,
+      toggleTheme,
+      tryParseAmount,
+      unwatchOrder,
+      updateNetworkIndicator,
+      updateNotifyText,
+      updatePagination,
+      updateRowPriceDisplay,
+      updateSortIndicators,
+      updateThemeIcons,
+      updateWalletMenu,
+      v1Unsupported,
+      v2Send,
+      validateConfig,
+      validateNetwork,
+      validateRowAmount,
+      waitForOrderUpdate,
+      watchOrder,
+    };
+  } else {
+    bootstrap();
   }
 })();
