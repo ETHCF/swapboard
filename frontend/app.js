@@ -17,14 +17,28 @@
 (function () {
   "use strict";
 
-  // Import shared utilities from lib.js (loaded before app.js)
+  // Import shared utilities from lib.js (loaded before app.js).
+  //
+  // `Lib` is kept as a namespace as well as destructured: helpers that lib.js
+  // parameterizes over storage, a price cache, or the current URL are wrapped
+  // below in one-line bindings that supply this module's versions of those, and
+  // those wrappers reuse the imported name.
+  const Lib = window.SwapboardLib || {};
+
   const {
+    CONFIG,
+    EXPECTED_CHAIN_ID,
+    WATCHED_ORDERS_KEY,
     escapeHtml,
     isValidAddress,
     truncateAddress,
     formatUsd,
     formatAmount,
+    formatNumber,
+    orderStatus,
     COINGECKO_ID_MAP,
+    coinGeckoUrl,
+    priceRatio,
     // Protocol version
     VERSION_STORAGE_KEY,
     SUPPORTED_VERSIONS,
@@ -42,38 +56,16 @@
     getShiftRangeIds,
     computeFillFromReceive,
     summarizeFillBatch,
-  } = window.SwapboardLib || {};
+  } = Lib;
 
   // ============================================================================
   // Configuration
   // ============================================================================
 
-  /**
-   * Application configuration. Update these values before deployment.
-   * @constant {Object}
-   */
-  const CONFIG = {
-    // Contract address on Ethereum mainnet
-    CONTRACT_ADDRESS: "0x000000fF3D7A2d373615141d7489Ca66683DbecF",
-    // Goldsky subgraph endpoint (Mainnet)
-    SUBGRAPH_URL:
-      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn",
-    // Number of orders per page
-    PAGE_SIZE: 200,
-    // Request timeout in milliseconds
-    REQUEST_TIMEOUT: 30000,
-    // Debounce delay for token info fetch
-    DEBOUNCE_DELAY: 500,
-    // Show market deviation percentage (vs CoinGecko prices)
-    SHOW_MARKET_DEVIATION: false,
-    // v2 batch limits: the most orders that fit in a single transaction.
-    // Seeded conservatively; retune once real gas numbers land.
-    MAX_BATCH_FILL: 15,
-    MAX_BATCH_CANCEL: 25,
-    MAX_BATCH_CREATE: 10,
-  };
-
-  const EXPECTED_CHAIN_ID = 1;
+  // CONFIG and EXPECTED_CHAIN_ID are imported from lib.js above. They used to be
+  // declared here too, byte for byte, which meant deploy.sh only ever rewrote
+  // one of the two copies -- lib.js shipped carrying pre-deploy values.
+  // deploy.sh now patches lib.js, the single definition.
   const EXPECTED_CHAIN = {
     chainId: "0x1",
     chainName: "Ethereum",
@@ -256,18 +248,12 @@
       return;
     }
 
-    const errors = [];
-    if (CONFIG.CONTRACT_ADDRESS === "0x0000000000000000000000000000000000000000") {
-      errors.push("CONTRACT_ADDRESS is not configured");
-    }
-    if (CONFIG.SUBGRAPH_URL.includes("YOUR_ID")) {
-      errors.push("SUBGRAPH_URL is not configured");
-    }
-    if (errors.length > 0) {
+    const { valid, errors } = Lib.validateConfig(CONFIG, false);
+    if (!valid) {
       const msg =
         "Configuration error: " +
         errors.join(", ") +
-        ". Update CONFIG in app.js before deployment.";
+        ". Update CONFIG in lib.js before deployment.";
       console.error(msg);
       document.body.innerHTML =
         '<div style="color:red;padding:20px;font-family:monospace;">' + msg + "</div>";
@@ -346,11 +332,6 @@
   let ordersQueryFailed = false;
   let highlightedOrderId = null;
   let notificationsEnabled = false;
-  const RECENT_TOKENS_KEY = "swapboard_recent_tokens";
-  const MAX_RECENT_TOKENS = 5;
-  const FILTERS_KEY = "swapboard_filters";
-  const SORT_KEY = "swapboard_sort";
-  const WATCHED_ORDERS_KEY = "swapboard_watched_orders";
   const UNISWAP_TOKEN_LIST_URL = "https://tokens.uniswap.org";
   let uniswapTokens = [];
   let autoRefreshInterval = null;
@@ -434,10 +415,7 @@
    * @returns {{usd: number, fetchedAt: number}|null}
    */
   function getCachedPrice(coinGeckoId) {
-    const cached = priceCache.get(coinGeckoId);
-    if (!cached) return null;
-    if (Date.now() - cached.fetchedAt > PRICE_CACHE_TTL_MS) return null;
-    return cached;
+    return Lib.getCachedPrice(coinGeckoId, priceCache, PRICE_CACHE_TTL_MS);
   }
 
   /**
@@ -502,10 +480,7 @@
    * @returns {number|null} USD price or null if unavailable
    */
   function getTokenPrice(tokenAddress) {
-    const id = COINGECKO_ID_MAP[tokenAddress.toLowerCase()];
-    if (!id) return null;
-    const cached = getCachedPrice(id);
-    return cached ? cached.usd : null;
+    return Lib.getTokenPrice(tokenAddress, priceCache, PRICE_CACHE_TTL_MS);
   }
 
   /**
@@ -514,38 +489,7 @@
    * @returns {{deviation: number, label: string}|null} Deviation percentage and label, or null if unavailable
    */
   function calculateMarketDeviation(order) {
-    const priceA = getTokenPrice(order.tokenA.address);
-    const priceB = getTokenPrice(order.tokenB.address);
-
-    if (priceA === null || priceB === null) return null;
-    if (priceA === 0 || priceB === 0) return null;
-
-    const amountA = BigInt(order.amountA);
-    const amountB = BigInt(order.amountB);
-
-    if (amountA === 0n || amountB === 0n) return null;
-
-    // Market rate: how many tokenB per tokenA at market prices
-    const marketRate = priceA / priceB;
-
-    // Order rate: how many tokenB per tokenA this order offers
-    const humanAmountA = Number(amountA) / Math.pow(10, order.tokenA.decimals);
-    const humanAmountB = Number(amountB) / Math.pow(10, order.tokenB.decimals);
-    const orderRate = humanAmountB / humanAmountA;
-
-    // Deviation: positive = seller asking more (bad for buyer), negative = discount (good for buyer)
-    const deviation = ((orderRate - marketRate) / marketRate) * 100;
-
-    let label;
-    if (Math.abs(deviation) < 0.5) {
-      label = "~market";
-    } else if (deviation > 0) {
-      label = "+" + deviation.toFixed(1) + "%";
-    } else {
-      label = deviation.toFixed(1) + "%";
-    }
-
-    return { deviation, label };
+    return Lib.calculateMarketDeviation(order, getTokenPrice);
   }
 
   // ============================================================================
@@ -613,22 +557,7 @@
    * @returns {string|null} Order ID or null
    */
   function getOrderIdFromHash() {
-    const hash = window.location.hash;
-    if (!hash) return null;
-
-    // Format: #order-123 (new format)
-    const dashMatch = hash.match(/^#order-(\d+)$/);
-    if (dashMatch) return dashMatch[1];
-
-    // Format: #order=123
-    const orderMatch = hash.match(/^#order=(\d+)$/);
-    if (orderMatch) return orderMatch[1];
-
-    // Format: #123
-    const simpleMatch = hash.match(/^#(\d+)$/);
-    if (simpleMatch) return simpleMatch[1];
-
-    return null;
+    return Lib.getOrderIdFromHash(window.location.hash);
   }
 
   /**
@@ -637,9 +566,7 @@
    * @returns {string} Full URL with hash
    */
   function getOrderShareUrl(orderId) {
-    const url = new URL(window.location.href);
-    url.hash = "order-" + orderId;
-    return url.toString();
+    return Lib.getOrderShareUrl(orderId, window.location.href);
   }
 
   /**
@@ -820,42 +747,12 @@
   function searchTokens(query, limit = 10) {
     if (!query || query.length < 1) return [];
 
-    const q = query.toLowerCase();
-    const results = [];
-
-    // Inject native ETH when query matches
+    // Native ETH is not in the token list -- it has no ERC20 entry to be in --
+    // so it is seeded ahead of the matches rather than found among them.
     const eth = getEthToken();
-    if (eth && "eth".startsWith(q)) {
-      results.push(eth);
-    }
+    const prepend = eth && "eth".startsWith(query.toLowerCase()) ? [eth] : [];
 
-    // Exact symbol matches first
-    for (const t of uniswapTokens) {
-      if (t.symbol.toLowerCase() === q) {
-        results.push(t);
-      }
-    }
-
-    // Symbol starts with query
-    for (const t of uniswapTokens) {
-      if (t.symbol.toLowerCase().startsWith(q) && !results.includes(t)) {
-        results.push(t);
-        if (results.length >= limit) return results;
-      }
-    }
-
-    // Symbol or name contains query
-    for (const t of uniswapTokens) {
-      if (
-        (t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)) &&
-        !results.includes(t)
-      ) {
-        results.push(t);
-        if (results.length >= limit) return results;
-      }
-    }
-
-    return results;
+    return Lib.searchTokens(query, uniswapTokens, limit, prepend);
   }
 
   /**
@@ -1044,12 +941,7 @@
    * @returns {Array<{address: string, symbol: string}>} Recent tokens array
    */
   function getRecentTokens() {
-    try {
-      const stored = localStorage.getItem(RECENT_TOKENS_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch (e) {
-      return [];
-    }
+    return Lib.getRecentTokens(localStorage);
   }
 
   /**
@@ -1058,80 +950,42 @@
    * @param {string} symbol - Token symbol
    */
   function addRecentToken(address, symbol) {
-    if (!address || !symbol) return;
-
-    const recent = getRecentTokens();
-    const lowerAddr = address.toLowerCase();
-
-    // Remove if already exists
-    const filtered = recent.filter((t) => t.address.toLowerCase() !== lowerAddr);
-
-    // Add to front
-    filtered.unshift({ address, symbol });
-
-    // Limit to max
-    const trimmed = filtered.slice(0, MAX_RECENT_TOKENS);
-
-    try {
-      localStorage.setItem(RECENT_TOKENS_KEY, JSON.stringify(trimmed));
-    } catch (e) {
-      console.error("Failed to save recent tokens:", e);
-    }
+    Lib.addRecentToken(address, symbol, localStorage);
   }
 
   /**
    * Saves current filter preferences to localStorage.
    */
   function saveFilterPreferences() {
-    try {
-      localStorage.setItem(FILTERS_KEY, JSON.stringify(currentFilters));
-    } catch (e) {
-      console.error("Failed to save filter preferences:", e);
-    }
+    Lib.saveFilterPreferences(currentFilters, localStorage);
   }
 
   /**
    * Saves current sort preferences to localStorage.
    */
   function saveSortPreferences() {
-    try {
-      localStorage.setItem(SORT_KEY, JSON.stringify(currentSort));
-    } catch (e) {
-      console.error("Failed to save sort preferences:", e);
-    }
+    Lib.saveSortPreferences(currentSort, localStorage);
   }
 
   /**
    * Loads filter preferences from localStorage.
    */
   function loadFilterPreferences() {
-    try {
-      const stored = localStorage.getItem(FILTERS_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.status) currentFilters.status = parsed.status;
-        if (parsed.selling) currentFilters.selling = parsed.selling;
-        if (parsed.wanting) currentFilters.wanting = parsed.wanting;
-      }
-    } catch (e) {
-      console.error("Failed to load filter preferences:", e);
-    }
+    const parsed = Lib.loadFilterPreferences(localStorage);
+    if (!parsed) return;
+    if (parsed.status) currentFilters.status = parsed.status;
+    if (parsed.selling) currentFilters.selling = parsed.selling;
+    if (parsed.wanting) currentFilters.wanting = parsed.wanting;
   }
 
   /**
    * Loads sort preferences from localStorage.
    */
   function loadSortPreferences() {
-    try {
-      const stored = localStorage.getItem(SORT_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.column) currentSort.column = parsed.column;
-        if (parsed.direction) currentSort.direction = parsed.direction;
-      }
-    } catch (e) {
-      console.error("Failed to load sort preferences:", e);
-    }
+    const parsed = Lib.loadSortPreferences(localStorage);
+    if (!parsed) return;
+    if (parsed.column) currentSort.column = parsed.column;
+    if (parsed.direction) currentSort.direction = parsed.direction;
   }
 
   /**
@@ -1140,12 +994,7 @@
    * @returns {Object}
    */
   function getWatchedOrders() {
-    try {
-      const stored = localStorage.getItem(WATCHED_ORDERS_KEY);
-      return stored ? JSON.parse(stored) : {};
-    } catch (e) {
-      return {};
-    }
+    return Lib.getWatchedOrders(localStorage);
   }
 
   /**
@@ -1153,17 +1002,7 @@
    * @param {Object} order - Order object
    */
   function watchOrder(order) {
-    const watched = getWatchedOrders();
-    const status = order.active ? "Open" : order.taker ? "Filled" : "Cancelled";
-    watched[order.orderId] = {
-      status: status,
-      symbol: order.tokenA.symbol + "/" + order.tokenB.symbol,
-    };
-    try {
-      localStorage.setItem(WATCHED_ORDERS_KEY, JSON.stringify(watched));
-    } catch (e) {
-      console.error("Failed to save watched order:", e);
-    }
+    Lib.watchOrder(order, localStorage);
   }
 
   /**
@@ -1171,13 +1010,7 @@
    * @param {string} orderId - Order ID
    */
   function unwatchOrder(orderId) {
-    const watched = getWatchedOrders();
-    delete watched[orderId];
-    try {
-      localStorage.setItem(WATCHED_ORDERS_KEY, JSON.stringify(watched));
-    } catch (e) {
-      console.error("Failed to remove watched order:", e);
-    }
+    Lib.unwatchOrder(orderId, localStorage);
   }
 
   /**
@@ -1186,8 +1019,7 @@
    * @returns {boolean}
    */
   function isOrderWatched(orderId) {
-    const watched = getWatchedOrders();
-    return orderId in watched;
+    return Lib.isOrderWatched(orderId, localStorage);
   }
 
   /**
@@ -1202,7 +1034,7 @@
       const savedInfo = watched[order.orderId];
       if (!savedInfo) continue;
 
-      const currentStatus = order.active ? "Open" : order.taker ? "Filled" : "Cancelled";
+      const currentStatus = orderStatus(order);
       if (savedInfo.status !== currentStatus) {
         // Status changed, send notification
         if (currentStatus === "Filled") {
@@ -1307,10 +1139,6 @@
       }
     });
     return btn;
-  }
-
-  function formatNumber(num) {
-    return String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
 
   /**
@@ -1540,6 +1368,18 @@
   }
 
   /**
+   * The price of an order as the Price column quotes it.
+   * @param {Object} order - Order with tokenA/tokenB and amounts
+   * @returns {number} Price in the quoted direction, or 0 when a side is empty
+   */
+  function quotedPrice(order) {
+    const { tokenA, tokenB, amountA, amountB } = order;
+    return preferredQuoteSide(tokenA.address, tokenB.address) === "A"
+      ? priceRatio(amountA, amountB, tokenA.decimals, tokenB.decimals)
+      : priceRatio(amountB, amountA, tokenB.decimals, tokenA.decimals);
+  }
+
+  /**
    * Sorts orders array based on current sort state.
    * @param {Array} orders - Orders array from subgraph
    * @returns {Array} Sorted orders array
@@ -1585,38 +1425,10 @@
           valB = priceB !== null ? humanB * priceB : -1;
           break;
         case "price":
-          const amtA1 = BigInt(a.amountA);
-          const amtB1 = BigInt(a.amountB);
-          const amtA2 = BigInt(b.amountA);
-          const amtB2 = BigInt(b.amountB);
-          const qsA = preferredQuoteSide(a.tokenA.address, a.tokenB.address);
-          if (qsA === "A") {
-            valA =
-              amtB1 > 0n
-                ? (Number(amtA1) / Number(amtB1)) *
-                  Math.pow(10, a.tokenB.decimals - a.tokenA.decimals)
-                : 0;
-          } else {
-            valA =
-              amtA1 > 0n
-                ? (Number(amtB1) / Number(amtA1)) *
-                  Math.pow(10, a.tokenA.decimals - a.tokenB.decimals)
-                : 0;
-          }
-          const qsB = preferredQuoteSide(b.tokenA.address, b.tokenB.address);
-          if (qsB === "A") {
-            valB =
-              amtB2 > 0n
-                ? (Number(amtA2) / Number(amtB2)) *
-                  Math.pow(10, b.tokenB.decimals - b.tokenA.decimals)
-                : 0;
-          } else {
-            valB =
-              amtA2 > 0n
-                ? (Number(amtB2) / Number(amtA2)) *
-                  Math.pow(10, b.tokenA.decimals - b.tokenB.decimals)
-                : 0;
-          }
+          // Sort on whichever side the Price column is quoting, so the order
+          // matches what is on screen rather than the raw tokenB/tokenA rate.
+          valA = quotedPrice(a);
+          valB = quotedPrice(b);
           break;
         default:
           return 0;
@@ -1826,10 +1638,10 @@
     if (isNativeEth(token.address)) {
       el.textContent = text;
     } else {
-      const coinGeckoId = COINGECKO_ID_MAP[token.address.toLowerCase()];
-      if (coinGeckoId) {
+      const cgUrl = coinGeckoUrl(token.address);
+      if (cgUrl) {
         const link = document.createElement("a");
-        link.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
+        link.href = cgUrl;
         link.target = "_blank";
         link.textContent = text;
         el.appendChild(link);
@@ -2655,10 +2467,10 @@
     const wrap = document.createElement("span");
     wrap.style.whiteSpace = "nowrap";
 
-    const coinGeckoId = COINGECKO_ID_MAP[token.address.toLowerCase()];
-    if (coinGeckoId) {
+    const cgUrl = coinGeckoUrl(token.address);
+    if (cgUrl) {
       const link = document.createElement("a");
-      link.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
+      link.href = cgUrl;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.textContent = token.symbol;
@@ -2753,10 +2565,8 @@
       let priceNormal = "N/A";
       let priceInverted = "N/A";
       if (amountA > 0n && amountB > 0n) {
-        const priceBPerA =
-          (Number(amountB) / Number(amountA)) * Math.pow(10, tokenADecimals - tokenBDecimals);
-        const priceAPerB =
-          (Number(amountA) / Number(amountB)) * Math.pow(10, tokenBDecimals - tokenADecimals);
+        const priceBPerA = priceRatio(amountB, amountA, tokenBDecimals, tokenADecimals);
+        const priceAPerB = priceRatio(amountA, amountB, tokenADecimals, tokenBDecimals);
         const bQuoted = isStable(order.tokenB.address)
           ? formatUsd(priceBPerA) + " / " + escapeHtml(order.tokenA.symbol)
           : formatRatio(priceBPerA) +
@@ -4097,10 +3907,10 @@
       return;
     }
 
-    const coinGeckoId = COINGECKO_ID_MAP[info.address.toLowerCase()];
-    if (coinGeckoId) {
+    const cgUrl = coinGeckoUrl(info.address);
+    if (cgUrl) {
       const link = document.createElement("a");
-      link.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
+      link.href = cgUrl;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.textContent = info.symbol;
@@ -4109,7 +3919,7 @@
       infoEl.appendChild(document.createTextNode(" (" + info.decimals + " decimals) "));
 
       const verifyLink = document.createElement("a");
-      verifyLink.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
+      verifyLink.href = cgUrl;
       verifyLink.target = "_blank";
       verifyLink.rel = "noopener noreferrer";
       verifyLink.textContent = "[verify]";
@@ -4967,7 +4777,7 @@
       "Taker",
     ];
     const rows = data.orders.map((o) => {
-      const status = o.active ? "Open" : o.taker ? "Filled" : "Cancelled";
+      const status = orderStatus(o);
       const amtA = o.tokenA.decimals
         ? (parseFloat(o.amountA) / Math.pow(10, o.tokenA.decimals)).toString()
         : o.amountA;
@@ -5476,10 +5286,7 @@
         const tokenBDecimals = parseInt(order.tokenB.decimals) || 18;
         const amountA = formatAmount(order.amountA, tokenADecimals);
         const amountB = formatAmount(order.amountB, tokenBDecimals);
-        let status = "Open";
-        if (!order.active) {
-          status = order.taker ? "Filled" : "Cancelled";
-        }
+        const status = orderStatus(order);
         const createdDate = new Date(parseInt(order.createdAt) * 1000).toISOString();
 
         return [

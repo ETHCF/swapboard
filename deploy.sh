@@ -136,14 +136,16 @@ log "Updated subgraph.yaml with address and startBlock"
 
 log "Step 3: Updating frontend configuration..."
 
-FRONTEND_JS="$SCRIPT_DIR/frontend/app.js"
+# CONFIG lives in lib.js only; app.js imports it from there. Patching app.js
+# would be a no-op and would ship lib.js's placeholder values.
+FRONTEND_JS="$SCRIPT_DIR/frontend/lib.js"
 
 # Update contract address
 sed -i.bak "s/CONTRACT_ADDRESS: \"0x[a-fA-F0-9]\{40\}\"/CONTRACT_ADDRESS: \"$CONTRACT_ADDRESS\"/" "$FRONTEND_JS"
 
 rm -f "$FRONTEND_JS.bak"
 
-log "Updated app.js with contract address"
+log "Updated lib.js with contract address"
 
 # ============================================================
 # STEP 4: Deploy Subgraph
@@ -186,11 +188,13 @@ else
     SUBGRAPH_URL="${SUBGRAPH_URL:-https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest}"
 fi
 
-# Update frontend with subgraph URL
-sed -i.bak "s|SUBGRAPH_URL: \"[^\"]*\"|SUBGRAPH_URL: \"$SUBGRAPH_URL\"|" "$FRONTEND_JS"
-rm -f "$FRONTEND_JS.bak"
+# Update frontend with subgraph URL.
+# Slurp the whole file: the URL is long enough that the formatter wraps it onto
+# its own line, so a line-at-a-time sed never matches "SUBGRAPH_URL: \"...\"".
+SUBGRAPH_URL="$SUBGRAPH_URL" perl -0777 -i -pe \
+    's/SUBGRAPH_URL:\s*"[^"]*"/SUBGRAPH_URL:\n    "$ENV{SUBGRAPH_URL}"/' "$FRONTEND_JS"
 
-log "Updated app.js with subgraph URL"
+log "Updated lib.js with subgraph URL"
 
 # ============================================================
 # STEP 5: Generate Build Hashes and Deploy Frontend to IPFS

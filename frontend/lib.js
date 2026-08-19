@@ -175,7 +175,7 @@ function formatAmount(amount, decimals) {
  * @returns {string}
  */
 function formatNumber(num) {
-  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
 /**
@@ -282,6 +282,40 @@ function getTokenPrice(tokenAddress, cache, ttlMs) {
 }
 
 /**
+ * CoinGecko coin page for a token, when one is known.
+ *
+ * Callers build their own anchor element around this -- the surrounding markup
+ * differs per call site -- but the id lookup and URL shape live here.
+ *
+ * @param {string} address - Token address
+ * @returns {string|null} Coin page URL, or null when the token is unlisted
+ */
+function coinGeckoUrl(address) {
+  if (typeof address !== "string") return null;
+  const id = COINGECKO_ID_MAP[address.toLowerCase()];
+  return id ? "https://www.coingecko.com/en/coins/" + id : null;
+}
+
+/**
+ * Human-readable price of one denominator token in numerator tokens.
+ *
+ * Both amounts are in base units, so the decimals of each side have to be
+ * divided back out; doing that as a single power-of-ten factor keeps the whole
+ * thing to one floating-point operation.
+ *
+ * @param {string|bigint} amountNum - Numerator amount, in base units
+ * @param {string|bigint} amountDen - Denominator amount, in base units
+ * @param {number} decNum - Decimals of the numerator token
+ * @param {number} decDen - Decimals of the denominator token
+ * @returns {number} Price, or 0 when the denominator is zero
+ */
+function priceRatio(amountNum, amountDen, decNum, decDen) {
+  const den = BigInt(amountDen);
+  if (den === 0n) return 0;
+  return (Number(BigInt(amountNum)) / Number(den)) * Math.pow(10, decDen - decNum);
+}
+
+/**
  * Calculates the market rate deviation for an order.
  * @param {Object} order - Order with tokenA/tokenB and amounts
  * @param {function} getPriceFn - Function to get token price
@@ -324,16 +358,23 @@ function calculateMarketDeviation(order, getPriceFn) {
 
 /**
  * Searches tokens by symbol or name.
+ *
+ * `prepend` seeds the result list before the matching passes run, so a caller
+ * can surface an entry that is not in `tokenList` at all -- the app uses it for
+ * native ETH, which has no token-list entry. Seeded entries count toward
+ * `limit` like any other result.
+ *
  * @param {string} query - Search query
  * @param {Array} tokenList - List of tokens to search
  * @param {number} limit - Max results
+ * @param {Array} [prepend] - Tokens to place ahead of the matches
  * @returns {Array} Matching tokens
  */
-function searchTokens(query, tokenList, limit = 10) {
+function searchTokens(query, tokenList, limit = 10, prepend = []) {
   if (!query || query.length < 1) return [];
 
   const q = query.toLowerCase();
-  const results = [];
+  const results = [...prepend];
 
   // Exact symbol matches first
   for (const t of tokenList) {
@@ -362,6 +403,24 @@ function searchTokens(query, tokenList, limit = 10) {
   }
 
   return results;
+}
+
+// ============================================================================
+// Order Helpers
+// ============================================================================
+
+/**
+ * The lifecycle state of an order, as one word.
+ *
+ * An order is open while `active`; once it is not, a recorded taker is what
+ * separates a fill from a cancellation.
+ *
+ * @param {Object} order - Order with `active` and `taker`
+ * @returns {"Open"|"Filled"|"Cancelled"}
+ */
+function orderStatus(order) {
+  if (order.active) return "Open";
+  return order.taker ? "Filled" : "Cancelled";
 }
 
 // ============================================================================
@@ -432,9 +491,8 @@ function getWatchedOrders(storage) {
  */
 function watchOrder(order, storage) {
   const watched = getWatchedOrders(storage);
-  const status = order.active ? "Open" : order.taker ? "Filled" : "Cancelled";
   watched[order.orderId] = {
-    status: status,
+    status: orderStatus(order),
     symbol: order.tokenA.symbol + "/" + order.tokenB.symbol,
   };
   try {
@@ -1132,17 +1190,55 @@ function summarizeFillBatch(orders) {
 // Browser: expose on window.SwapboardLib for use by app.js IIFE
 if (typeof window !== "undefined") {
   window.SwapboardLib = {
+    // Config
+    CONFIG,
+    EXPECTED_CHAIN_ID,
+
     // Utility functions
     escapeHtml,
     isValidAddress,
     truncateAddress,
+    getOrderIdFromHash,
+    getOrderShareUrl,
 
     // Formatting
     formatUsd,
     formatAmount,
+    formatNumber,
 
     // Price registry
     COINGECKO_ID_MAP,
+    coinGeckoUrl,
+    priceRatio,
+    getCachedPrice,
+    getTokenPrice,
+    calculateMarketDeviation,
+
+    // Token search
+    searchTokens,
+
+    // Order helpers
+    orderStatus,
+
+    // localStorage
+    RECENT_TOKENS_KEY,
+    MAX_RECENT_TOKENS,
+    FILTERS_KEY,
+    SORT_KEY,
+    WATCHED_ORDERS_KEY,
+    getRecentTokens,
+    addRecentToken,
+    getWatchedOrders,
+    watchOrder,
+    unwatchOrder,
+    isOrderWatched,
+    saveFilterPreferences,
+    loadFilterPreferences,
+    saveSortPreferences,
+    loadSortPreferences,
+
+    // Config validation
+    validateConfig,
 
     // Protocol version
     VERSION_STORAGE_KEY,
@@ -1203,10 +1299,15 @@ if (typeof module !== "undefined" && module.exports) {
     // Price functions
     getCachedPrice,
     getTokenPrice,
+    coinGeckoUrl,
+    priceRatio,
     calculateMarketDeviation,
 
     // Token search
     searchTokens,
+
+    // Order helpers
+    orderStatus,
 
     // localStorage functions
     RECENT_TOKENS_KEY,

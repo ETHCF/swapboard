@@ -21,8 +21,11 @@ const {
   parseAmount,
   getCachedPrice,
   getTokenPrice,
+  coinGeckoUrl,
+  priceRatio,
   calculateMarketDeviation,
   searchTokens,
+  orderStatus,
   RECENT_TOKENS_KEY,
   MAX_RECENT_TOKENS,
   FILTERS_KEY,
@@ -1164,6 +1167,132 @@ describe("searchTokens", () => {
 // ============================================================================
 // localStorage: Recent Tokens
 // ============================================================================
+
+describe("searchTokens prepend", () => {
+  const LIST = [
+    { symbol: "WETH", name: "Wrapped Ether" },
+    { symbol: "ETHFI", name: "ether.fi" },
+    { symbol: "USDC", name: "USD Coin" },
+  ];
+  const ETH = { symbol: "ETH", name: "Ether" };
+
+  // MUTATION: Append the seed instead of prepending it
+  // BREAKS: Native ETH sorts below WETH in the token dropdown
+  test("seeded entries come first", () => {
+    const results = searchTokens("eth", LIST, 10, [ETH]);
+    expect(results[0]).toBe(ETH);
+  });
+
+  // MUTATION: Exclude the seed from the limit count
+  // BREAKS: The dropdown renders one row more than it was asked for
+  test("seeded entries count toward the limit", () => {
+    expect(searchTokens("eth", LIST, 2, [ETH])).toHaveLength(2);
+  });
+
+  // MUTATION: Default prepend to something other than []
+  // BREAKS: Every existing three-argument caller changes behavior
+  test("omitting prepend leaves behavior unchanged", () => {
+    expect(searchTokens("eth", LIST, 10)).toEqual(searchTokens("eth", LIST, 10, []));
+  });
+
+  // MUTATION: Seed before the empty-query guard
+  // BREAKS: An empty search box shows a lone ETH row
+  test("an empty query returns nothing, seed included", () => {
+    expect(searchTokens("", LIST, 10, [ETH])).toEqual([]);
+  });
+});
+
+// ============================================================================
+// coinGeckoUrl
+// ============================================================================
+
+describe("coinGeckoUrl", () => {
+  // MUTATION: Drop the toLowerCase() before the lookup
+  // BREAKS: Checksummed addresses miss the all-lowercase registry keys
+  test("resolves a listed token regardless of address casing", () => {
+    expect(coinGeckoUrl("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")).toBe(
+      "https://www.coingecko.com/en/coins/weth"
+    );
+    expect(coinGeckoUrl("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")).toBe(
+      "https://www.coingecko.com/en/coins/usd-coin"
+    );
+  });
+
+  // MUTATION: Return the bare URL prefix instead of null for unknown tokens
+  // BREAKS: Unlisted tokens link to a CoinGecko 404
+  test("returns null for a token with no CoinGecko id", () => {
+    expect(coinGeckoUrl("0x1111111111111111111111111111111111111111")).toBeNull();
+  });
+
+  // MUTATION: Skip the typeof guard
+  // BREAKS: Throws on a token whose address never loaded
+  test("returns null rather than throwing on bad input", () => {
+    expect(coinGeckoUrl(null)).toBeNull();
+    expect(coinGeckoUrl(undefined)).toBeNull();
+    expect(coinGeckoUrl(42)).toBeNull();
+  });
+});
+
+// ============================================================================
+// priceRatio
+// ============================================================================
+
+describe("priceRatio", () => {
+  // MUTATION: Flip the sign of the decimals exponent
+  // BREAKS: A WETH/USDC price comes out as 1e-24 instead of ~2000
+  test("scales the decimals of both sides back out", () => {
+    // 1 WETH (18dp) for 2000 USDC (6dp) -> 2000 USDC per WETH
+    const price = priceRatio("2000000000", "1000000000000000000", 6, 18);
+    expect(price).toBeCloseTo(2000, 6);
+  });
+
+  // MUTATION: Drop the exponent entirely
+  // BREAKS: Same-decimal pairs happen to pass, so this pins the equal case too
+  test("needs no scaling when both sides share decimals", () => {
+    expect(priceRatio("300", "100", 18, 18)).toBeCloseTo(3, 9);
+  });
+
+  // MUTATION: Divide anyway when the denominator is zero
+  // BREAKS: Returns Infinity/NaN, which sorts ahead of every real price
+  test("returns 0 for an empty denominator", () => {
+    expect(priceRatio("100", "0", 18, 18)).toBe(0);
+  });
+
+  // MUTATION: Accept Numbers only
+  // BREAKS: Subgraph amounts arrive as strings and overflow Number precision
+  test("accepts base units as strings or bigints", () => {
+    expect(priceRatio(300n, 100n, 18, 18)).toBeCloseTo(3, 9);
+  });
+});
+
+// ============================================================================
+// orderStatus
+// ============================================================================
+
+describe("orderStatus", () => {
+  // MUTATION: Return "Filled" for an active order
+  // BREAKS: Open orders show as filled and fire spurious watch notifications
+  test("an active order is Open", () => {
+    expect(orderStatus({ active: true, taker: null })).toBe("Open");
+  });
+
+  // MUTATION: Check `active` only
+  // BREAKS: Filled and cancelled orders become indistinguishable
+  test("an inactive order with a taker is Filled", () => {
+    expect(orderStatus({ active: false, taker: "0xabc" })).toBe("Filled");
+  });
+
+  test("an inactive order with no taker is Cancelled", () => {
+    expect(orderStatus({ active: false, taker: null })).toBe("Cancelled");
+    expect(orderStatus({ active: false, taker: "" })).toBe("Cancelled");
+  });
+
+  // MUTATION: Test `taker` before `active`
+  // BREAKS: An active order that already has a taker recorded reads as Filled
+  test("active wins over a recorded taker", () => {
+    expect(orderStatus({ active: true, taker: "0xabc" })).toBe("Open");
+  });
+});
 
 describe("getRecentTokens / addRecentToken", () => {
   // MUTATION: Return null instead of []

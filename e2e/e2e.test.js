@@ -386,11 +386,12 @@ async function runTests() {
 
   // Create test config for frontend
   const frontendDir = join(__dirname, "..", "frontend");
-  const appJsPath = join(frontendDir, "app.js");
-  const appJsOriginal = readFileSync(appJsPath, "utf-8");
+  // CONFIG lives in lib.js only; app.js imports it from there.
+  const libJsPath = join(frontendDir, "lib.js");
+  const libJsOriginal = readFileSync(libJsPath, "utf-8");
 
   // Inject test config
-  const appJsTest = appJsOriginal
+  const libJsTest = libJsOriginal
     .replace(
       /CONTRACT_ADDRESS:\s*"[^"]*"/,
       `CONTRACT_ADDRESS: "${CONFIG.CONTRACT_ADDR}"`
@@ -399,7 +400,7 @@ async function runTests() {
       /SUBGRAPH_URL:\s*"[^"]*"/,
       `SUBGRAPH_URL: "${CONFIG.SUBGRAPH_URL}"`
     );
-  writeFileSync(appJsPath, appJsTest);
+  writeFileSync(libJsPath, libJsTest);
 
   try {
     // Allow file:// pages to fetch the local subgraph (CORS / opaque origin)
@@ -454,8 +455,8 @@ async function runTests() {
 
     await browser.close();
   } finally {
-    // Restore original app.js
-    writeFileSync(appJsPath, appJsOriginal);
+    // Restore original lib.js
+    writeFileSync(libJsPath, libJsOriginal);
   }
 
   // ========== Summary ==========
