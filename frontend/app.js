@@ -17,12 +17,8 @@
 (function () {
   "use strict";
 
-  // Import shared utilities from lib.js (loaded before app.js).
-  //
-  // `Lib` is kept as a namespace as well as destructured: helpers that lib.js
-  // parameterizes over storage, a price cache, or the current URL are wrapped
-  // below in one-line bindings that supply this module's versions of those, and
-  // those wrappers reuse the imported name.
+  // Shared utilities from lib.js (loaded before app.js). `Lib` stays available as
+  // a namespace for the wrappers below that bind storage, caches and location.
   const Lib = window.SwapboardLib || {};
 
   const {
@@ -66,10 +62,7 @@
   // Configuration
   // ============================================================================
 
-  // CONFIG and EXPECTED_CHAIN_ID are imported from lib.js above. They used to be
-  // declared here too, byte for byte, which meant deploy.sh only ever rewrote
-  // one of the two copies -- lib.js shipped carrying pre-deploy values.
-  // deploy.sh now patches lib.js, the single definition.
+  // CONFIG and EXPECTED_CHAIN_ID come from lib.js, which is what deploy.sh patches.
   const EXPECTED_CHAIN = {
     chainId: "0x1",
     chainName: "Ethereum",
@@ -751,8 +744,7 @@
   function searchTokens(query, limit = 10) {
     if (!query || query.length < 1) return [];
 
-    // Native ETH is not in the token list -- it has no ERC20 entry to be in --
-    // so it is seeded ahead of the matches rather than found among them.
+    // Native ETH has no ERC20 entry, so it is seeded rather than matched
     const eth = getEthToken();
     const prepend = eth && "eth".startsWith(query.toLowerCase()) ? [eth] : [];
 
@@ -1146,13 +1138,8 @@
   }
 
   /**
-   * `parseAmount` that reports a rejection instead of throwing.
-   *
-   * lib.js's parseAmount rejects malformed input, and dust that would round to
-   * zero at the token's precision, by throwing — the messages are worth
-   * keeping, but every caller here is an input listener or a form collector
-   * where an escaped throw means a dead control rather than a visible error.
-   *
+   * `parseAmount` that reports a rejection instead of throwing, for input
+   * listeners and form collectors where an escaped throw means a dead control.
    * @param {string} str - User-entered amount
    * @param {number} decimals - Token decimals
    * @returns {{amount: bigint|null, error: string|null}} Parsed amount, or the
@@ -1208,12 +1195,8 @@
   }
 
   /**
-   * Sorts orders array based on current sort state.
-   *
-   * lib.js owns the comparator; the two things it cannot know -- live token
-   * prices, and this app's rule for which side of a pair to quote -- are passed
-   * in.
-   *
+   * Sorts orders array based on current sort state. lib.js owns the comparator;
+   * live prices and the quote-side rule are passed in.
    * @param {Array} orders - Orders array from subgraph
    * @returns {Array} Sorted orders array
    */

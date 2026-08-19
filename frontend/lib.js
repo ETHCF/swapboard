@@ -179,17 +179,8 @@ function formatNumber(num) {
 }
 
 /**
- * Formats a timestamp as relative time.
- *
- * Stays relative all the way out rather than falling back to a locale date:
- * "2mo ago" answers the question the order table is actually asking, and a
- * date would need the reader to do the subtraction themselves.
- *
- * Subgraph timestamps arrive as strings, so they are coerced here rather than
- * at each call site. A missing timestamp renders as nothing at all -- an order
- * with no `filledAt` has no fill time to show, and treating the absence as 0
- * would date it to the Unix epoch.
- *
+ * Formats a timestamp as relative time, staying relative rather than falling
+ * back to a date. Subgraph timestamps arrive as strings, so they are coerced here.
  * @param {number|string} timestamp - Unix timestamp in seconds
  * @returns {string} Relative time string, or "" when there is no timestamp
  */
@@ -200,8 +191,8 @@ function formatTimeAgo(timestamp) {
   const ts = typeof timestamp === "string" ? parseInt(timestamp) : timestamp;
   const diff = now - ts;
 
-  // A timestamp ahead of the local clock means clock skew, not the future.
-  if (diff < 0) return "just now";
+  if (diff < 0) return "just now"; // Clock skew, not the future
+
   if (diff < 60) return diff + "s ago";
   if (diff < 3600) return Math.floor(diff / 60) + "m ago";
   if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
@@ -234,26 +225,14 @@ function formatRatio(num) {
 
 /**
  * Parses a human-readable amount string to base units.
- *
- * Rejects by throwing rather than returning a sentinel: the two rejection
- * cases have genuinely different causes, and the messages are what the form
- * shows the user. Callers that cannot let a throw escape -- input listeners,
- * form collectors -- wrap this in a try/catch and surface `e.message`.
- *
- * Truncation of excess decimals is silent *unless* it would take the whole
- * amount to zero, which is the case worth naming: typing 0.0000001 of a
- * 6-decimal token is not a rounding matter, it is an amount that token cannot
- * express. A non-zero integer part means the extra digits are only dust, so
- * those truncate quietly.
- *
+ * Excess decimals truncate silently unless that would zero the whole amount.
  * @param {string} str - Amount string (e.g., "100.5", "1,000")
  * @param {number} decimals - Token decimals
  * @returns {bigint} Amount in base units; an empty or blank string is 0
  * @throws {Error} On malformed input, or on dust that truncates away entirely
  */
 function parseAmount(str, decimals) {
-  // Guard before .trim() so a non-string rejects the same way any other
-  // malformed input does, rather than escaping as a TypeError.
+  // Guard before .trim() so a non-string rejects rather than throwing TypeError
   if (typeof str !== "string") {
     throw new Error("Invalid amount format. Use numbers only.");
   }
@@ -313,10 +292,7 @@ function getTokenPrice(tokenAddress, cache, ttlMs) {
 
 /**
  * CoinGecko coin page for a token, when one is known.
- *
- * Callers build their own anchor element around this -- the surrounding markup
- * differs per call site -- but the id lookup and URL shape live here.
- *
+ * Callers build their own anchor element; only the lookup and URL shape live here.
  * @param {string} address - Token address
  * @returns {string|null} Coin page URL, or null when the token is unlisted
  */
@@ -328,11 +304,7 @@ function coinGeckoUrl(address) {
 
 /**
  * Human-readable price of one denominator token in numerator tokens.
- *
- * Both amounts are in base units, so the decimals of each side have to be
- * divided back out; doing that as a single power-of-ten factor keeps the whole
- * thing to one floating-point operation.
- *
+ * Both sides are base units, so their decimals divide back out as one factor.
  * @param {string|bigint} amountNum - Numerator amount, in base units
  * @param {string|bigint} amountDen - Denominator amount, in base units
  * @param {number} decNum - Decimals of the numerator token
@@ -388,12 +360,8 @@ function calculateMarketDeviation(order, getPriceFn) {
 
 /**
  * Searches tokens by symbol or name.
- *
- * `prepend` seeds the result list before the matching passes run, so a caller
- * can surface an entry that is not in `tokenList` at all -- the app uses it for
- * native ETH, which has no token-list entry. Seeded entries count toward
- * `limit` like any other result.
- *
+ * `prepend` seeds entries that are not in `tokenList` at all (the app uses it for
+ * native ETH); seeded entries count toward `limit` like any other result.
  * @param {string} query - Search query
  * @param {Array} tokenList - List of tokens to search
  * @param {number} limit - Max results
@@ -441,10 +409,7 @@ function searchTokens(query, tokenList, limit = 10, prepend = []) {
 
 /**
  * The lifecycle state of an order, as one word.
- *
- * An order is open while `active`; once it is not, a recorded taker is what
- * separates a fill from a cancellation.
- *
+ * Once an order is inactive, a recorded taker separates a fill from a cancel.
  * @param {Object} order - Order with `active` and `taker`
  * @returns {"Open"|"Filled"|"Cancelled"}
  */
@@ -618,7 +583,6 @@ function loadSortPreferences(storage) {
 
 /**
  * The price of an order in the direction the Price column quotes it.
- *
  * @param {Object} order - Order with tokenA/tokenB and amounts
  * @param {function(string, string): ("A"|"B"|null)} quoteSideFn - Picks the quote side
  * @returns {number} Price in the quoted direction, or 0 when a side is empty
@@ -632,17 +596,9 @@ function quotedPrice(order, quoteSideFn) {
 
 /**
  * Sorts orders by the specified column and direction.
- *
- * Amounts are compared in human units, not base units: base units are not
- * comparable across tokens of differing precision, and 1 WETH would otherwise
- * outrank 5,000 USDC by nine orders of magnitude on a column labelled "Amount".
- *
- * The USD and Price columns need data this module does not hold -- live prices,
- * and the app's rule for which side of a pair to quote. Both arrive as
- * functions. Their defaults are the same no-data answers the app itself
- * produces before prices have loaded: unpriced orders sink to the bottom of
- * USD Val, and Price falls back to its default wanted-per-offered direction.
- *
+ * Amounts compare in human units, since base units are not comparable across
+ * tokens of differing precision. The defaults for the two injected functions
+ * match what the app produces before prices load.
  * @param {Array} orders - Orders to sort
  * @param {string} column - Column to sort by
  * @param {string} direction - 'asc' or 'desc'
@@ -730,12 +686,8 @@ const ERROR_SIGNATURES = {
 };
 
 /**
- * User-facing text per contract error.
- *
- * A function receives the decoded arguments, so an error that carries an order
- * id can name it. Plain strings are used where the arguments add nothing a
- * user could act on.
- *
+ * User-facing text per contract error. A function receives the decoded
+ * arguments, so an error carrying an order id can name it.
  * @constant {Object<string, string|function(bigint[]): string>}
  */
 const ERROR_MESSAGES = {
@@ -755,13 +707,8 @@ const ERROR_MESSAGES = {
 };
 
 /**
- * Splits ABI-encoded error arguments into 32-byte words.
- *
- * Every argument this contract's errors carry is a uint256 or an address, and
- * both occupy exactly one word with no offset indirection, so the words can be
- * read positionally. That keeps the decoder free of an ABI coder -- and so free
- * of any dependency on ethers being loaded.
- *
+ * Splits ABI-encoded error arguments into 32-byte words. Every argument these
+ * errors carry is a uint256 or address, so words read positionally with no ABI coder.
  * @param {string} data - Error data hex string, selector included
  * @returns {bigint[]} One bigint per word; addresses come back as numbers too
  */
@@ -780,11 +727,7 @@ function decodeErrorArgs(data) {
 
 /**
  * Decodes a contract error from its revert data.
- *
- * Matches on the 4-byte selector rather than parsing against an ABI: the
- * selectors are fixed by the contract and this way the decoder stays pure, so
- * it works before ethers has loaded and can be tested without it.
- *
+ * Matches the 4-byte selector rather than an ABI, so it needs no ethers.
  * @param {string} data - Error data hex string
  * @returns {{name: string, message: string}|null} Null when unrecognized
  */
@@ -805,12 +748,7 @@ function decodeContractError(data) {
 
 /**
  * Revert data out of an exception, wherever the provider happened to put it.
- *
- * ethers v6 surfaces it in three different places depending on how the call
- * failed, and some providers only ever put it in the message text. Checking
- * all four is the difference between naming the contract error and falling
- * back to a generic failure message.
- *
+ * ethers v6 uses three different fields, and some providers only the message text.
  * @param {Error} e - Exception object
  * @returns {string|null} Hex revert data, or null when none is present
  */
@@ -823,11 +761,8 @@ function extractRevertData(e) {
 }
 
 /**
- * Provider and RPC failures that carry no revert data, matched on their text.
- *
- * Ordered most specific first: "insufficient allowance" has to be tested
- * before the bare "insufficient" that would otherwise swallow it.
- *
+ * Provider and RPC failures with no revert data, matched on their text.
+ * Ordered most specific first: "allowance" must precede the bare "insufficient".
  * @constant {Array<{test: function(string): boolean, message: string}>}
  */
 const ERROR_PATTERNS = [
@@ -874,19 +809,10 @@ const ERROR_PATTERNS = [
 const MAX_SHORT_MESSAGE = 100;
 
 /**
- * Turns a transaction exception into something worth showing a user.
- *
- * Resolution order, most trustworthy signal first:
- *   1. Revert data -- the contract said exactly what went wrong.
- *   2. Error codes -- EIP-1193 `4001` and ethers' `ACTION_REJECTED` identify a
- *      user rejection structurally, without depending on the wallet's wording.
- *   3. A `reason="..."` string, which is a require() message from the chain.
- *   4. Text patterns, for provider failures that carry no structured signal.
- *   5. `shortMessage`, but only if it is short enough to read.
- *
- * Never falls through to the raw `message`: an unmatched ethers error is a
- * multi-line string with a docs URL in it, which is noise in a toast.
- *
+ * Turns a transaction exception into something worth showing a user, trying the
+ * most trustworthy signal first: revert data, then error codes, then a
+ * `reason="..."` string, then text patterns, then a short-enough `shortMessage`.
+ * Never falls through to the raw `message`, which is multi-line ethers noise.
  * @param {Error} e - Exception object
  * @returns {string} User-friendly error message
  */
@@ -896,8 +822,7 @@ function parseContractError(e) {
   const decoded = decodeContractError(extractRevertData(e));
   if (decoded) return decoded.message;
 
-  // Structural rejection checks come before any text matching: a wallet that
-  // reports code 4001 with terse wording is still a user rejection.
+  // Before any text matching: a terse code-4001 wallet is still a rejection
   if (e.code === 4001 || e.code === "ACTION_REJECTED") {
     return "Transaction cancelled";
   }
@@ -907,8 +832,7 @@ function parseContractError(e) {
     return "Transaction cancelled";
   }
 
-  // A require() string from the chain names the failure better than anything
-  // matched below it.
+  // A require() string from the chain beats anything matched below it
   const reasonMatch = (e.message || "").match(/reason="([^"]+)"/);
   if (reasonMatch) return reasonMatch[1];
 
