@@ -35,6 +35,8 @@
     formatUsd,
     formatAmount,
     formatNumber,
+    formatTimeAgo,
+    formatRatio,
     parseAmount,
     orderStatus,
     COINGECKO_ID_MAP,
@@ -1140,39 +1142,6 @@
       }
     });
     return btn;
-  }
-
-  /**
-   * Formats a timestamp as relative time (e.g., "2h ago", "3d ago").
-   * @param {number|string} timestamp - Unix timestamp in seconds
-   * @returns {string} Relative time string
-   */
-  function formatTimeAgo(timestamp) {
-    if (!timestamp) return "";
-
-    const now = Math.floor(Date.now() / 1000);
-    const ts = typeof timestamp === "string" ? parseInt(timestamp) : timestamp;
-    const diff = now - ts;
-
-    if (diff < 0) return "just now";
-    if (diff < 60) return diff + "s ago";
-    if (diff < 3600) return Math.floor(diff / 60) + "m ago";
-    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
-    if (diff < 604800) return Math.floor(diff / 86400) + "d ago";
-    if (diff < 2592000) return Math.floor(diff / 604800) + "w ago";
-    return Math.floor(diff / 2592000) + "mo ago";
-  }
-
-  function formatRatio(num) {
-    if (num >= 1000) {
-      return num.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    } else if (num >= 1) {
-      return num.toFixed(2);
-    } else if (num >= 0.0001) {
-      return num.toFixed(6);
-    } else {
-      return num.toExponential(2);
-    }
   }
 
   /**

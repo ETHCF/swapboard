@@ -180,20 +180,34 @@ function formatNumber(num) {
 
 /**
  * Formats a timestamp as relative time.
- * @param {number} timestamp - Unix timestamp in seconds
- * @returns {string} Relative time string
+ *
+ * Stays relative all the way out rather than falling back to a locale date:
+ * "2mo ago" answers the question the order table is actually asking, and a
+ * date would need the reader to do the subtraction themselves.
+ *
+ * Subgraph timestamps arrive as strings, so they are coerced here rather than
+ * at each call site. A missing timestamp renders as nothing at all -- an order
+ * with no `filledAt` has no fill time to show, and treating the absence as 0
+ * would date it to the Unix epoch.
+ *
+ * @param {number|string} timestamp - Unix timestamp in seconds
+ * @returns {string} Relative time string, or "" when there is no timestamp
  */
 function formatTimeAgo(timestamp) {
-  const now = Math.floor(Date.now() / 1000);
-  const diff = now - timestamp;
+  if (!timestamp) return "";
 
-  if (diff < 60) return "just now";
+  const now = Math.floor(Date.now() / 1000);
+  const ts = typeof timestamp === "string" ? parseInt(timestamp) : timestamp;
+  const diff = now - ts;
+
+  // A timestamp ahead of the local clock means clock skew, not the future.
+  if (diff < 0) return "just now";
+  if (diff < 60) return diff + "s ago";
   if (diff < 3600) return Math.floor(diff / 60) + "m ago";
   if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
   if (diff < 604800) return Math.floor(diff / 86400) + "d ago";
-
-  const date = new Date(timestamp * 1000);
-  return date.toLocaleDateString();
+  if (diff < 2592000) return Math.floor(diff / 604800) + "w ago";
+  return Math.floor(diff / 2592000) + "mo ago";
 }
 
 /**
@@ -1221,6 +1235,8 @@ if (typeof window !== "undefined") {
     formatUsd,
     formatAmount,
     formatNumber,
+    formatTimeAgo,
+    formatRatio,
     parseAmount,
 
     // Price registry

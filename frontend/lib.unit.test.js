@@ -453,55 +453,73 @@ describe("formatNumber", () => {
 describe("formatTimeAgo", () => {
   const now = Math.floor(Date.now() / 1000);
 
-  // MUTATION: Change threshold from 60 to 30
-  // BREAKS: 45 seconds ago shows "0m ago" instead of "just now"
-  test("shows just now for timestamps within 60 seconds", () => {
-    expect(formatTimeAgo(now - 1)).toBe("just now");
-    expect(formatTimeAgo(now - 59)).toBe("just now");
-    expect(formatTimeAgo(now - 60)).toBe("1m ago"); // Exactly 60 = 1m
+  // MUTATION: Drop the seconds bucket, folding it into "just now"
+  // BREAKS: A just-placed order reads as ageless while it is the freshest row
+  test("shows seconds under a minute", () => {
+    expect(formatTimeAgo(now - 1)).toBe("1s ago");
+    expect(formatTimeAgo(now - 45)).toBe("45s ago");
+    expect(formatTimeAgo(now - 59)).toBe("59s ago");
   });
 
   // MUTATION: Divide by 3600 instead of 60 for minutes
   // BREAKS: 120 seconds shows "0h ago" instead of "2m ago"
-  test("shows minutes for timestamps 1-59 minutes ago", () => {
-    expect(formatTimeAgo(now - 60)).toBe("1m ago");
+  test("shows minutes for 1-59 minutes ago", () => {
+    expect(formatTimeAgo(now - 60)).toBe("1m ago"); // Exactly 60 = 1m
     expect(formatTimeAgo(now - 120)).toBe("2m ago");
     expect(formatTimeAgo(now - 3540)).toBe("59m ago");
   });
 
   // MUTATION: Change hour threshold from 86400 to 43200
   // BREAKS: 13 hours shows "1d ago" instead of "13h ago"
-  test("shows hours for timestamps 1-23 hours ago", () => {
+  test("shows hours for 1-23 hours ago", () => {
     expect(formatTimeAgo(now - 3600)).toBe("1h ago");
     expect(formatTimeAgo(now - 7200)).toBe("2h ago");
     expect(formatTimeAgo(now - 82800)).toBe("23h ago");
   });
 
   // MUTATION: Change day threshold from 604800 to 172800
-  // BREAKS: 3 days shows formatted date instead of "3d ago"
-  test("shows days for timestamps 1-6 days ago", () => {
+  // BREAKS: 3 days jumps straight to weeks
+  test("shows days for 1-6 days ago", () => {
     expect(formatTimeAgo(now - 86400)).toBe("1d ago");
     expect(formatTimeAgo(now - 172800)).toBe("2d ago");
     expect(formatTimeAgo(now - 518400)).toBe("6d ago");
   });
 
-  // MUTATION: Continue showing "Xd ago" for all past dates
-  // BREAKS: Would show "365d ago" instead of a date
-  test("shows formatted date for timestamps >= 7 days ago", () => {
-    const result = formatTimeAgo(now - 604800); // Exactly 7 days
-    expect(result).not.toContain("ago");
-    expect(result).toMatch(/\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2}\.\d{1,2}\.\d{4}/); // Date format
+  // MUTATION: Fall back to a locale date at 7 days
+  // BREAKS: The age column mixes relative ages with absolute dates
+  test("shows weeks from 7 days to 30 days", () => {
+    expect(formatTimeAgo(now - 604800)).toBe("1w ago"); // Exactly 7 days
+    expect(formatTimeAgo(now - 1209600)).toBe("2w ago");
+    expect(formatTimeAgo(now - 2591999)).toBe("4w ago");
   });
 
-  // MUTATION: Change timestamp * 1000 to timestamp / 1000
-  // BREAKS: Date would be near 1970 instead of the actual date
-  test("multiplies timestamp by 1000 for Date constructor (* not /)", () => {
-    // 7 days ago should show a date in the current year (or last year at boundary)
-    const result = formatTimeAgo(now - 604800);
-    const currentYear = new Date().getFullYear();
-    const lastYear = currentYear - 1;
-    // The date string should contain the current or last year, not 1970
-    expect(result).toMatch(new RegExp(`(${currentYear}|${lastYear})`));
+  // MUTATION: Cap the scale at weeks
+  // BREAKS: A year-old order reads as "52w ago"
+  test("shows months beyond 30 days, and stays relative indefinitely", () => {
+    expect(formatTimeAgo(now - 2592000)).toBe("1mo ago"); // Exactly 30 days
+    expect(formatTimeAgo(now - 5184000)).toBe("2mo ago");
+    expect(formatTimeAgo(now - 31536000)).toBe("12mo ago"); // A year
+  });
+
+  // MUTATION: Remove the falsy guard
+  // BREAKS: An unfilled order's absent filledAt renders as 12/31/1969
+  test("renders nothing when there is no timestamp", () => {
+    expect(formatTimeAgo(null)).toBe("");
+    expect(formatTimeAgo(undefined)).toBe("");
+    expect(formatTimeAgo(0)).toBe("");
+  });
+
+  // MUTATION: Drop the string coercion
+  // BREAKS: Subgraph timestamps arrive as strings; "now - str" is NaN
+  test("accepts the string timestamps the subgraph returns", () => {
+    expect(formatTimeAgo(String(now - 7200))).toBe("2h ago");
+    expect(formatTimeAgo(String(now - 172800))).toBe("2d ago");
+  });
+
+  // MUTATION: Let a negative diff fall through to the seconds bucket
+  // BREAKS: Clock skew renders as "-3s ago"
+  test("treats a timestamp ahead of the clock as just now", () => {
+    expect(formatTimeAgo(now + 300)).toBe("just now");
   });
 });
 
