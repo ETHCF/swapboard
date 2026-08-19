@@ -49,7 +49,7 @@ contract DeployTest is Test {
         vm.deal(maker, 1 ether);
 
         vm.prank(maker);
-        uint256 orderId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6);
+        uint256 orderId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6, false);
 
         ISwapboard.Order memory order = board.getOrder(orderId);
         assertEq(order.maker, maker);
@@ -57,6 +57,8 @@ contract DeployTest is Test {
         assertEq(order.amountA, 1 ether);
         assertEq(order.tokenB, address(token));
         assertEq(order.amountB, 100e6);
+        assertEq(order.availableA, 1 ether);
+        assertEq(order.availableB, 100e6);
         assertTrue(order.active);
         assertEq(board.getNextOrderId(), 1);
         assertEq(address(board).balance, 1 ether);
@@ -74,15 +76,15 @@ contract DeployTest is Test {
         token.mint(taker, 200e6);
 
         vm.startPrank(maker);
-        uint256 fillId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6);
-        uint256 cancelId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6);
+        uint256 fillId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6, false);
+        uint256 cancelId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6, false);
         vm.stopPrank();
 
         assertEq(address(board).balance, 2 ether);
 
         vm.startPrank(taker);
         token.approve(address(board), 100e6);
-        board.fillOrder(fillId, 0);
+        board.fillOrder(fillId, 1 ether, 0);
         vm.stopPrank();
 
         assertFalse(board.canFill(fillId));
@@ -112,13 +114,13 @@ contract DeployTest is Test {
 
         vm.startPrank(maker);
         token.approve(address(board), 100e6);
-        uint256 orderId = board.createOrder(address(token), 100e6, eth, 1 ether);
+        uint256 orderId = board.createOrder(address(token), 100e6, eth, 1 ether, false);
         vm.stopPrank();
 
         uint256 makerEthBefore = maker.balance;
 
         vm.prank(taker);
-        board.fillOrder{value: 1 ether}(orderId, 0);
+        board.fillOrder{value: 1 ether}(orderId, 100e6, 0);
 
         assertFalse(board.canFill(orderId));
         assertEq(maker.balance, makerEthBefore + 1 ether);

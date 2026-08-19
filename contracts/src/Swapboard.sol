@@ -15,9 +15,12 @@ import {Semver} from "./Semver.sol";
 ///
 ///      Key properties:
 ///      - No admin functions, fees, or upgrades
-///      - Orders are filled atomically (all-or-nothing)
+///      - Full fills are atomic; partial fills are opt-in via `partialFillAllowed`
+///      - Partial fill size is specified as tokenA to receive (`amountA`); tokenB paid is ceiled
 ///      - Fee-on-transfer tokens are rejected for tokenA (selling token)
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
+///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
+///        remaining amounts are packed separately so fill % is readable on-chain
 ///      - Reentrancy protected via OpenZeppelin ReentrancyGuardTransient (EIP-1153)
 ///
 ///      Security considerations:
@@ -26,6 +29,9 @@ import {Semver} from "./Semver.sol";
 ///      - Malicious tokens can cause fund loss - users must verify token contracts
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
 ///        can run `receive`/`fallback`; always after state updates (CEI)
+///      - Floor/ceil rounding on partial fills may leave tokenA dust in escrow; refunding that dust
+///        is not worth the gas. It can later benefit a user who rounds favorably on another
+///        fill where that dust token is tokenB
 ///
 /// @custom:security-contact zak@numbergroup.xyz
 contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
@@ -51,9 +57,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ///      addresses are treated as distinct tokens. Users must verify token addresses.
     function createOrder(
         address tokenA,
-        uint256 amountA,
+        uint128 amountA,
         address tokenB,
-        uint256 amountB
+        uint128 amountB,
+        bool partialFillAllowed
     ) external payable nonReentrant returns (uint256 orderId) {
         _validateCreateOrder(tokenA, amountA, tokenB, amountB);
 
@@ -61,6 +68,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             _pullExactToken(tokenA, amountA);
         }
 
+        // Unchecked is safe: order IDs are sequential from 0; wrapping would require 2^256 orders.
         unchecked {
             orderId = _nextOrderId;
 
@@ -68,60 +76,68 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         _orders[orderId] = Order({
-            maker: msg.sender, active: true, tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB
+            maker: msg.sender,
+            active: true,
+            partialFillAllowed: partialFillAllowed,
+            tokenA: tokenA,
+            tokenB: tokenB,
+            amountA: amountA,
+            amountB: amountB,
+            availableA: amountA,
+            availableB: amountB
         });
 
         emit OrderCreated({
-            orderId: orderId, maker: msg.sender, tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB
+            orderId: orderId,
+            maker: msg.sender,
+            tokenA: tokenA,
+            amountA: amountA,
+            tokenB: tokenB,
+            amountB: amountB,
+            partialFillAllowed: partialFillAllowed
         });
     }
 
     /// @inheritdoc ISwapboard
     /// @dev Fee-on-transfer tokenB: maker receives less than amountB. This is maker's risk.
+    ///      tokenB in uses ceil division so the taker never underpays for the requested tokenA.
+    ///      Residual tokenA dust (when amountB is exhausted first) is not refunded (not worth the
+    ///      gas); it can be picked up by any user that rounds favorably on another order where
+    ///      the dust token is tokenB.
     function fillOrder(
         uint256 orderId,
+        uint128 amountA,
         uint256 deadline
     ) external payable nonReentrant {
         if (deadline != 0 && block.timestamp > deadline) {
             revert DeadlineExpired();
         }
+        if (amountA == 0) {
+            revert ZeroAmount();
+        }
 
         Order storage order = _orders[orderId];
+        (address maker, address tokenA, address tokenB, uint128 amountBIn) =
+            _validateAndQuoteFill(order, orderId, amountA);
 
-        (address maker, bool active, address tokenA, uint256 amountA, address tokenB, uint256 amountB) =
-            (order.maker, order.active, order.tokenA, order.amountA, order.tokenB, order.amountB);
-        if (maker == address(0)) {
-            revert OrderNotFound(orderId);
-        }
-        if (!active) {
-            revert OrderNotActive(orderId);
-        }
-
-        uint256 requiredEth = tokenB == _ETH ? amountB : 0;
+        uint256 requiredEth = tokenB == _ETH ? amountBIn : 0;
         if (msg.value != requiredEth) {
             revert ETHAmountMismatch(requiredEth, msg.value);
         }
 
-        order.active = false;
-
-        // Transfer tokenB from taker to maker
-        if (tokenB == _ETH) {
-            // Forward all gas so maker contracts can execute receive/fallback.
-            payable(maker).sendValue(amountB);
-        } else {
-            // Note: If tokenB is fee-on-transfer, maker receives less than amountB
-            IERC20(tokenB).safeTransferFrom(msg.sender, maker, amountB);
+        // Unchecked is safe: _validateAndQuoteFill ensures amountA <= availableA and
+        // amountBIn <= availableB (exact remaining or ceiled proportion).
+        unchecked {
+            order.availableA -= amountA;
+            order.availableB -= amountBIn;
+        }
+        if (order.availableA == 0 || order.availableB == 0) {
+            order.active = false;
         }
 
-        // Transfer tokenA from contract to taker
-        if (tokenA == _ETH) {
-            // Forward all gas so taker contracts can execute receive/fallback.
-            payable(msg.sender).sendValue(amountA);
-        } else {
-            IERC20(tokenA).safeTransfer(msg.sender, amountA);
-        }
+        _transferFill(maker, tokenA, tokenB, amountA, amountBIn);
 
-        emit OrderFilled({orderId: orderId, taker: msg.sender});
+        emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB: amountBIn});
     }
 
     /// @inheritdoc ISwapboard
@@ -130,8 +146,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) external nonReentrant {
         Order storage order = _orders[orderId];
 
-        (address maker, bool active, address tokenA, uint256 amountA) =
-            (order.maker, order.active, order.tokenA, order.amountA);
+        (address maker, bool active, address tokenA, uint128 availableA) =
+            (order.maker, order.active, order.tokenA, order.availableA);
         if (maker == address(0)) {
             revert OrderNotFound(orderId);
         }
@@ -143,12 +159,14 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         order.active = false;
+        order.availableA = 0;
+        order.availableB = 0;
 
         if (tokenA == _ETH) {
             // Forward all gas so maker contracts can execute receive/fallback.
-            payable(maker).sendValue(amountA);
+            payable(maker).sendValue(availableA);
         } else {
-            IERC20(tokenA).safeTransfer(maker, amountA);
+            IERC20(tokenA).safeTransfer(maker, availableA);
         }
 
         emit OrderCanceled({orderId: orderId});
@@ -178,11 +196,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) external view returns (Order[] memory) {
         Order[] memory result = new Order[](orderIds.length);
 
-        for (uint256 i; i < orderIds.length;) {
+        for (uint256 i; i < orderIds.length; ++i) {
             result[i] = _orders[orderIds[i]];
-            unchecked {
-                ++i;
-            }
         }
 
         return result;
@@ -202,9 +217,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param amountB Amount of tokenB required to fill
     function _validateCreateOrder(
         address tokenA,
-        uint256 amountA,
+        uint128 amountA,
         address tokenB,
-        uint256 amountB
+        uint128 amountB
     ) private view {
         if (tokenA == address(0) || tokenB == address(0)) {
             revert ZeroAddress();
@@ -229,6 +244,79 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 requiredEth = tokenAIsEth ? amountA : 0;
         if (msg.value != requiredEth) {
             revert ETHAmountMismatch(requiredEth, msg.value);
+        }
+    }
+
+    /// @notice Validates a fill and quotes the ceiled tokenB payment
+    /// @dev Ceil division benefits escrow/maker. Residual tokenA dust is not refunded.
+    ///      Intermediate math widens to uint256; both factors are uint128 so the product fits.
+    /// @param order Order storage slot to read
+    /// @param orderId Order id for error payloads
+    /// @param amountA Requested tokenA out
+    /// @return maker Order maker
+    /// @return tokenA Sold asset
+    /// @return tokenB Payment asset
+    /// @return amountBIn Ceiled tokenB the taker must pay
+    function _validateAndQuoteFill(
+        Order storage order,
+        uint256 orderId,
+        uint128 amountA
+    ) private view returns (address maker, address tokenA, address tokenB, uint128 amountBIn) {
+        maker = order.maker;
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!order.active) {
+            revert OrderNotActive(orderId);
+        }
+
+        uint128 availableA = order.availableA;
+        if (amountA > availableA) {
+            revert FillAmountTooHigh(orderId, amountA, availableA);
+        }
+        if (!order.partialFillAllowed && amountA != availableA) {
+            revert PartialFillNotAllowed(orderId);
+        }
+
+        tokenA = order.tokenA;
+        tokenB = order.tokenB;
+        uint128 availableB = order.availableB;
+        // Product of two uint128 values always fits in uint256; ceil result is <= availableB.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amountBIn = amountA == availableA
+            ? availableB
+            : uint128((uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA));
+        if (amountBIn == 0) {
+            revert ZeroAmount();
+        }
+    }
+
+    /// @notice Moves tokenB from taker to maker and tokenA from escrow to taker
+    /// @param maker Order maker receiving tokenB
+    /// @param tokenA Sold asset (possibly ETH sentinel)
+    /// @param tokenB Payment asset (possibly ETH sentinel)
+    /// @param amountA tokenA amount to send to the taker
+    /// @param amountBIn tokenB amount to take from the taker
+    function _transferFill(
+        address maker,
+        address tokenA,
+        address tokenB,
+        uint128 amountA,
+        uint128 amountBIn
+    ) private {
+        if (tokenB == _ETH) {
+            // Forward all gas so maker contracts can execute receive/fallback.
+            payable(maker).sendValue(amountBIn);
+        } else {
+            // Note: If tokenB is fee-on-transfer, maker receives less than amountB
+            IERC20(tokenB).safeTransferFrom(msg.sender, maker, amountBIn);
+        }
+
+        if (tokenA == _ETH) {
+            // Forward all gas so taker contracts can execute receive/fallback.
+            payable(msg.sender).sendValue(amountA);
+        } else {
+            IERC20(tokenA).safeTransfer(msg.sender, amountA);
         }
     }
 

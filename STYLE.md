@@ -16,7 +16,7 @@ Enforce formatting with Foundry (`make fmt`) and lint with `make lint` (`forge l
 | --- | --- | --- |
 | Compiler | `0.8.36` (pinned in `foundry.toml`) | Interfaces use `^0.8.0` |
 | Indentation | 4 spaces | Matches the Solidity guide |
-| Line length | **120** | Matches the Solidity guide |
+| Line length | **120** (solhint) | `forge fmt` uses `line_length = 119` (forge can leave +1); solhint `max-line-length` is 120 |
 | Quotes | Double | `forge fmt` |
 | Integers | Explicit width (`uint256`, …) | `int_types = "long"` |
 | Multiline headers | Params first | `multiline_func_header = "params_first"` |
@@ -53,10 +53,13 @@ Always use **named** fields for struct literals and event emits. Never rely on p
 _orders[orderId] = Order({
     maker: msg.sender,
     active: true,
+    partialFillAllowed: partialFillAllowed,
     tokenA: tokenA,
-    amountA: amountA,
     tokenB: tokenB,
-    amountB: amountB
+    amountA: amountA,
+    amountB: amountB,
+    availableA: amountA,
+    availableB: amountB
 });
 
 emit OrderCreated({
@@ -65,10 +68,11 @@ emit OrderCreated({
     tokenA: tokenA,
     amountA: amountA,
     tokenB: tokenB,
-    amountB: amountB
+    amountB: amountB,
+    partialFillAllowed: partialFillAllowed
 });
 
-emit OrderFilled({orderId: orderId, taker: msg.sender});
+emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB: amountBIn});
 ```
 
 Prefer the same style for any other named-argument call sites where Solidity supports them (e.g. nested struct construction).
@@ -94,8 +98,8 @@ Keep separate `if`s when the error encodes different data (e.g. `NotAContract(to
 - **Snapshot storage structs into locals** (tuple unpack) before a sequence of checks/transfers when multiple fields are read:
 
 ```solidity
-(address maker, bool active, address tokenA, uint256 amountA, address tokenB, uint256 amountB) =
-    (order.maker, order.active, order.tokenA, order.amountA, order.tokenB, order.amountB);
+(address maker, bool active, address tokenA, address tokenB, uint128 amountA, uint128 amountB) =
+    (order.maker, order.active, order.tokenA, order.tokenB, order.amountA, order.amountB);
 ```
 
 - Use **named mapping keys**: `mapping(uint256 orderId => Order order)`.
