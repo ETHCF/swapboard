@@ -39,6 +39,9 @@
     COINGECKO_ID_MAP,
     coinGeckoUrl,
     priceRatio,
+    getTokenPrice,
+    fetchPrices,
+    calculateMarketDeviation,
     // Protocol version
     VERSION_STORAGE_KEY,
     SUPPORTED_VERSIONS,
@@ -396,97 +399,6 @@
     if (aEth && !bEth) return "A";
     if (bEth && !aEth) return "B";
     return null;
-  }
-
-  /**
-   * Price cache with TTL tracking.
-   * @type {Map<string, {usd: number, fetchedAt: number}>}
-   */
-  const priceCache = new Map();
-  const PRICE_CACHE_TTL_MS = 60000;
-  let priceFetchInProgress = null;
-
-  /**
-   * Returns cached price if valid, null otherwise.
-   * @param {string} coinGeckoId - CoinGecko coin ID
-   * @returns {{usd: number, fetchedAt: number}|null}
-   */
-  function getCachedPrice(coinGeckoId) {
-    return Lib.getCachedPrice(coinGeckoId, priceCache, PRICE_CACHE_TTL_MS);
-  }
-
-  /**
-   * Fetches prices for multiple CoinGecko IDs in a single request.
-   * Implements rate limiting via request coalescing.
-   * @param {string[]} coinGeckoIds - Array of CoinGecko coin IDs
-   * @returns {Promise<void>}
-   */
-  async function fetchPrices(coinGeckoIds) {
-    const idsToFetch = coinGeckoIds.filter((id) => !getCachedPrice(id));
-    if (idsToFetch.length === 0) return;
-
-    if (priceFetchInProgress) {
-      await priceFetchInProgress;
-      return;
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-    priceFetchInProgress = (async () => {
-      try {
-        const url =
-          "https://api.coingecko.com/api/v3/simple/price?ids=" +
-          idsToFetch.join(",") +
-          "&vs_currencies=usd";
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-
-        if (!res.ok) {
-          if (res.status === 429) {
-            console.warn("[Price] Rate limited by CoinGecko");
-          }
-          return;
-        }
-
-        const data = await res.json();
-        const now = Date.now();
-
-        for (const id of idsToFetch) {
-          if (data[id] && typeof data[id].usd === "number") {
-            priceCache.set(id, { usd: data[id].usd, fetchedAt: now });
-          }
-        }
-      } catch (e) {
-        clearTimeout(timeoutId);
-        if (e.name === "AbortError") {
-          console.warn("[Price] Request timed out");
-        } else {
-          console.warn("[Price] Fetch failed:", e.message);
-        }
-      }
-    })();
-
-    await priceFetchInProgress;
-    priceFetchInProgress = null;
-  }
-
-  /**
-   * Gets USD price for a token address.
-   * @param {string} tokenAddress - Ethereum token address
-   * @returns {number|null} USD price or null if unavailable
-   */
-  function getTokenPrice(tokenAddress) {
-    return Lib.getTokenPrice(tokenAddress, priceCache, PRICE_CACHE_TTL_MS);
-  }
-
-  /**
-   * Calculates the market rate deviation for an order.
-   * @param {Object} order - Order with tokenA/tokenB and amounts
-   * @returns {{deviation: number, label: string}|null} Deviation percentage and label, or null if unavailable
-   */
-  function calculateMarketDeviation(order) {
-    return Lib.calculateMarketDeviation(order, getTokenPrice);
   }
 
   // ============================================================================

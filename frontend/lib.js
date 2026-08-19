@@ -263,13 +263,25 @@ function parseAmount(str, decimals) {
 // ============================================================================
 
 /**
+ * Price cache with TTL tracking, shared by every price lookup in the app.
+ * @type {Map<string, {usd: number, fetchedAt: number}>}
+ */
+const priceCache = new Map();
+
+/** How long a fetched price stays usable. */
+const PRICE_CACHE_TTL_MS = 60000;
+
+/** In-flight fetch, so concurrent callers coalesce onto one request. */
+let priceFetchInProgress = null;
+
+/**
  * Returns cached price if valid, null otherwise.
  * @param {string} coinGeckoId - CoinGecko coin ID
- * @param {Map} cache - Price cache map
- * @param {number} ttlMs - Cache TTL in milliseconds
+ * @param {Map} [cache] - Price cache map
+ * @param {number} [ttlMs] - Cache TTL in milliseconds
  * @returns {{usd: number, fetchedAt: number}|null}
  */
-function getCachedPrice(coinGeckoId, cache, ttlMs) {
+function getCachedPrice(coinGeckoId, cache = priceCache, ttlMs = PRICE_CACHE_TTL_MS) {
   const cached = cache.get(coinGeckoId);
   if (!cached) return null;
   if (Date.now() - cached.fetchedAt > ttlMs) return null;
@@ -279,15 +291,73 @@ function getCachedPrice(coinGeckoId, cache, ttlMs) {
 /**
  * Gets USD price for a token address from cache.
  * @param {string} tokenAddress - Ethereum token address
- * @param {Map} cache - Price cache map
- * @param {number} ttlMs - Cache TTL in milliseconds
+ * @param {Map} [cache] - Price cache map
+ * @param {number} [ttlMs] - Cache TTL in milliseconds
  * @returns {number|null} USD price or null if unavailable
  */
-function getTokenPrice(tokenAddress, cache, ttlMs) {
+function getTokenPrice(tokenAddress, cache = priceCache, ttlMs = PRICE_CACHE_TTL_MS) {
   const id = COINGECKO_ID_MAP[tokenAddress.toLowerCase()];
   if (!id) return null;
   const cached = getCachedPrice(id, cache, ttlMs);
   return cached ? cached.usd : null;
+}
+
+/**
+ * Fetches prices for multiple CoinGecko IDs in a single request.
+ * Implements rate limiting via request coalescing.
+ * @param {string[]} coinGeckoIds - Array of CoinGecko coin IDs
+ * @param {Map} [cache] - Price cache map to populate
+ * @param {number} [ttlMs] - Cache TTL in milliseconds
+ * @returns {Promise<void>}
+ */
+async function fetchPrices(coinGeckoIds, cache = priceCache, ttlMs = PRICE_CACHE_TTL_MS) {
+  const idsToFetch = coinGeckoIds.filter((id) => !getCachedPrice(id, cache, ttlMs));
+  if (idsToFetch.length === 0) return;
+
+  if (priceFetchInProgress) {
+    await priceFetchInProgress;
+    return;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  priceFetchInProgress = (async () => {
+    try {
+      const url =
+        "https://api.coingecko.com/api/v3/simple/price?ids=" +
+        idsToFetch.join(",") +
+        "&vs_currencies=usd";
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        if (res.status === 429) {
+          console.warn("[Price] Rate limited by CoinGecko");
+        }
+        return;
+      }
+
+      const data = await res.json();
+      const now = Date.now();
+
+      for (const id of idsToFetch) {
+        if (data[id] && typeof data[id].usd === "number") {
+          cache.set(id, { usd: data[id].usd, fetchedAt: now });
+        }
+      }
+    } catch (e) {
+      clearTimeout(timeoutId);
+      if (e.name === "AbortError") {
+        console.warn("[Price] Request timed out");
+      } else {
+        console.warn("[Price] Fetch failed:", e.message);
+      }
+    }
+  })();
+
+  await priceFetchInProgress;
+  priceFetchInProgress = null;
 }
 
 /**
@@ -320,10 +390,10 @@ function priceRatio(amountNum, amountDen, decNum, decDen) {
 /**
  * Calculates the market rate deviation for an order.
  * @param {Object} order - Order with tokenA/tokenB and amounts
- * @param {function} getPriceFn - Function to get token price
+ * @param {function} [getPriceFn] - Function to get token price
  * @returns {{deviation: number, label: string}|null} Deviation percentage and label
  */
-function calculateMarketDeviation(order, getPriceFn) {
+function calculateMarketDeviation(order, getPriceFn = getTokenPrice) {
   const priceA = getPriceFn(order.tokenA.address);
   const priceB = getPriceFn(order.tokenB.address);
 
@@ -1321,8 +1391,10 @@ if (typeof window !== "undefined") {
     COINGECKO_ID_MAP,
     coinGeckoUrl,
     priceRatio,
+    PRICE_CACHE_TTL_MS,
     getCachedPrice,
     getTokenPrice,
+    fetchPrices,
     calculateMarketDeviation,
 
     // Token search
@@ -1415,8 +1487,10 @@ if (typeof module !== "undefined" && module.exports) {
     parseAmount,
 
     // Price functions
+    PRICE_CACHE_TTL_MS,
     getCachedPrice,
     getTokenPrice,
+    fetchPrices,
     coinGeckoUrl,
     priceRatio,
     calculateMarketDeviation,

@@ -21,6 +21,7 @@ const {
   parseAmount,
   getCachedPrice,
   getTokenPrice,
+  fetchPrices,
   coinGeckoUrl,
   priceRatio,
   calculateMarketDeviation,
@@ -782,6 +783,158 @@ describe("getTokenPrice", () => {
     // Unknown token should still return null, not some cached value
     const price = getTokenPrice("0x0000000000000000000000000000000000000001", cache, 60000);
     expect(price).toBe(null);
+  });
+});
+
+// ============================================================================
+// fetchPrices
+// ============================================================================
+
+describe("fetchPrices", () => {
+  const ok = (body) => ({ ok: true, status: 200, json: async () => body });
+  let warn;
+
+  beforeEach(() => {
+    warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warn.mockRestore();
+    jest.useRealTimers();
+  });
+
+  // MUTATION: Write the raw response instead of {usd, fetchedAt}
+  // BREAKS: getCachedPrice cannot read a TTL off the entry and every price expires
+  test("populates the cache with a usd price and a fetch time", async () => {
+    global.fetch.mockImplementation(async () => ok({ weth: { usd: 3500 } }));
+    const cache = new Map();
+
+    await fetchPrices(["weth"], cache);
+
+    expect(cache.get("weth").usd).toBe(3500);
+    expect(typeof cache.get("weth").fetchedAt).toBe("number");
+    expect(getTokenPrice("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", cache, 60000)).toBe(3500);
+  });
+
+  // MUTATION: Request every id rather than only the uncached ones
+  // BREAKS: Every render re-requests prices already held, and CoinGecko rate limits
+  test("requests only the ids that are not already cached", async () => {
+    global.fetch.mockImplementation(async () => ok({ dai: { usd: 1 } }));
+    const cache = new Map([["weth", { usd: 3500, fetchedAt: Date.now() }]]);
+
+    await fetchPrices(["weth", "dai"], cache);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toContain("ids=dai");
+    expect(global.fetch.mock.calls[0][0]).not.toContain("weth");
+  });
+
+  // MUTATION: Drop the early return when nothing needs fetching
+  // BREAKS: A no-op call still hits the network
+  test("makes no request when every id is cached", async () => {
+    const cache = new Map([["weth", { usd: 3500, fetchedAt: Date.now() }]]);
+
+    await fetchPrices(["weth"], cache);
+
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  // MUTATION: Ignore res.ok
+  // BREAKS: An error body is parsed as prices and poisons the cache
+  test("a failed response leaves the cache untouched", async () => {
+    global.fetch.mockImplementation(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+    }));
+    const cache = new Map();
+
+    await fetchPrices(["weth"], cache);
+
+    expect(cache.size).toBe(0);
+    expect(warn).toHaveBeenCalledWith("[Price] Rate limited by CoinGecko");
+  });
+
+  // MUTATION: Let the fetch rejection escape
+  // BREAKS: A network blip rejects into a render path and blanks the table
+  test("a network failure is swallowed, not thrown", async () => {
+    global.fetch.mockImplementation(async () => {
+      throw new Error("network down");
+    });
+    const cache = new Map();
+
+    await expect(fetchPrices(["weth"], cache)).resolves.toBeUndefined();
+    expect(cache.size).toBe(0);
+    expect(warn).toHaveBeenCalledWith("[Price] Fetch failed:", "network down");
+  });
+
+  // MUTATION: Report an abort as a generic failure
+  // BREAKS: A timeout is indistinguishable from a real error in the console
+  test("an aborted request is reported as a timeout", async () => {
+    global.fetch.mockImplementation(async () => {
+      const e = new Error("aborted");
+      e.name = "AbortError";
+      throw e;
+    });
+
+    await fetchPrices(["weth"], new Map());
+
+    expect(warn).toHaveBeenCalledWith("[Price] Request timed out");
+  });
+
+  // MUTATION: Skip the typeof check on the usd field
+  // BREAKS: A null or string price is cached and renders as NaN
+  test("ignores entries whose price is not a number", async () => {
+    global.fetch.mockImplementation(async () =>
+      ok({ weth: { usd: null }, dai: { usd: "1" }, tether: { usd: 1 } })
+    );
+    const cache = new Map();
+
+    await fetchPrices(["weth", "dai", "tether"], cache);
+
+    expect(cache.has("weth")).toBe(false);
+    expect(cache.has("dai")).toBe(false);
+    expect(cache.get("tether").usd).toBe(1);
+  });
+
+  // MUTATION: Never arm the abort timer
+  // BREAKS: A hung CoinGecko request pins priceFetchInProgress and no price ever
+  //         refreshes again for the life of the page
+  test("aborts a request that outruns the timeout", async () => {
+    jest.useFakeTimers();
+    global.fetch.mockImplementation(
+      (url, { signal }) =>
+        new Promise((_resolve, reject) =>
+          signal.addEventListener("abort", () => {
+            const e = new Error("aborted");
+            e.name = "AbortError";
+            reject(e);
+          })
+        )
+    );
+
+    const pending = fetchPrices(["weth"], new Map());
+    await Promise.resolve();
+    jest.advanceTimersByTime(10000);
+    await pending;
+
+    expect(warn).toHaveBeenCalledWith("[Price] Request timed out");
+  });
+
+  // MUTATION: Drop the in-flight guard
+  // BREAKS: Every concurrent caller fires its own request
+  test("concurrent calls coalesce onto one request", async () => {
+    let resolveFetch;
+    global.fetch.mockImplementation(
+      () => new Promise((r) => (resolveFetch = () => r(ok({ weth: { usd: 3500 } }))))
+    );
+    const cache = new Map();
+
+    const both = Promise.all([fetchPrices(["weth"], cache), fetchPrices(["weth"], cache)]);
+    await Promise.resolve();
+    resolveFetch();
+    await both;
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });
 
