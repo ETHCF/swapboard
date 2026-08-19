@@ -42,6 +42,9 @@ const {
   saveSortPreferences,
   loadSortPreferences,
   sortOrders,
+  ERROR_SIGNATURES,
+  ERROR_MESSAGES,
+  decodeErrorArgs,
   decodeContractError,
   parseContractError,
   validateConfig,
@@ -1522,394 +1525,130 @@ describe("filter/sort preferences", () => {
 // ============================================================================
 
 describe("sortOrders", () => {
+  // WETH 18dp, USDC 6dp, DAI 18dp -- deliberately mixed precision, because
+  // that is exactly what base-unit comparison gets wrong.
+  const WETH = { symbol: "WETH", address: "0xweth", decimals: 18 };
+  const USDC = { symbol: "USDC", address: "0xusdc", decimals: 6 };
+  const DAI = { symbol: "DAI", address: "0xdai", decimals: 18 };
+
   const orders = [
-    {
-      orderId: "2",
-      maker: "0xbbb",
-      tokenA: { symbol: "USDC" },
-      tokenB: { symbol: "WETH" },
-      amountA: "2000000000",
-      amountB: "1000000000000000000",
-      _usdValue: 2000,
-      _price: 0.0005,
-    },
+    // 1 WETH for 3500 USDC
     {
       orderId: "1",
       maker: "0xaaa",
-      tokenA: { symbol: "WETH" },
-      tokenB: { symbol: "USDC" },
+      tokenA: WETH,
+      tokenB: USDC,
       amountA: "1000000000000000000",
       amountB: "3500000000",
-      _usdValue: 3500,
-      _price: 3500,
     },
+    // 2000 USDC for 0.5 WETH
+    {
+      orderId: "2",
+      maker: "0xbbb",
+      tokenA: USDC,
+      tokenB: WETH,
+      amountA: "2000000000",
+      amountB: "500000000000000000",
+    },
+    // 5000 DAI for 5000 USDC
     {
       orderId: "3",
       maker: "0xccc",
-      tokenA: { symbol: "DAI" },
-      tokenB: { symbol: "USDT" },
-      amountA: "5000000000000000000",
-      amountB: "5000000",
-      _usdValue: 5000,
-      _price: 1,
+      tokenA: DAI,
+      tokenB: USDC,
+      amountA: "5000000000000000000000",
+      amountB: "5000000000",
     },
   ];
+  const ids = (result) => result.map((o) => o.orderId);
 
   // MUTATION: Use string comparison for orderId
   // BREAKS: "10" sorts before "2"
   test("sorts orderId numerically", () => {
-    const withTen = [
-      ...orders,
-      {
-        orderId: "10",
-        maker: "",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        amountA: "1",
-        amountB: "1",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(withTen, "orderId", "asc");
-    expect(sorted.map((o) => o.orderId)).toEqual(["1", "2", "3", "10"]);
+    expect(ids(sortOrders(orders, "orderId", "asc"))).toEqual(["1", "2", "3"]);
+    expect(ids(sortOrders(orders, "orderId", "desc"))).toEqual(["3", "2", "1"]);
   });
 
-  // MUTATION: Invert asc/desc comparison
-  // BREAKS: desc shows ascending order
-  test("respects sort direction", () => {
-    const sorted = sortOrders(orders, "orderId", "desc");
-    expect(sorted[0].orderId).toBe("3");
-    expect(sorted[2].orderId).toBe("1");
+  // MUTATION: Drop the .toLowerCase()
+  // BREAKS: Uppercase symbols sort ahead of every lowercase one
+  test("sorts symbol columns alphabetically", () => {
+    expect(ids(sortOrders(orders, "tokenA", "asc"))).toEqual(["3", "2", "1"]); // DAI, USDC, WETH
+    expect(ids(sortOrders(orders, "maker", "asc"))).toEqual(["1", "2", "3"]);
   });
 
-  // MUTATION: Use Number() instead of BigInt for amounts
-  // BREAKS: Large amounts overflow and sort wrong
-  test("sorts amountA as BigInt (handles large values)", () => {
-    const bigOrders = [
-      {
-        orderId: "1",
-        amountA: "999999999999999999999999999",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(bigOrders, "amountA", "asc");
-    expect(sorted[0].orderId).toBe("2"); // Smaller first
+  // MUTATION: Read tokenA's symbol in the tokenB case
+  // BREAKS: The Wanted column sorts by the offered token
+  test("sorts the wanted column by tokenB's symbol", () => {
+    // tokenB symbols: 1=USDC, 2=WETH, 3=USDC -- WETH sorts last ascending
+    expect(ids(sortOrders(orders, "tokenB", "desc"))[0]).toBe("2");
+    expect(ids(sortOrders(orders, "tokenB", "asc"))[2]).toBe("2");
   });
 
-  // MUTATION: Sort in place instead of copying
-  // BREAKS: Original array is mutated
-  test("does not mutate original array", () => {
-    const original = orders.map((o) => o.orderId);
-    sortOrders(orders, "orderId", "asc");
-    expect(orders.map((o) => o.orderId)).toEqual(original);
+  // MUTATION: Compare BigInt base units instead of scaling by decimals
+  // BREAKS: 1 WETH (1e18 base units) outranks 5000 DAI and 2000 USDC purely
+  //         because it has more decimal places
+  test("compares amounts in human units, not base units", () => {
+    // Human amounts: 5000 DAI > 2000 USDC > 1 WETH
+    expect(ids(sortOrders(orders, "amountA", "desc"))).toEqual(["3", "2", "1"]);
+    expect(ids(sortOrders(orders, "amountA", "asc"))).toEqual(["1", "2", "3"]);
+    // Base units would have ordered these 3, 1, 2 -- pin that it does not
+    expect(ids(sortOrders(orders, "amountA", "desc"))).not.toEqual(["3", "1", "2"]);
   });
 
-  // MUTATION: Throw for unknown column
-  // BREAKS: App crashes on typo
-  test("handles unknown column gracefully", () => {
-    const sorted = sortOrders(orders, "nonexistent", "asc");
-    expect(sorted.length).toBe(3);
+  // MUTATION: Read amountB's scale from tokenA
+  // BREAKS: The wanted-side amount is scaled by the wrong token's decimals
+  test("scales amountB by tokenB's decimals", () => {
+    // Human amountB: 5000 USDC > 3500 USDC > 0.5 WETH
+    expect(ids(sortOrders(orders, "amountB", "desc"))).toEqual(["3", "1", "2"]);
   });
 
-  // MUTATION: Don't lowercase when sorting maker
-  // BREAKS: "0xAAA" sorts differently than "0xaaa"
-  test("sorts maker case-insensitively", () => {
-    const sorted = sortOrders(orders, "maker", "asc");
-    expect(sorted[0].maker).toBe("0xaaa");
+  // MUTATION: Ignore getPriceFn and read a precomputed field
+  // BREAKS: The USD column silently stops sorting
+  test("computes USD value from the injected price function", () => {
+    const prices = { "0xweth": 3500, "0xusdc": 1, "0xdai": 1 };
+    const getPrice = (addr) => prices[addr] ?? null;
+    // USD of the offered side: 5000 DAI > 3500 (1 WETH) > 2000 USDC
+    expect(ids(sortOrders(orders, "usdVal", "desc", getPrice))).toEqual(["3", "1", "2"]);
   });
 
-  // MUTATION: Don't lowercase tokenA symbol for comparison
-  // BREAKS: "DAI" sorts after "USDC" if uppercase not lowercased
-  test("sorts tokenA by symbol case-insensitively", () => {
-    const sorted = sortOrders(orders, "tokenA", "asc");
-    expect(sorted[0].tokenA.symbol).toBe("DAI");
-    expect(sorted[1].tokenA.symbol).toBe("USDC");
-    expect(sorted[2].tokenA.symbol).toBe("WETH");
+  // MUTATION: Treat an unknown price as 0 rather than -1
+  // BREAKS: Unpriced orders tie with genuinely zero-value ones instead of sinking
+  test("orders with no known price sink to the bottom", () => {
+    const getPrice = (addr) => (addr === "0xusdc" ? 1 : null);
+    expect(ids(sortOrders(orders, "usdVal", "desc", getPrice))[0]).toBe("2");
   });
 
-  // MUTATION: Don't lowercase tokenB symbol for comparison
-  // BREAKS: Sorts by ASCII code instead of case-insensitive
-  test("sorts tokenB by symbol case-insensitively", () => {
-    const sorted = sortOrders(orders, "tokenB", "asc");
-    expect(sorted[0].tokenB.symbol).toBe("USDC");
-    expect(sorted[1].tokenB.symbol).toBe("USDT");
-    expect(sorted[2].tokenB.symbol).toBe("WETH");
+  // MUTATION: Ignore quoteSideFn and always quote wanted-per-offered
+  // BREAKS: The Price column sorts on a different number than it displays
+  test("sorts price on the side quoteSideFn selects", () => {
+    const quoteB = () => "B"; // wanted per offered
+    const quoteA = () => "A"; // offered per wanted
+    expect(ids(sortOrders(orders, "price", "desc", undefined, quoteB))).toEqual(["1", "3", "2"]);
+    // Quoting the other side inverts every ratio, so the order reverses
+    expect(ids(sortOrders(orders, "price", "desc", undefined, quoteA))).toEqual(["2", "3", "1"]);
   });
 
-  // MUTATION: Use Number() instead of BigInt for amountB
-  // BREAKS: Large amountB values overflow and sort incorrectly
-  test("sorts amountB as BigInt (handles large values)", () => {
-    const bigOrders = [
-      {
-        orderId: "1",
-        amountA: "1",
-        amountB: "999999999999999999999999999",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(bigOrders, "amountB", "asc");
-    expect(sorted[0].orderId).toBe("2"); // Smaller first
+  // MUTATION: Make the injected functions required
+  // BREAKS: Every caller that only wants to sort by id or symbol has to supply them
+  test("the injected functions are optional", () => {
+    expect(() => sortOrders(orders, "usdVal", "asc")).not.toThrow();
+    expect(() => sortOrders(orders, "price", "asc")).not.toThrow();
+    // With no prices at all every order ties at -1, so input order survives
+    expect(ids(sortOrders(orders, "usdVal", "desc"))).toEqual(["1", "2", "3"]);
   });
 
-  // MUTATION: Invert comparison result for desc direction
-  // BREAKS: desc order returns wrong sequence
-  test("sorts amountA descending correctly", () => {
-    const bigOrders = [
-      {
-        orderId: "1",
-        amountA: "1",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "999999999999999999999999999",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(bigOrders, "amountA", "desc");
-    expect(sorted[0].orderId).toBe("2"); // Larger first in desc
-    expect(sorted[1].orderId).toBe("1");
+  // MUTATION: Sort in place
+  // BREAKS: The caller's array is reordered underneath it
+  test("does not mutate the input array", () => {
+    const before = ids(orders);
+    sortOrders(orders, "orderId", "desc");
+    expect(ids(orders)).toEqual(before);
   });
 
-  // MUTATION: Invert comparison result for desc direction
-  // BREAKS: desc order returns wrong sequence
-  test("sorts amountB descending correctly", () => {
-    const bigOrders = [
-      {
-        orderId: "1",
-        amountA: "1",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1",
-        amountB: "999999999999999999999999999",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(bigOrders, "amountB", "desc");
-    expect(sorted[0].orderId).toBe("2"); // Larger first in desc
-    expect(sorted[1].orderId).toBe("1");
-  });
-
-  // MUTATION: Sort by _usdValue * -1
-  // BREAKS: Order with usdValue 5000 appears before 2000 in asc
-  test("sorts usdVal numerically", () => {
-    const sorted = sortOrders(orders, "usdVal", "asc");
-    expect(sorted[0]._usdValue).toBe(2000);
-    expect(sorted[1]._usdValue).toBe(3500);
-    expect(sorted[2]._usdValue).toBe(5000);
-  });
-
-  // MUTATION: Sort by _price * -1
-  // BREAKS: Order with price 0.0005 appears after 3500 in asc
-  test("sorts price numerically", () => {
-    const sorted = sortOrders(orders, "price", "asc");
-    expect(sorted[0]._price).toBe(0.0005);
-    expect(sorted[1]._price).toBe(1);
-    expect(sorted[2]._price).toBe(3500);
-  });
-
-  // MUTATION: Return -1 instead of 0 when values are equal
-  // BREAKS: Identical orders have unstable sort order
-  test("returns 0 for equal values (stable sort)", () => {
-    const equalOrders = [
-      {
-        orderId: "1",
-        maker: "0xaaa",
-        tokenA: { symbol: "A" },
-        tokenB: { symbol: "B" },
-        amountA: "100",
-        amountB: "100",
-        _usdValue: 100,
-        _price: 1,
-      },
-      {
-        orderId: "2",
-        maker: "0xaaa",
-        tokenA: { symbol: "A" },
-        tokenB: { symbol: "B" },
-        amountA: "100",
-        amountB: "100",
-        _usdValue: 100,
-        _price: 1,
-      },
-    ];
-    const sorted = sortOrders(equalOrders, "maker", "asc");
-    // With stable sort (return 0), original order is preserved
-    expect(sorted[0].orderId).toBe("1");
-    expect(sorted[1].orderId).toBe("2");
-  });
-
-  // MUTATION: Change aVal < bVal to aVal <= bVal in amountA
-  // BREAKS: Equal amounts would incorrectly return -1 instead of falling through to return 0
-  test("amountA boundary: equal values return 0 (< not <=)", () => {
-    const equalAmounts = [
-      {
-        orderId: "1",
-        amountA: "1000000000000000000",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1000000000000000000",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(equalAmounts, "amountA", "asc");
-    // Equal amounts should preserve original order (stable sort)
-    expect(sorted[0].orderId).toBe("1");
-    expect(sorted[1].orderId).toBe("2");
-  });
-
-  // MUTATION: Change aVal < bVal to aVal <= bVal in amountB
-  // BREAKS: Equal amounts would incorrectly return -1 instead of falling through to return 0
-  test("amountB boundary: equal values return 0 (< not <=)", () => {
-    const equalAmounts = [
-      {
-        orderId: "1",
-        amountA: "1",
-        amountB: "1000000000000000000",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1",
-        amountB: "1000000000000000000",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(equalAmounts, "amountB", "asc");
-    // Equal amounts should preserve original order (stable sort)
-    expect(sorted[0].orderId).toBe("1");
-    expect(sorted[1].orderId).toBe("2");
-  });
-
-  // MUTATION: Change aVal > bVal to aVal >= bVal in amountA
-  // BREAKS: Equal amounts in desc would return 1 instead of falling through
-  test("amountA boundary desc: equal values return 0 (> not >=)", () => {
-    const equalAmounts = [
-      {
-        orderId: "1",
-        amountA: "5000",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "5000",
-        amountB: "1",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(equalAmounts, "amountA", "desc");
-    expect(sorted[0].orderId).toBe("1");
-    expect(sorted[1].orderId).toBe("2");
-  });
-
-  // MUTATION: Change aVal > bVal to aVal >= bVal in amountB
-  // BREAKS: Equal amounts in desc would return 1 instead of falling through
-  test("amountB boundary desc: equal values return 0 (> not >=)", () => {
-    const equalAmounts = [
-      {
-        orderId: "1",
-        amountA: "1",
-        amountB: "5000",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-      {
-        orderId: "2",
-        amountA: "1",
-        amountB: "5000",
-        tokenA: { symbol: "" },
-        tokenB: { symbol: "" },
-        maker: "",
-        _usdValue: 0,
-        _price: 0,
-      },
-    ];
-    const sorted = sortOrders(equalAmounts, "amountB", "desc");
-    expect(sorted[0].orderId).toBe("1");
-    expect(sorted[1].orderId).toBe("2");
+  // MUTATION: Fall through to a comparison for an unknown column
+  // BREAKS: Sorting on a column that does not exist scrambles the table
+  test("an unknown column leaves the order untouched", () => {
+    expect(ids(sortOrders(orders, "nope", "asc"))).toEqual(["1", "2", "3"]);
   });
 });
 
@@ -1918,49 +1657,129 @@ describe("sortOrders", () => {
 // ============================================================================
 
 describe("decodeContractError", () => {
+  const pad = (n) => n.toString(16).padStart(64, "0");
+
   // MUTATION: Wrong selector in ERROR_SIGNATURES
-  // BREAKS: Returns wrong error name
-  test("maps selector 0xd92e233d to ZeroAddress", () => {
-    const result = decodeContractError("0xd92e233d");
-    expect(result.name).toBe("ZeroAddress");
-    expect(result.message).toBe("Token address cannot be zero");
+  // BREAKS: The error is not recognized and falls through to a generic message
+  test("maps a selector to its error name and message", () => {
+    expect(decodeContractError("0xd92e233d")).toEqual({
+      name: "ZeroAddress",
+      message: "Invalid token address",
+    });
   });
 
-  // MUTATION: Use exact string match instead of slice(0,10)
-  // BREAKS: Fails when error has additional data
-  test("handles selector with ABI-encoded parameters", () => {
-    const result = decodeContractError("0xd92e233d0000000000000000000000001234");
-    expect(result.name).toBe("ZeroAddress");
+  // MUTATION: Use an exact string match instead of slice(0, 10)
+  // BREAKS: Any error carrying arguments stops being recognized
+  test("reads the selector off data that carries arguments", () => {
+    expect(decodeContractError("0xd92e233d" + pad(4660)).name).toBe("ZeroAddress");
   });
 
-  // MUTATION: Don't lowercase before lookup
-  // BREAKS: Returns null for uppercase selector
-  test("selector lookup is case-insensitive", () => {
+  // MUTATION: Drop the argument decoding and use a static string
+  // BREAKS: "Order #7 is no longer active" degrades to "Order is not active"
+  test("interpolates decoded arguments into the message", () => {
+    expect(decodeContractError("0xd2c02610" + pad(7)).message).toBe("Order #7 is no longer active");
+    expect(decodeContractError("0x4e90badc" + pad(1234)).message).toBe("Order #1234 not found");
+  });
+
+  // MUTATION: Omit DeadlineExpired from the table
+  // BREAKS: A fill that sat too long in the mempool reports a generic failure
+  test("recognizes DeadlineExpired", () => {
+    expect(decodeContractError("0x1ab7da6b")).toEqual({
+      name: "DeadlineExpired",
+      message: "Transaction deadline passed. Please try again.",
+    });
+  });
+
+  // MUTATION: Return a partial object instead of null
+  // BREAKS: An unknown revert renders as "undefined"
+  test("returns null for input it cannot decode", () => {
+    expect(decodeContractError("0xdeadbeef")).toBeNull();
+    expect(decodeContractError("0x")).toBeNull();
+    expect(decodeContractError("")).toBeNull();
+    expect(decodeContractError(null)).toBeNull();
+    expect(decodeContractError(undefined)).toBeNull();
+    expect(decodeContractError(12345)).toBeNull();
+  });
+
+  // MUTATION: Lower-case only the table keys, not the input
+  // BREAKS: A provider that upper-cases hex stops matching
+  test("matches a selector case-insensitively", () => {
     expect(decodeContractError("0xD92E233D").name).toBe("ZeroAddress");
   });
 
-  // MUTATION: Throw for unknown selector
-  // BREAKS: App crashes on unknown error
-  test("returns null for unknown selector", () => {
-    expect(decodeContractError("0xdeadbeef")).toBe(null);
+  // MUTATION: Assume every selector maps to a template
+  // BREAKS: Adding a signature without a message throws instead of degrading
+  test("every known signature has a message", () => {
+    for (const name of Object.values(ERROR_SIGNATURES)) {
+      expect(ERROR_MESSAGES[name]).toBeDefined();
+    }
+  });
+});
+
+// ============================================================================
+// decodeErrorArgs
+// ============================================================================
+
+describe("decodeErrorArgs", () => {
+  const pad = (n) => n.toString(16).padStart(64, "0");
+
+  // MUTATION: Read 32 hex characters per word instead of 64
+  // BREAKS: Every decoded order id is wrong
+  test("reads one bigint per 32-byte word", () => {
+    expect(decodeErrorArgs("0xd2c02610" + pad(7))).toEqual([7n]);
+    expect(decodeErrorArgs("0x98cd7222" + pad(1) + pad(2) + pad(3))).toEqual([1n, 2n, 3n]);
   });
 
-  // MUTATION: Don't type-check input
-  // BREAKS: Crashes on null.slice()
-  test("returns null for invalid input", () => {
-    expect(decodeContractError(null)).toBe(null);
-    expect(decodeContractError(123)).toBe(null);
+  // MUTATION: Emit a trailing partial word
+  // BREAKS: Truncated revert data yields a garbage final argument
+  test("ignores a trailing partial word", () => {
+    expect(decodeErrorArgs("0xd2c02610" + pad(7) + "abcd")).toEqual([7n]);
   });
 
-  // All known selectors
-  test("decodes all known error selectors", () => {
-    expect(decodeContractError("0x1f2a2005").name).toBe("ZeroAmount");
-    expect(decodeContractError("0x201b580a").name).toBe("SameToken");
-    expect(decodeContractError("0x8a8b41ec").name).toBe("NotAContract");
-    expect(decodeContractError("0x6e65ed84").name).toBe("BalanceMismatch");
-    expect(decodeContractError("0x4e90badc").name).toBe("OrderNotFound");
-    expect(decodeContractError("0xd2c02610").name).toBe("OrderNotActive");
-    expect(decodeContractError("0x98cd7222").name).toBe("NotMaker");
+  test("returns an empty list for an argument-free error", () => {
+    expect(decodeErrorArgs("0xd92e233d")).toEqual([]);
+  });
+
+  // MUTATION: Let the BigInt conversion throw
+  // BREAKS: Malformed revert data throws out of the error handler itself
+  test("stops at the first word it cannot read", () => {
+    const pad = (n) => n.toString(16).padStart(64, "0");
+    expect(decodeErrorArgs("0xd2c02610" + pad(7) + "z".repeat(64))).toEqual([7n]);
+    expect(decodeErrorArgs("0xd2c02610" + "z".repeat(64))).toEqual([]);
+  });
+});
+
+// ============================================================================
+// extractRevertData
+// ============================================================================
+
+describe("parseContractError data locations", () => {
+  // MUTATION: Check only e.data
+  // BREAKS: ethers v6 puts revert data in three different places depending on
+  //         how the call failed; two of them stop being decoded
+  test("finds revert data wherever the provider put it", () => {
+    expect(parseContractError({ data: "0x98cd7222" })).toBe("You are not the maker of this order");
+    expect(parseContractError({ error: { data: "0x98cd7222" } })).toBe(
+      "You are not the maker of this order"
+    );
+    expect(parseContractError({ info: { error: { data: "0x98cd7222" } } })).toBe(
+      "You are not the maker of this order"
+    );
+  });
+
+  // MUTATION: Drop the message regex
+  // BREAKS: Providers that only embed data in the message text lose it
+  test('extracts revert data embedded in the message as data="0x..."', () => {
+    const e = { message: 'execution reverted (data="0x1f2a2005", code=CALL_EXCEPTION)' };
+    expect(parseContractError(e)).toBe("Amount too small (check decimal places)");
+  });
+
+  // MUTATION: Accept any string as revert data
+  // BREAKS: A non-hex `data` field is fed to the decoder
+  test("ignores a data field that is not hex", () => {
+    expect(parseContractError({ data: "nope", message: "timeout" })).toBe(
+      "Request timed out. Please try again."
+    );
   });
 });
 
@@ -1969,59 +1788,100 @@ describe("decodeContractError", () => {
 // ============================================================================
 
 describe("parseContractError", () => {
-  // MUTATION: Don't check e.data
-  // BREAKS: Known contract error shows generic message
-  test("extracts error from e.data", () => {
-    expect(parseContractError({ data: "0xd92e233d" })).toBe("Token address cannot be zero");
-  });
-
-  // MUTATION: Don't check nested e.info.error.data
-  // BREAKS: ethers.js v6 errors not decoded
-  test("extracts error from e.info.error.data (ethers v6)", () => {
-    expect(parseContractError({ info: { error: { data: "0x1f2a2005" } } })).toBe(
-      "Amount cannot be zero"
+  // MUTATION: Detect rejection by message text only
+  // BREAKS: A wallet reporting code 4001 with terse wording is not recognized
+  test("recognizes a user rejection by error code", () => {
+    expect(parseContractError({ code: 4001, message: "denied" })).toBe("Transaction cancelled");
+    expect(parseContractError({ code: "ACTION_REJECTED", message: "x" })).toBe(
+      "Transaction cancelled"
     );
   });
 
-  // MUTATION: Don't handle code 4001
-  // BREAKS: MetaMask rejection shows raw error
-  test("handles user rejection code 4001", () => {
-    expect(parseContractError({ code: 4001 })).toBe("Transaction rejected by user");
-  });
-
-  // MUTATION: Only handle numeric codes
-  // BREAKS: ethers string code not recognized
-  test("handles ACTION_REJECTED string code", () => {
-    expect(parseContractError({ code: "ACTION_REJECTED" })).toBe("Transaction rejected by user");
-  });
-
-  // MUTATION: Don't handle -32000 code
-  // BREAKS: Insufficient funds shows raw RPC error
-  test("handles insufficient funds code -32000", () => {
-    expect(parseContractError({ code: -32000 })).toBe("Insufficient funds for transaction");
-  });
-
-  // MUTATION: Don't parse reason from message
-  // BREAKS: Shows full ugly revert message
-  test("extracts reason from execution reverted message", () => {
-    expect(parseContractError({ message: 'execution reverted: reason="Custom error"' })).toBe(
-      "Custom error"
+  // MUTATION: Remove the text fallback for rejection
+  // BREAKS: Wallets that set no code but say "user rejected" fall through
+  test("recognizes a user rejection by message text", () => {
+    expect(parseContractError({ message: "MetaMask Tx Signature: User rejected" })).toBe(
+      "Transaction cancelled"
+    );
+    expect(parseContractError({ message: "User denied transaction signature" })).toBe(
+      "Transaction cancelled"
     );
   });
 
-  // MUTATION: Return raw revert message instead of fallback
-  // BREAKS: Shows "execution reverted" instead of "Transaction would fail"
-  test("returns fallback for execution reverted without reason", () => {
-    expect(parseContractError({ message: "execution reverted" })).toBe("Transaction would fail");
-    expect(parseContractError({ message: "call revert exception; execution reverted" })).toBe(
-      "Transaction would fail"
+  // MUTATION: Return a fixed string for execution reverted
+  // BREAKS: A require() message from the chain is discarded
+  test('surfaces a reason="..." string from the chain', () => {
+    const e = { message: 'execution reverted (reason="Pausable: paused")' };
+    expect(parseContractError(e)).toBe("Pausable: paused");
+  });
+
+  // MUTATION: Test "insufficient" before "allowance"
+  // BREAKS: "ERC20: insufficient allowance" reports a balance problem instead
+  //         of an approval one, sending the user to fix the wrong thing
+  test("an allowance failure is not mistaken for a balance failure", () => {
+    expect(parseContractError({ message: "ERC20: insufficient allowance" })).toBe(
+      "Token approval failed"
+    );
+    expect(parseContractError({ message: "transfer amount exceeds balance" })).toBe(
+      "Insufficient token balance"
+    );
+    expect(parseContractError({ message: "insufficient funds for gas * price" })).toBe(
+      "Insufficient funds for transaction"
     );
   });
 
-  // MUTATION: Return undefined for empty error
-  // BREAKS: UI shows "undefined"
-  test("returns generic message for unknown error", () => {
-    expect(parseContractError({})).toBe("Transaction failed");
+  // MUTATION: Drop individual entries from ERROR_PATTERNS
+  // BREAKS: Recognizable provider failures degrade to a generic message
+  test("maps provider failures to actionable text", () => {
+    const cases = [
+      ["nonce has already been used", "Transaction conflict, try again"],
+      ["could not decode result data", "Token contract not found on this network"],
+      ["missing revert data", "Transaction failed. Order may already be filled or cancelled."],
+      ["gas estimation failed", "Transaction would fail. Check order status and try again."],
+      ["network is disconnected", "Network error. Check your connection."],
+      ["Request TIMEOUT after 30s", "Request timed out. Please try again."],
+      ["replacement transaction underpriced", "Gas price too low. Try again with higher gas."],
+      ["execution reverted", "Transaction failed. The order may no longer be available."],
+    ];
+    for (const [message, expected] of cases) {
+      expect(parseContractError({ message })).toBe(expected);
+    }
+  });
+
+  // MUTATION: Fall back to e.message
+  // BREAKS: A multi-line ethers error with a docs URL lands in a toast
+  test("never surfaces a raw technical message", () => {
+    const e = {
+      message:
+        "cannot estimate gas; transaction may fail [ See: https://links.ethers.org/v5-errors ] (reason=null, code=UNPREDICTABLE_GAS_LIMIT)",
+    };
+    expect(parseContractError(e)).toBe("Transaction failed. Please try again.");
+  });
+
+  // MUTATION: Drop the length cap on shortMessage
+  // BREAKS: An arbitrarily long "short" message is shown verbatim
+  test("uses shortMessage only when it is short enough to read", () => {
+    expect(parseContractError({ message: "zzz", shortMessage: "could not coalesce error" })).toBe(
+      "could not coalesce error"
+    );
+    expect(parseContractError({ message: "zzz", shortMessage: "x".repeat(150) })).toBe(
+      "Transaction failed. Please try again."
+    );
+  });
+
+  // MUTATION: Check revert data after the text patterns
+  // BREAKS: A decodable contract error is reported as a generic revert
+  test("revert data wins over the message text", () => {
+    const e = { data: "0xd2c02610" + "7".padStart(64, "0"), message: "execution reverted" };
+    expect(parseContractError(e)).toMatch(/is no longer active/);
+  });
+
+  // MUTATION: Dereference e without a guard
+  // BREAKS: Throws while handling an error, masking the original failure
+  test("survives a missing or empty error object", () => {
+    expect(parseContractError(null)).toBe("Transaction failed. Please try again.");
+    expect(parseContractError(undefined)).toBe("Transaction failed. Please try again.");
+    expect(parseContractError({})).toBe("Transaction failed. Please try again.");
   });
 });
 

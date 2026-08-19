@@ -38,6 +38,7 @@
     formatTimeAgo,
     formatRatio,
     parseAmount,
+    parseContractError,
     orderStatus,
     COINGECKO_ID_MAP,
     coinGeckoUrl,
@@ -1206,177 +1207,24 @@
     }
   }
 
-  function decodeContractError(data) {
-    if (!data || data === "0x") return null;
-    try {
-      const iface = new ethers.Interface(CONTRACT_ABI);
-      const decoded = iface.parseError(data);
-      if (!decoded) return null;
-      switch (decoded.name) {
-        case "OrderNotActive":
-          return `Order #${decoded.args[0]} is no longer active`;
-        case "OrderNotFound":
-          return `Order #${decoded.args[0]} not found`;
-        case "NotMaker":
-          return "You are not the maker of this order";
-        case "ZeroAddress":
-          return "Invalid token address";
-        case "ZeroAmount":
-          return "Amount too small (check decimal places)";
-        case "SameToken":
-          return "Offered and wanted tokens must be different";
-        case "NotAContract":
-          return "Token address is not a contract";
-        case "BalanceMismatch":
-          return "Token balance mismatch during transfer";
-        case "ZeroETH":
-          return "ETH amount cannot be zero";
-        case "NotWETH":
-          return "Token is not WETH";
-        case "ETHAmountMismatch":
-          return "ETH amount does not match required amount";
-        case "ETHTransferFailed":
-          return "ETH transfer to recipient failed";
-        default:
-          return "Transaction rejected by contract";
-      }
-    } catch {
-      return null;
-    }
-  }
-
-  function parseContractError(e) {
-    // Try to decode custom contract errors from error data
-    // ethers v6 puts data in different places depending on error type
-    const errorData = e.data || e.error?.data || e.info?.error?.data;
-    const decoded = decodeContractError(errorData);
-    if (decoded) return decoded;
-
-    // Check for data in error message (ethers v6 format)
-    const msgMatch = (e.message || "").match(/data="(0x[a-fA-F0-9]+)"/);
-    if (msgMatch) {
-      const decoded2 = decodeContractError(msgMatch[1]);
-      if (decoded2) return decoded2;
-    }
-
-    const msg = (e.reason || e.message || "").toLowerCase();
-    if (msg.includes("user rejected") || msg.includes("user denied")) {
-      return "Transaction cancelled";
-    }
-    if (
-      msg.includes("insufficient") ||
-      msg.includes("exceeds balance") ||
-      msg.includes("transfer amount exceeds") ||
-      msg.includes("erc20: transfer amount")
-    ) {
-      return "Insufficient token balance";
-    }
-    if (msg.includes("allowance") || msg.includes("erc20: insufficient allowance")) {
-      return "Token approval failed";
-    }
-    if (msg.includes("nonce")) {
-      return "Transaction conflict, try again";
-    }
-    if (msg.includes("could not decode result data") || msg.includes("bad_data")) {
-      return "Token contract not found on this network";
-    }
-    if (msg.includes("missing revert data")) {
-      return "Transaction failed. Order may already be filled or cancelled.";
-    }
-    if (msg.includes("gas") && msg.includes("estimation")) {
-      return "Transaction would fail. Check order status and try again.";
-    }
-    if (msg.includes("network") || msg.includes("disconnected")) {
-      return "Network error. Check your connection.";
-    }
-    if (msg.includes("timeout")) {
-      return "Request timed out. Please try again.";
-    }
-    if (msg.includes("replacement") && msg.includes("underpriced")) {
-      return "Gas price too low. Try again with higher gas.";
-    }
-    if (msg.includes("execution reverted")) {
-      return "Transaction failed. The order may no longer be available.";
-    }
-    // Avoid showing raw technical messages - use short message if available
-    if (e.shortMessage && e.shortMessage.length < 100) {
-      return e.shortMessage;
-    }
-    return "Transaction failed. Please try again.";
-  }
-
-  /**
-   * The price of an order as the Price column quotes it.
-   * @param {Object} order - Order with tokenA/tokenB and amounts
-   * @returns {number} Price in the quoted direction, or 0 when a side is empty
-   */
-  function quotedPrice(order) {
-    const { tokenA, tokenB, amountA, amountB } = order;
-    return preferredQuoteSide(tokenA.address, tokenB.address) === "A"
-      ? priceRatio(amountA, amountB, tokenA.decimals, tokenB.decimals)
-      : priceRatio(amountB, amountA, tokenB.decimals, tokenA.decimals);
-  }
-
   /**
    * Sorts orders array based on current sort state.
+   *
+   * lib.js owns the comparator; the two things it cannot know -- live token
+   * prices, and this app's rule for which side of a pair to quote -- are passed
+   * in.
+   *
    * @param {Array} orders - Orders array from subgraph
    * @returns {Array} Sorted orders array
    */
   function sortOrders(orders) {
-    const col = currentSort.column;
-    const dir = currentSort.direction === "asc" ? 1 : -1;
-
-    return [...orders].sort((a, b) => {
-      let valA, valB;
-
-      switch (col) {
-        case "orderId":
-          valA = parseInt(a.orderId);
-          valB = parseInt(b.orderId);
-          break;
-        case "maker":
-          valA = a.maker.toLowerCase();
-          valB = b.maker.toLowerCase();
-          break;
-        case "tokenA":
-          valA = (a.tokenA.symbol || "").toLowerCase();
-          valB = (b.tokenA.symbol || "").toLowerCase();
-          break;
-        case "amountA":
-          valA = Number(BigInt(a.amountA)) / Math.pow(10, a.tokenA.decimals);
-          valB = Number(BigInt(b.amountA)) / Math.pow(10, b.tokenA.decimals);
-          break;
-        case "tokenB":
-          valA = (a.tokenB.symbol || "").toLowerCase();
-          valB = (b.tokenB.symbol || "").toLowerCase();
-          break;
-        case "amountB":
-          valA = Number(BigInt(a.amountB)) / Math.pow(10, a.tokenB.decimals);
-          valB = Number(BigInt(b.amountB)) / Math.pow(10, b.tokenB.decimals);
-          break;
-        case "usdVal":
-          const priceA = getTokenPrice(a.tokenA.address);
-          const priceB = getTokenPrice(b.tokenA.address);
-          const humanA = Number(BigInt(a.amountA)) / Math.pow(10, a.tokenA.decimals);
-          const humanB = Number(BigInt(b.amountA)) / Math.pow(10, b.tokenA.decimals);
-          valA = priceA !== null ? humanA * priceA : -1;
-          valB = priceB !== null ? humanB * priceB : -1;
-          break;
-        case "price":
-          // Sort on whichever side the Price column is quoting, so the order
-          // matches what is on screen rather than the raw tokenB/tokenA rate.
-          valA = quotedPrice(a);
-          valB = quotedPrice(b);
-          break;
-        default:
-          return 0;
-      }
-
-      if (typeof valA === "string") {
-        return valA.localeCompare(valB) * dir;
-      }
-      return (valA - valB) * dir;
-    });
+    return Lib.sortOrders(
+      orders,
+      currentSort.column,
+      currentSort.direction,
+      getTokenPrice,
+      preferredQuoteSide
+    );
   }
 
   /**

@@ -617,65 +617,96 @@ function loadSortPreferences(storage) {
 // ============================================================================
 
 /**
+ * The price of an order in the direction the Price column quotes it.
+ *
+ * @param {Object} order - Order with tokenA/tokenB and amounts
+ * @param {function(string, string): ("A"|"B"|null)} quoteSideFn - Picks the quote side
+ * @returns {number} Price in the quoted direction, or 0 when a side is empty
+ */
+function quotedPrice(order, quoteSideFn) {
+  const { tokenA, tokenB, amountA, amountB } = order;
+  return quoteSideFn(tokenA.address, tokenB.address) === "A"
+    ? priceRatio(amountA, amountB, tokenA.decimals, tokenB.decimals)
+    : priceRatio(amountB, amountA, tokenB.decimals, tokenA.decimals);
+}
+
+/**
  * Sorts orders by the specified column and direction.
+ *
+ * Amounts are compared in human units, not base units: base units are not
+ * comparable across tokens of differing precision, and 1 WETH would otherwise
+ * outrank 5,000 USDC by nine orders of magnitude on a column labelled "Amount".
+ *
+ * The USD and Price columns need data this module does not hold -- live prices,
+ * and the app's rule for which side of a pair to quote. Both arrive as
+ * functions. Their defaults are the same no-data answers the app itself
+ * produces before prices have loaded: unpriced orders sink to the bottom of
+ * USD Val, and Price falls back to its default wanted-per-offered direction.
+ *
  * @param {Array} orders - Orders to sort
  * @param {string} column - Column to sort by
  * @param {string} direction - 'asc' or 'desc'
+ * @param {function(string): (number|null)} [getPriceFn] - USD price for a token
+ * @param {function(string, string): ("A"|"B"|null)} [quoteSideFn] - Quote side for a pair
  * @returns {Array} Sorted orders
  */
-function sortOrders(orders, column, direction) {
-  const sorted = [...orders];
+function sortOrders(orders, column, direction, getPriceFn = () => null, quoteSideFn = () => null) {
+  const dir = direction === "asc" ? 1 : -1;
 
-  sorted.sort((a, b) => {
-    let aVal, bVal;
+  /** Amount in human units, so tokens of differing precision compare. */
+  const human = (amount, decimals) => Number(BigInt(amount)) / Math.pow(10, decimals);
+
+  /** USD value of the offered side; -1 sinks orders whose price is unknown. */
+  const usdValue = (o) => {
+    const price = getPriceFn(o.tokenA.address);
+    return price !== null && price !== undefined ? human(o.amountA, o.tokenA.decimals) * price : -1;
+  };
+
+  return [...orders].sort((a, b) => {
+    let valA, valB;
 
     switch (column) {
       case "orderId":
-        aVal = parseInt(a.orderId);
-        bVal = parseInt(b.orderId);
+        valA = parseInt(a.orderId);
+        valB = parseInt(b.orderId);
         break;
       case "maker":
-        aVal = a.maker.toLowerCase();
-        bVal = b.maker.toLowerCase();
+        valA = a.maker.toLowerCase();
+        valB = b.maker.toLowerCase();
         break;
       case "tokenA":
-        aVal = (a.tokenA.symbol || "").toLowerCase();
-        bVal = (b.tokenA.symbol || "").toLowerCase();
+        valA = (a.tokenA.symbol || "").toLowerCase();
+        valB = (b.tokenA.symbol || "").toLowerCase();
         break;
       case "amountA":
-        aVal = BigInt(a.amountA);
-        bVal = BigInt(b.amountA);
-        if (aVal < bVal) return direction === "asc" ? -1 : 1;
-        if (aVal > bVal) return direction === "asc" ? 1 : -1;
-        return 0;
+        valA = human(a.amountA, a.tokenA.decimals);
+        valB = human(b.amountA, b.tokenA.decimals);
+        break;
       case "tokenB":
-        aVal = (a.tokenB.symbol || "").toLowerCase();
-        bVal = (b.tokenB.symbol || "").toLowerCase();
+        valA = (a.tokenB.symbol || "").toLowerCase();
+        valB = (b.tokenB.symbol || "").toLowerCase();
         break;
       case "amountB":
-        aVal = BigInt(a.amountB);
-        bVal = BigInt(b.amountB);
-        if (aVal < bVal) return direction === "asc" ? -1 : 1;
-        if (aVal > bVal) return direction === "asc" ? 1 : -1;
-        return 0;
+        valA = human(a.amountB, a.tokenB.decimals);
+        valB = human(b.amountB, b.tokenB.decimals);
+        break;
       case "usdVal":
-        aVal = a._usdValue || 0;
-        bVal = b._usdValue || 0;
+        valA = usdValue(a);
+        valB = usdValue(b);
         break;
       case "price":
-        aVal = a._price || 0;
-        bVal = b._price || 0;
+        valA = quotedPrice(a, quoteSideFn);
+        valB = quotedPrice(b, quoteSideFn);
         break;
       default:
         return 0;
     }
 
-    if (aVal < bVal) return direction === "asc" ? -1 : 1;
-    if (aVal > bVal) return direction === "asc" ? 1 : -1;
-    return 0;
+    if (typeof valA === "string") {
+      return valA.localeCompare(valB) * dir;
+    }
+    return (valA - valB) * dir;
   });
-
-  return sorted;
 }
 
 // ============================================================================
@@ -695,81 +726,204 @@ const ERROR_SIGNATURES = {
   "0xcfc02c6e": "NotWETH",
   "0x8230dc8f": "ETHAmountMismatch",
   "0x1c988062": "ETHTransferFailed",
+  "0x1ab7da6b": "DeadlineExpired",
 };
 
+/**
+ * User-facing text per contract error.
+ *
+ * A function receives the decoded arguments, so an error that carries an order
+ * id can name it. Plain strings are used where the arguments add nothing a
+ * user could act on.
+ *
+ * @constant {Object<string, string|function(bigint[]): string>}
+ */
 const ERROR_MESSAGES = {
-  ZeroAddress: "Token address cannot be zero",
-  ZeroAmount: "Amount cannot be zero",
-  SameToken: "Cannot swap token for itself",
-  NotAContract: "Address is not a contract",
+  ZeroAddress: "Invalid token address",
+  ZeroAmount: "Amount too small (check decimal places)",
+  SameToken: "Offered and wanted tokens must be different",
+  NotAContract: "Token address is not a contract",
   BalanceMismatch: "Token transfer amount mismatch (fee-on-transfer tokens not supported)",
-  OrderNotFound: "Order does not exist",
-  OrderNotActive: "Order is not active",
-  NotMaker: "Only the order maker can cancel",
+  OrderNotFound: (args) => `Order #${args[0]} not found`,
+  OrderNotActive: (args) => `Order #${args[0]} is no longer active`,
+  NotMaker: "You are not the maker of this order",
   ZeroETH: "ETH amount cannot be zero",
   NotWETH: "Token is not WETH",
   ETHAmountMismatch: "ETH amount does not match required amount",
   ETHTransferFailed: "ETH transfer to recipient failed",
+  DeadlineExpired: "Transaction deadline passed. Please try again.",
 };
 
 /**
- * Decodes a contract error from its data.
- * @param {string} data - Error data hex string
- * @returns {{name: string, message: string}|null}
+ * Splits ABI-encoded error arguments into 32-byte words.
+ *
+ * Every argument this contract's errors carry is a uint256 or an address, and
+ * both occupy exactly one word with no offset indirection, so the words can be
+ * read positionally. That keeps the decoder free of an ABI coder -- and so free
+ * of any dependency on ethers being loaded.
+ *
+ * @param {string} data - Error data hex string, selector included
+ * @returns {bigint[]} One bigint per word; addresses come back as numbers too
  */
-function decodeContractError(data) {
-  if (!data || typeof data !== "string") return null;
-
-  const selector = data.slice(0, 10).toLowerCase();
-  const errorName = ERROR_SIGNATURES[selector];
-
-  if (errorName) {
-    return {
-      name: errorName,
-      message: ERROR_MESSAGES[errorName] || errorName,
-    };
+function decodeErrorArgs(data) {
+  const body = data.slice(10);
+  const args = [];
+  for (let i = 0; i + 64 <= body.length; i += 64) {
+    try {
+      args.push(BigInt("0x" + body.slice(i, i + 64)));
+    } catch {
+      break;
+    }
   }
-
-  return null;
+  return args;
 }
 
 /**
- * Parses a contract error from an exception.
+ * Decodes a contract error from its revert data.
+ *
+ * Matches on the 4-byte selector rather than parsing against an ABI: the
+ * selectors are fixed by the contract and this way the decoder stays pure, so
+ * it works before ethers has loaded and can be tested without it.
+ *
+ * @param {string} data - Error data hex string
+ * @returns {{name: string, message: string}|null} Null when unrecognized
+ */
+function decodeContractError(data) {
+  if (!data || typeof data !== "string") return null;
+  if (data === "0x") return null;
+
+  const selector = data.slice(0, 10).toLowerCase();
+  const errorName = ERROR_SIGNATURES[selector];
+  if (!errorName) return null;
+
+  const template = ERROR_MESSAGES[errorName];
+  const message =
+    typeof template === "function" ? template(decodeErrorArgs(data)) : template || errorName;
+
+  return { name: errorName, message };
+}
+
+/**
+ * Revert data out of an exception, wherever the provider happened to put it.
+ *
+ * ethers v6 surfaces it in three different places depending on how the call
+ * failed, and some providers only ever put it in the message text. Checking
+ * all four is the difference between naming the contract error and falling
+ * back to a generic failure message.
+ *
+ * @param {Error} e - Exception object
+ * @returns {string|null} Hex revert data, or null when none is present
+ */
+function extractRevertData(e) {
+  const direct = e.data || e.error?.data || e.info?.error?.data;
+  if (typeof direct === "string" && direct.startsWith("0x")) return direct;
+
+  const match = (e.message || "").match(/data="(0x[a-fA-F0-9]+)"/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Provider and RPC failures that carry no revert data, matched on their text.
+ *
+ * Ordered most specific first: "insufficient allowance" has to be tested
+ * before the bare "insufficient" that would otherwise swallow it.
+ *
+ * @constant {Array<{test: function(string): boolean, message: string}>}
+ */
+const ERROR_PATTERNS = [
+  {
+    test: (m) => m.includes("allowance"),
+    message: "Token approval failed",
+  },
+  {
+    test: (m) => m.includes("insufficient funds") || m.includes("insufficient funds for gas"),
+    message: "Insufficient funds for transaction",
+  },
+  {
+    test: (m) =>
+      m.includes("insufficient") ||
+      m.includes("exceeds balance") ||
+      m.includes("transfer amount exceeds"),
+    message: "Insufficient token balance",
+  },
+  { test: (m) => m.includes("nonce"), message: "Transaction conflict, try again" },
+  {
+    test: (m) => m.includes("could not decode result data") || m.includes("bad_data"),
+    message: "Token contract not found on this network",
+  },
+  {
+    test: (m) => m.includes("missing revert data"),
+    message: "Transaction failed. Order may already be filled or cancelled.",
+  },
+  {
+    test: (m) => m.includes("gas") && m.includes("estimation"),
+    message: "Transaction would fail. Check order status and try again.",
+  },
+  {
+    test: (m) => m.includes("network") || m.includes("disconnected"),
+    message: "Network error. Check your connection.",
+  },
+  { test: (m) => m.includes("timeout"), message: "Request timed out. Please try again." },
+  {
+    test: (m) => m.includes("replacement") && m.includes("underpriced"),
+    message: "Gas price too low. Try again with higher gas.",
+  },
+];
+
+/** Longest technical message worth showing the user verbatim. */
+const MAX_SHORT_MESSAGE = 100;
+
+/**
+ * Turns a transaction exception into something worth showing a user.
+ *
+ * Resolution order, most trustworthy signal first:
+ *   1. Revert data -- the contract said exactly what went wrong.
+ *   2. Error codes -- EIP-1193 `4001` and ethers' `ACTION_REJECTED` identify a
+ *      user rejection structurally, without depending on the wallet's wording.
+ *   3. A `reason="..."` string, which is a require() message from the chain.
+ *   4. Text patterns, for provider failures that carry no structured signal.
+ *   5. `shortMessage`, but only if it is short enough to read.
+ *
+ * Never falls through to the raw `message`: an unmatched ethers error is a
+ * multi-line string with a docs URL in it, which is noise in a toast.
+ *
  * @param {Error} e - Exception object
  * @returns {string} User-friendly error message
  */
 function parseContractError(e) {
-  // Check for revert data
-  if (e.data) {
-    const decoded = decodeContractError(e.data);
-    if (decoded) return decoded.message;
-  }
+  if (!e) return "Transaction failed. Please try again.";
 
-  // Check info.error for nested errors
-  if (e.info?.error?.data) {
-    const decoded = decodeContractError(e.info.error.data);
-    if (decoded) return decoded.message;
-  }
+  const decoded = decodeContractError(extractRevertData(e));
+  if (decoded) return decoded.message;
 
-  // User rejection
+  // Structural rejection checks come before any text matching: a wallet that
+  // reports code 4001 with terse wording is still a user rejection.
   if (e.code === 4001 || e.code === "ACTION_REJECTED") {
-    return "Transaction rejected by user";
+    return "Transaction cancelled";
   }
 
-  // Insufficient funds
-  if (e.code === -32000 || e.message?.includes("insufficient funds")) {
-    return "Insufficient funds for transaction";
+  const msg = (e.reason || e.message || "").toLowerCase();
+  if (msg.includes("user rejected") || msg.includes("user denied")) {
+    return "Transaction cancelled";
   }
 
-  // Gas estimation failures
-  if (e.message?.includes("execution reverted")) {
-    const match = e.message.match(/reason="([^"]+)"/);
-    if (match) return match[1];
-    return "Transaction would fail";
+  // A require() string from the chain names the failure better than anything
+  // matched below it.
+  const reasonMatch = (e.message || "").match(/reason="([^"]+)"/);
+  if (reasonMatch) return reasonMatch[1];
+
+  for (const { test, message } of ERROR_PATTERNS) {
+    if (test(msg)) return message;
   }
 
-  // Default
-  return e.shortMessage || e.message || "Transaction failed";
+  if (msg.includes("execution reverted")) {
+    return "Transaction failed. The order may no longer be available.";
+  }
+
+  if (e.shortMessage && e.shortMessage.length < MAX_SHORT_MESSAGE) {
+    return e.shortMessage;
+  }
+  return "Transaction failed. Please try again.";
 }
 
 // ============================================================================
@@ -1253,6 +1407,13 @@ if (typeof window !== "undefined") {
     // Order helpers
     orderStatus,
 
+    // Sorting
+    sortOrders,
+
+    // Error handling
+    decodeContractError,
+    parseContractError,
+
     // localStorage
     RECENT_TOKENS_KEY,
     MAX_RECENT_TOKENS,
@@ -1365,6 +1526,8 @@ if (typeof module !== "undefined" && module.exports) {
     // Error handling
     ERROR_SIGNATURES,
     ERROR_MESSAGES,
+    ERROR_PATTERNS,
+    decodeErrorArgs,
     decodeContractError,
     parseContractError,
 
