@@ -219,34 +219,50 @@ function formatRatio(num) {
 }
 
 /**
- * Parses a human-readable amount to base units.
- * @param {string} str - Human-readable amount
+ * Parses a human-readable amount string to base units.
+ *
+ * Rejects by throwing rather than returning a sentinel: the two rejection
+ * cases have genuinely different causes, and the messages are what the form
+ * shows the user. Callers that cannot let a throw escape -- input listeners,
+ * form collectors -- wrap this in a try/catch and surface `e.message`.
+ *
+ * Truncation of excess decimals is silent *unless* it would take the whole
+ * amount to zero, which is the case worth naming: typing 0.0000001 of a
+ * 6-decimal token is not a rounding matter, it is an amount that token cannot
+ * express. A non-zero integer part means the extra digits are only dust, so
+ * those truncate quietly.
+ *
+ * @param {string} str - Amount string (e.g., "100.5", "1,000")
  * @param {number} decimals - Token decimals
- * @returns {bigint|null} Amount in base units or null if invalid
+ * @returns {bigint} Amount in base units; an empty or blank string is 0
+ * @throws {Error} On malformed input, or on dust that truncates away entirely
  */
 function parseAmount(str, decimals) {
-  if (!str || typeof str !== "string") return null;
-
-  const cleaned = str.trim().replace(/,/g, "");
-  if (!/^\d*\.?\d*$/.test(cleaned) || cleaned === "" || cleaned === ".") {
-    return null;
+  // Guard before .trim() so a non-string rejects the same way any other
+  // malformed input does, rather than escaping as a TypeError.
+  if (typeof str !== "string") {
+    throw new Error("Invalid amount format. Use numbers only.");
   }
-
+  str = str.trim();
+  if (!str) return BigInt(0);
+  const cleaned = str.replace(/,/g, "");
+  if (!/^\d+(\.\d+)?$/.test(cleaned)) {
+    throw new Error("Invalid amount format. Use numbers only.");
+  }
   const parts = cleaned.split(".");
-  const wholePart = parts[0] || "0";
-  let fracPart = parts[1] || "";
-
-  if (fracPart.length > decimals) {
-    fracPart = fracPart.slice(0, decimals);
+  const intPart = parts[0] || "0";
+  let decPart = parts[1] || "";
+  if (decPart.length > decimals) {
+    // Check if truncation would result in zero
+    const truncated = decPart.slice(0, decimals);
+    if (intPart === "0" && /^0*$/.test(truncated)) {
+      throw new Error(`Too many decimals. This token only supports ${decimals} decimal places.`);
+    }
+    decPart = truncated;
+  } else {
+    decPart = decPart.padEnd(decimals, "0");
   }
-
-  fracPart = fracPart.padEnd(decimals, "0");
-
-  try {
-    return BigInt(wholePart + fracPart);
-  } catch (e) {
-    return null;
-  }
+  return BigInt(intPart + decPart);
 }
 
 // ============================================================================
@@ -1205,6 +1221,7 @@ if (typeof window !== "undefined") {
     formatUsd,
     formatAmount,
     formatNumber,
+    parseAmount,
 
     // Price registry
     COINGECKO_ID_MAP,

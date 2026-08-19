@@ -35,6 +35,7 @@
     formatUsd,
     formatAmount,
     formatNumber,
+    parseAmount,
     orderStatus,
     COINGECKO_ID_MAP,
     coinGeckoUrl,
@@ -1175,44 +1176,12 @@
   }
 
   /**
-   * Parses a human-readable amount string to base units.
-   * @param {string} str - Amount string (e.g., "100.5")
-   * @param {number} decimals - Token decimals
-   * @returns {bigint} Amount in base units
-   * @throws {Error} If format is invalid
-   */
-  function parseAmount(str, decimals) {
-    str = str.trim();
-    if (!str) return BigInt(0);
-    const cleaned = str.replace(/,/g, "");
-    if (!/^\d+(\.\d+)?$/.test(cleaned)) {
-      throw new Error("Invalid amount format. Use numbers only.");
-    }
-    const parts = cleaned.split(".");
-    const intPart = parts[0] || "0";
-    let decPart = parts[1] || "";
-    if (decPart.length > decimals) {
-      // Check if truncation would result in zero
-      const truncated = decPart.slice(0, decimals);
-      if (intPart === "0" && /^0*$/.test(truncated)) {
-        throw new Error(`Too many decimals. This token only supports ${decimals} decimal places.`);
-      }
-      decPart = truncated;
-    } else {
-      decPart = decPart.padEnd(decimals, "0");
-    }
-    return BigInt(intPart + decPart);
-  }
-
-  /**
    * `parseAmount` that reports a rejection instead of throwing.
    *
-   * parseAmount rejects malformed input, and dust that would round to zero at
-   * the token's precision, by throwing — the messages are worth keeping, but
-   * every caller is an input listener or a form collector where an escaped
-   * throw means a dead control rather than a visible error. (lib.js exports a
-   * null-returning parseAmount, but this local one shadows it; callers written
-   * against lib's null contract silently got the throwing version.)
+   * lib.js's parseAmount rejects malformed input, and dust that would round to
+   * zero at the token's precision, by throwing — the messages are worth
+   * keeping, but every caller here is an input listener or a form collector
+   * where an escaped throw means a dead control rather than a visible error.
    *
    * @param {string} str - User-entered amount
    * @param {number} decimals - Token decimals

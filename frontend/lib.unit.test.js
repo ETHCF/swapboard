@@ -576,103 +576,98 @@ describe("parseAmount", () => {
     expect(parseAmount("100", 18)).toBe(BigInt("100000000000000000000"));
   });
 
-  // MUTATION: Ignore decimal part
+  // MUTATION: Ignore the fractional part
   // BREAKS: "1.5" parses as 1e18 instead of 1.5e18
   test("handles decimal input correctly", () => {
     expect(parseAmount("1.5", 18)).toBe(BigInt("1500000000000000000"));
     expect(parseAmount("0.5", 6)).toBe(BigInt("500000"));
   });
 
-  // MUTATION: Don't strip commas before parsing
-  // BREAKS: Throws or returns null for "1,000"
+  // MUTATION: Don't strip commas before validating
+  // BREAKS: A pasted "1,000" is rejected as malformed
   test("strips commas from input", () => {
     expect(parseAmount("1,000", 6)).toBe(BigInt("1000000000"));
     expect(parseAmount("1,000,000", 18)).toBe(BigInt("1000000000000000000000000"));
   });
 
-  // MUTATION: Don't truncate excess decimals
-  // BREAKS: Extra decimals cause wrong value
-  test("truncates decimals exceeding token precision", () => {
-    expect(parseAmount("1.1234567", 6)).toBe(BigInt("1123456")); // Truncated to 6
-    expect(parseAmount("1.123456789012345678901", 18)).toBe(BigInt("1123456789012345678")); // Truncated to 18
-  });
-
-  // MUTATION: Don't pad short decimals
-  // BREAKS: "1.5" with 6 decimals gives 15n instead of 1500000n
-  test("pads short decimal input", () => {
-    expect(parseAmount("1.5", 6)).toBe(BigInt("1500000")); // 1.5 * 10^6
-    expect(parseAmount("1.1", 18)).toBe(BigInt("1100000000000000000")); // 1.1 * 10^18
-  });
-
-  // MUTATION: Don't handle leading decimal
-  // BREAKS: ".5" throws or returns null
-  test("handles leading decimal (.5 = 0.5)", () => {
-    expect(parseAmount(".5", 18)).toBe(BigInt("500000000000000000"));
-  });
-
-  // MUTATION: Don't handle trailing decimal
-  // BREAKS: "5." throws or returns null
-  test("handles trailing decimal (5. = 5)", () => {
-    expect(parseAmount("5.", 18)).toBe(BigInt("5000000000000000000"));
-  });
-
-  // MUTATION: Return 0n instead of null for invalid input
-  // BREAKS: Invalid input returns 0n instead of null
-  test("returns null for invalid input", () => {
-    expect(parseAmount("abc", 18)).toBe(null);
-    expect(parseAmount("", 18)).toBe(null);
-    expect(parseAmount(".", 18)).toBe(null);
-    expect(parseAmount(null, 18)).toBe(null);
-    expect(parseAmount("1.2.3", 18)).toBe(null);
-    expect(parseAmount("-1", 18)).toBe(null);
-  });
-
-  // MUTATION: Change fracPart.length > decimals to >= decimals
-  // BREAKS: Decimal with exactly decimals digits would be truncated
-  test("boundary: decimals at exactly token precision not truncated (> not >=)", () => {
-    // 6 decimal places for 6-decimal token should work exactly
-    expect(parseAmount("1.123456", 6)).toBe(BigInt("1123456"));
-    // 18 decimal places for 18-decimal token should work exactly
-    expect(parseAmount("1.123456789012345678", 18)).toBe(BigInt("1123456789012345678"));
-  });
-
-  // MUTATION: Remove .trim() from input cleaning
-  // BREAKS: " 1.5 " would fail validation
+  // MUTATION: Remove .trim()
+  // BREAKS: A value pasted with surrounding space is rejected
   test("trims whitespace from input", () => {
     expect(parseAmount(" 1.5 ", 6)).toBe(BigInt("1500000"));
     expect(parseAmount("  100  ", 18)).toBe(BigInt("100000000000000000000"));
   });
 
-  // MUTATION: Use "" instead of "0" for empty wholePart
-  // BREAKS: ".5" would become "5" (missing leading zero)
-  test("leading decimal defaults wholePart to 0", () => {
-    expect(parseAmount(".123456", 6)).toBe(BigInt("123456"));
-    expect(parseAmount(".1", 18)).toBe(BigInt("100000000000000000"));
+  // MUTATION: Don't pad short fractions
+  // BREAKS: "1.5" at 6 decimals gives 15n instead of 1500000n
+  test("pads short decimal input", () => {
+    expect(parseAmount("1.5", 6)).toBe(BigInt("1500000"));
+    expect(parseAmount("1.1", 18)).toBe(BigInt("1100000000000000000"));
   });
 
-  // MUTATION: Change !str to false or change && to ||
-  // BREAKS: Non-string input would pass validation
-  test("type validation rejects non-string input (!str and typeof check)", () => {
-    expect(parseAmount(123, 18)).toBe(null);
-    expect(parseAmount(["1.5"], 18)).toBe(null);
-    expect(parseAmount({}, 18)).toBe(null);
-    expect(parseAmount(true, 18)).toBe(null);
+  // MUTATION: Change fracPart.length > decimals to >= decimals
+  // BREAKS: A fraction at exactly the token's precision loses its last digit
+  test("boundary: a fraction at exactly token precision is not truncated", () => {
+    expect(parseAmount("1.123456", 6)).toBe(BigInt("1123456"));
+    expect(parseAmount("1.123456789012345678", 18)).toBe(BigInt("1123456789012345678"));
   });
 
-  // MUTATION: Change cleaned === "" to false or "Stryker was here!"
-  // BREAKS: Empty string after cleaning would pass
-  test("rejects empty string after cleaning", () => {
-    expect(parseAmount("", 18)).toBe(null);
-    expect(parseAmount("   ", 18)).toBe(null); // Whitespace only
+  // MUTATION: Throw whenever decimals are truncated, not only when the result is zero
+  // BREAKS: A legitimate 1.0000001 WETH order is refused as "too many decimals"
+  test("truncates excess decimals silently when a non-zero amount survives", () => {
+    expect(parseAmount("1.1234567", 6)).toBe(BigInt("1123456"));
+    expect(parseAmount("1.0000001", 6)).toBe(BigInt("1000000"));
+    // Dust below the precision still counts when other digits survive it
+    expect(parseAmount("0.0000015", 6)).toBe(BigInt("1"));
   });
 
-  // MUTATION: if (fracPart.length > decimals) to if (true)
-  // BREAKS: All fractional parts would be truncated
-  test("only truncates when fraction exceeds decimals (> not always)", () => {
-    // Exact precision should not be truncated
-    expect(parseAmount("1.12", 2)).toBe(BigInt("112")); // Exactly 2 decimals
-    expect(parseAmount("1.1", 2)).toBe(BigInt("110")); // Less than 2 decimals, padded
-    expect(parseAmount("1.123", 2)).toBe(BigInt("112")); // More than 2 decimals, truncated
+  // MUTATION: Drop the intPart === "0" check, or the /^0*$/ test
+  // BREAKS: Dust silently becomes a zero-amount order the contract then reverts
+  test("throws when truncation would take the whole amount to zero", () => {
+    expect(() => parseAmount("0.0000001", 6)).toThrow(
+      "Too many decimals. This token only supports 6 decimal places."
+    );
+    expect(() => parseAmount("0.0000000000000000001", 18)).toThrow(/only supports 18 decimal/);
+  });
+
+  // MUTATION: Return 0n / null instead of throwing
+  // BREAKS: Malformed input silently becomes a zero-amount transaction
+  test("throws on malformed input", () => {
+    expect(() => parseAmount("abc", 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount("1.2.3", 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount("-1", 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount("1e18", 18)).toThrow("Invalid amount format. Use numbers only.");
+  });
+
+  // MUTATION: Relax the regex to /^\d*\.?\d*$/
+  // BREAKS: Half-typed values like "." parse instead of rejecting
+  test("requires digits on both sides of the decimal point", () => {
+    expect(() => parseAmount(".5", 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount("5.", 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount(".", 18)).toThrow("Invalid amount format. Use numbers only.");
+  });
+
+  // MUTATION: Remove the typeof guard ahead of .trim()
+  // BREAKS: A non-string escapes as "str.trim is not a function", which the
+  //         form then shows the user verbatim
+  test("rejects non-strings with the same message as other bad input", () => {
+    expect(() => parseAmount(null, 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount(undefined, 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount(123, 18)).toThrow("Invalid amount format. Use numbers only.");
+    expect(() => parseAmount({}, 18)).toThrow("Invalid amount format. Use numbers only.");
+  });
+
+  // MUTATION: Throw on an empty string instead of returning 0n
+  // BREAKS: An untouched amount field errors on every keystroke elsewhere
+  test("an empty or blank string is zero, not a rejection", () => {
+    expect(parseAmount("", 18)).toBe(BigInt(0));
+    expect(parseAmount("   ", 18)).toBe(BigInt(0));
+  });
+
+  // MUTATION: Assume decimals is always > 0
+  // BREAKS: A 0-decimal token drags its fraction into the integer part
+  test("handles a zero-decimal token", () => {
+    expect(parseAmount("5", 0)).toBe(BigInt(5));
+    expect(parseAmount("5.9", 0)).toBe(BigInt(5));
   });
 });
 
