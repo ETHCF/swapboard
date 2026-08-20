@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity 0.8.33;
+pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
@@ -12,68 +12,148 @@ import {MockERC20} from "../mocks/MockERC20.sol";
 /// @notice Handler contract for invariant testing of Swapboard
 /// @dev Tracks ghost variables for accounting invariants
 contract SwapboardHandler is Test {
-    Swapboard public board;
-    MockERC20 public tokenA;
-    MockERC20 public tokenB;
+    Swapboard internal _board;
+    MockERC20 internal _tokenA;
+    MockERC20 internal _tokenB;
+    address private immutable _ETH;
 
     // Ghost variables for tracking state
-    uint256 public ghost_totalTokenADeposited;
-    uint256 public ghost_totalTokenAWithdrawn;
-    uint256 public ghost_ordersCreated;
-    uint256 public ghost_ordersFilled;
-    uint256 public ghost_ordersCancelled;
-    uint256 public ghost_activeOrders;
+    uint256 private _ghostTotalTokenADeposited;
+    uint256 private _ghostTotalTokenAWithdrawn;
+    uint256 private _ghostTotalEthDeposited;
+    uint256 private _ghostTotalEthWithdrawn;
+    uint256 private _ghostOrdersCreated;
+    uint256 private _ghostOrdersFilled;
+    uint256 private _ghostOrdersCancelled;
+    uint256 private _ghostActiveOrders;
 
     // Track individual order amounts for precise accounting
-    mapping(uint256 => uint256) public ghost_orderAmounts;
-    mapping(uint256 => bool) public ghost_orderActive;
+    mapping(uint256 orderId => uint256 amount) private _ghostOrderAmounts;
+    mapping(uint256 orderId => bool active) private _ghostOrderActive;
+    mapping(uint256 orderId => uint128 amountA) private _ghostOriginalAmountA;
+    mapping(uint256 orderId => uint128 amountB) private _ghostOriginalAmountB;
 
     // Actors
-    address[] public actors;
-    address internal currentActor;
+    address[] internal _actors;
+    address internal _currentActor;
 
     // Counters for call tracking
-    uint256 public calls_createOrder;
-    uint256 public calls_fillOrder;
-    uint256 public calls_cancelOrder;
+    uint256 private _callsCreateOrder;
+    uint256 private _callsCreateOrderSellEth;
+    uint256 private _callsCreateOrderWantEth;
+    uint256 private _callsCreateOrderAllowPartial;
+    uint256 private _callsFillOrder;
+    uint256 private _callsCancelOrder;
 
     modifier useActor(
         uint256 actorIndexSeed
     ) {
-        currentActor = actors[bound(actorIndexSeed, 0, actors.length - 1)];
-        vm.startPrank(currentActor);
+        _currentActor = _actors[bound(actorIndexSeed, 0, _actors.length - 1)];
+        vm.startPrank(_currentActor);
         _;
         vm.stopPrank();
     }
 
     constructor(
-        Swapboard _board,
-        MockERC20 _tokenA,
-        MockERC20 _tokenB
+        Swapboard board,
+        MockERC20 tokenA,
+        MockERC20 tokenB
     ) {
-        board = _board;
-        tokenA = _tokenA;
-        tokenB = _tokenB;
+        _board = board;
+        _tokenA = tokenA;
+        _tokenB = tokenB;
+        _ETH = board.getEth();
 
         // Setup actors
-        actors.push(address(0x1001));
-        actors.push(address(0x1002));
-        actors.push(address(0x1003));
-        actors.push(address(0x1004));
-        actors.push(address(0x1005));
+        _actors.push(address(0x1001));
+        _actors.push(address(0x1002));
+        _actors.push(address(0x1003));
+        _actors.push(address(0x1004));
+        _actors.push(address(0x1005));
 
-        // Mint tokens to all actors
-        for (uint256 i = 0; i < actors.length; ++i) {
-            tokenA.mint(actors[i], 1_000_000 ether);
-            tokenB.mint(actors[i], 1_000_000 ether);
-            vm.prank(actors[i]);
-            tokenA.approve(address(board), type(uint256).max);
-            vm.prank(actors[i]);
-            tokenB.approve(address(board), type(uint256).max);
+        // Mint tokens and ETH to all actors
+        for (uint256 i = 0; i < _actors.length; ++i) {
+            _tokenA.mint(_actors[i], 1_000_000 ether);
+            _tokenB.mint(_actors[i], 1_000_000 ether);
+            vm.deal(_actors[i], 1000 ether);
+
+            vm.prank(_actors[i]);
+            _tokenA.approve(address(_board), type(uint256).max);
+
+            vm.prank(_actors[i]);
+            _tokenB.approve(address(_board), type(uint256).max);
         }
     }
 
-    /// @notice Creates a new order with bounded amounts
+    function getGhostTotalTokenADeposited() external view returns (uint256) {
+        return _ghostTotalTokenADeposited;
+    }
+
+    function getGhostTotalTokenAWithdrawn() external view returns (uint256) {
+        return _ghostTotalTokenAWithdrawn;
+    }
+
+    function getGhostTotalEthDeposited() external view returns (uint256) {
+        return _ghostTotalEthDeposited;
+    }
+
+    function getGhostTotalEthWithdrawn() external view returns (uint256) {
+        return _ghostTotalEthWithdrawn;
+    }
+
+    function getGhostOrdersCreated() external view returns (uint256) {
+        return _ghostOrdersCreated;
+    }
+
+    function getGhostOrdersFilled() external view returns (uint256) {
+        return _ghostOrdersFilled;
+    }
+
+    function getGhostOrdersCancelled() external view returns (uint256) {
+        return _ghostOrdersCancelled;
+    }
+
+    function getGhostActiveOrders() external view returns (uint256) {
+        return _ghostActiveOrders;
+    }
+
+    function getGhostOrderAmounts(
+        uint256 orderId
+    ) external view returns (uint256) {
+        return _ghostOrderAmounts[orderId];
+    }
+
+    function getGhostOrderActive(
+        uint256 orderId
+    ) external view returns (bool) {
+        return _ghostOrderActive[orderId];
+    }
+
+    function getCallsCreateOrder() external view returns (uint256) {
+        return _callsCreateOrder;
+    }
+
+    function getCallsCreateOrderSellEth() external view returns (uint256) {
+        return _callsCreateOrderSellEth;
+    }
+
+    function getCallsCreateOrderWantEth() external view returns (uint256) {
+        return _callsCreateOrderWantEth;
+    }
+
+    function getCallsCreateOrderAllowPartial() external view returns (uint256) {
+        return _callsCreateOrderAllowPartial;
+    }
+
+    function getCallsFillOrder() external view returns (uint256) {
+        return _callsFillOrder;
+    }
+
+    function getCallsCancelOrder() external view returns (uint256) {
+        return _callsCancelOrder;
+    }
+
+    /// @notice Creates a new ERC20/ERC20 order with bounded amounts
     function createOrder(
         uint256 actorSeed,
         uint256 amountA,
@@ -82,65 +162,189 @@ contract SwapboardHandler is Test {
         amountA = bound(amountA, 1, 1000 ether);
         amountB = bound(amountB, 1, 1000 ether);
 
-        uint256 balanceBefore = tokenA.balanceOf(currentActor);
+        uint256 balanceBefore = _tokenA.balanceOf(_currentActor);
         if (balanceBefore < amountA) {
             return; // Skip if insufficient balance
         }
 
-        ++calls_createOrder;
+        ++_callsCreateOrder;
 
-        uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        // casting to 'uint128' is safe because amounts are bounded well below uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA128 = uint128(amountA);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB128 = uint128(amountB);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA128, address(_tokenB), amountB128, false);
 
-        ghost_totalTokenADeposited += amountA;
-        ++ghost_ordersCreated;
-        ++ghost_activeOrders;
-        ghost_orderAmounts[orderId] = amountA;
-        ghost_orderActive[orderId] = true;
+        _ghostTotalTokenADeposited += amountA;
+        _trackCreatedOrder(orderId, amountA128, amountB128);
     }
 
-    /// @notice Fills an existing order
+    /// @notice Creates an ETH sell order (tokenA = ETH)
+    function createOrderSellEth(
+        uint256 actorSeed,
+        uint256 amountA,
+        uint256 amountB
+    ) external useActor(actorSeed) {
+        amountA = bound(amountA, 1, 10 ether);
+        amountB = bound(amountB, 1, 1000 ether);
+
+        if (_currentActor.balance < amountA) {
+            return;
+        }
+
+        ++_callsCreateOrderSellEth;
+
+        // casting to 'uint128' is safe because amounts are bounded well below uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA128 = uint128(amountA);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB128 = uint128(amountB);
+        uint256 orderId = _board.createOrder{value: amountA}(_ETH, amountA128, address(_tokenB), amountB128, false);
+
+        _ghostTotalEthDeposited += amountA;
+        _trackCreatedOrder(orderId, amountA128, amountB128);
+    }
+
+    /// @notice Creates an order wanting ETH payment (tokenB = ETH)
+    function createOrderWantEth(
+        uint256 actorSeed,
+        uint256 amountA,
+        uint256 amountB
+    ) external useActor(actorSeed) {
+        amountA = bound(amountA, 1, 1000 ether);
+        amountB = bound(amountB, 1, 10 ether);
+
+        if (_tokenA.balanceOf(_currentActor) < amountA) {
+            return;
+        }
+
+        ++_callsCreateOrderWantEth;
+
+        // casting to 'uint128' is safe because amounts are bounded well below uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA128 = uint128(amountA);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB128 = uint128(amountB);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA128, _ETH, amountB128, false);
+
+        _ghostTotalTokenADeposited += amountA;
+        _trackCreatedOrder(orderId, amountA128, amountB128);
+    }
+
+    /// @notice Creates an ERC20/ERC20 order that allows partial fills
+    function createOrderAllowPartial(
+        uint256 actorSeed,
+        uint256 amountA,
+        uint256 amountB
+    ) external useActor(actorSeed) {
+        amountA = bound(amountA, 1, 1000 ether);
+        amountB = bound(amountB, 1, 1000 ether);
+
+        if (_tokenA.balanceOf(_currentActor) < amountA) {
+            return;
+        }
+
+        ++_callsCreateOrderAllowPartial;
+
+        // casting to 'uint128' is safe because amounts are bounded well below uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA128 = uint128(amountA);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB128 = uint128(amountB);
+        uint256 orderId = _board.createOrder(address(_tokenA), amountA128, address(_tokenB), amountB128, true);
+
+        _ghostTotalTokenADeposited += amountA;
+        _trackCreatedOrder(orderId, amountA128, amountB128);
+    }
+
+    /// @notice Fills an existing order (full or partial when allowed)
     function fillOrder(
         uint256 actorSeed,
-        uint256 orderIdSeed
+        uint256 orderIdSeed,
+        uint256 fillAmountSeed
     ) external useActor(actorSeed) {
-        uint256 nextId = board.nextOrderId();
+        uint256 nextId = _board.getNextOrderId();
         if (nextId == 0) {
             return; // No orders exist
         }
 
         uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
-        ISwapboard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = _board.getOrder(orderId);
 
         if (!order.active) {
             return; // Order not active
         }
 
-        uint256 takerBalance = tokenB.balanceOf(currentActor);
-        if (takerBalance < order.amountB) {
-            return; // Insufficient balance
+        uint256 fillA = order.availableA;
+        if (order.partialFillAllowed) {
+            fillA = bound(fillAmountSeed, 1, order.availableA);
         }
 
-        ++calls_fillOrder;
+        uint256 amountBIn = fillA == order.availableA
+            ? order.availableB
+            : (fillA * order.availableB + order.availableA - 1) / order.availableA;
+        if (amountBIn == 0 || !_actorCanPayTokenB(order.tokenB, amountBIn)) {
+            return;
+        }
 
-        board.fillOrder(orderId, 0);
+        ++_callsFillOrder;
 
-        ghost_totalTokenAWithdrawn += order.amountA;
-        ++ghost_ordersFilled;
-        --ghost_activeOrders;
-        ghost_orderActive[orderId] = false;
+        // casting to 'uint128' is safe because fillA is at most order.availableA (uint128)
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 fillA128 = uint128(fillA);
+        if (order.tokenB == _ETH) {
+            _board.fillOrder{value: amountBIn}(orderId, fillA128, 0);
+        } else {
+            _board.fillOrder(orderId, fillA128, 0);
+        }
+
+        _recordFillGhosts(order, orderId, fillA);
+    }
+
+    /// @notice Returns whether the current actor can pay `amount` of `tokenB`
+    function _actorCanPayTokenB(
+        address tokenB,
+        uint256 amount
+    ) private view returns (bool) {
+        if (tokenB == _ETH) {
+            return !(_currentActor.balance < amount);
+        }
+        return !(_tokenB.balanceOf(_currentActor) < amount);
+    }
+
+    /// @notice Updates ghost accounting after a successful fill
+    function _recordFillGhosts(
+        ISwapboard.Order memory order,
+        uint256 orderId,
+        uint256 fillA
+    ) private {
+        if (order.tokenA == _ETH) {
+            _ghostTotalEthWithdrawn += fillA;
+        } else if (order.tokenA == address(_tokenA)) {
+            _ghostTotalTokenAWithdrawn += fillA;
+        }
+
+        if (!_board.canFill(orderId)) {
+            ++_ghostOrdersFilled;
+            --_ghostActiveOrders;
+            _ghostOrderActive[orderId] = false;
+        } else {
+            _ghostOrderAmounts[orderId] = order.availableA - fillA;
+        }
     }
 
     /// @notice Cancels an order (only by maker)
     function cancelOrder(
         uint256 orderIdSeed
     ) external {
-        uint256 nextId = board.nextOrderId();
+        uint256 nextId = _board.getNextOrderId();
         if (nextId == 0) {
             return;
         }
 
         uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
-        ISwapboard.Order memory order = board.getOrder(orderId);
+        ISwapboard.Order memory order = _board.getOrder(orderId);
 
         if (!order.active) {
             return;
@@ -148,43 +352,103 @@ contract SwapboardHandler is Test {
 
         // Only maker can cancel
         vm.prank(order.maker);
-        ++calls_cancelOrder;
 
-        board.cancelOrder(orderId);
+        ++_callsCancelOrder;
 
-        ghost_totalTokenAWithdrawn += order.amountA;
-        ++ghost_ordersCancelled;
-        --ghost_activeOrders;
-        ghost_orderActive[orderId] = false;
+        _board.cancelOrder(orderId);
+
+        if (order.tokenA == _ETH) {
+            _ghostTotalEthWithdrawn += order.availableA;
+        } else if (order.tokenA == address(_tokenA)) {
+            _ghostTotalTokenAWithdrawn += order.availableA;
+        }
+
+        ++_ghostOrdersCancelled;
+        --_ghostActiveOrders;
+        _ghostOrderActive[orderId] = false;
+    }
+
+    /// @notice Records ghost state for a newly created order
+    function _trackCreatedOrder(
+        uint256 orderId,
+        uint128 amountA,
+        uint128 amountB
+    ) private {
+        ++_ghostOrdersCreated;
+        ++_ghostActiveOrders;
+        _ghostOrderAmounts[orderId] = amountA;
+        _ghostOrderActive[orderId] = true;
+        _ghostOriginalAmountA[orderId] = amountA;
+        _ghostOriginalAmountB[orderId] = amountB;
+    }
+
+    /// @notice Asserts amount/available invariants across all created orders
+    /// @dev Originals never change; available never exceeds originals; active iff both available > 0
+    function assertAmountInvariants() external view {
+        uint256 nextId = _board.getNextOrderId();
+
+        for (uint256 i = 0; i < nextId; ++i) {
+            ISwapboard.Order memory order = _board.getOrder(i);
+            if (order.maker == address(0)) {
+                continue;
+            }
+
+            assertEq(order.amountA, _ghostOriginalAmountA[i], "amountA mutated");
+            assertEq(order.amountB, _ghostOriginalAmountB[i], "amountB mutated");
+            assertTrue(order.amountA > 0 && order.amountB > 0, "zero original amt");
+
+            assertTrue(!(order.availableA > order.amountA), "availableA > amountA");
+            assertTrue(!(order.availableB > order.amountB), "availableB > amountB");
+
+            if (order.active) {
+                assertTrue(order.availableA > 0 && order.availableB > 0, "active zero avail");
+            } else {
+                assertTrue(order.availableA == 0 || order.availableB == 0, "inactive still avail");
+            }
+        }
     }
 
     /// @notice View function to get contract token balance
     function getContractTokenABalance() external view returns (uint256) {
-        return tokenA.balanceOf(address(board));
+        return _tokenA.balanceOf(address(_board));
     }
 
     /// @notice Calculate expected contract balance from ghost vars
     function getExpectedContractBalance() external view returns (uint256) {
-        return ghost_totalTokenADeposited - ghost_totalTokenAWithdrawn;
+        return _ghostTotalTokenADeposited - _ghostTotalTokenAWithdrawn;
     }
 
     /// @notice Count active orders by iterating
     function countActiveOrders() external view returns (uint256 count) {
-        uint256 nextId = board.nextOrderId();
+        uint256 nextId = _board.getNextOrderId();
+
         for (uint256 i = 0; i < nextId; ++i) {
-            if (board.canFill(i)) {
+            if (_board.canFill(i)) {
                 ++count;
             }
         }
     }
 
-    /// @notice Get sum of all active order amounts
+    /// @notice Sum of remaining ERC20 tokenA escrow across all orders (incl. inactive dust)
     function sumActiveOrderAmounts() external view returns (uint256 total) {
-        uint256 nextId = board.nextOrderId();
+        uint256 nextId = _board.getNextOrderId();
+
         for (uint256 i = 0; i < nextId; ++i) {
-            ISwapboard.Order memory order = board.getOrder(i);
-            if (order.active) {
-                total += order.amountA;
+            ISwapboard.Order memory order = _board.getOrder(i);
+            if (order.tokenA == address(_tokenA)) {
+                total += order.availableA;
+            }
+        }
+    }
+
+    /// @notice Sum of remaining ETH tokenA escrow across all orders (incl. inactive dust)
+    function sumActiveEthOrderAmounts() external view returns (uint256 total) {
+        uint256 nextId = _board.getNextOrderId();
+
+        for (uint256 i = 0; i < nextId; ++i) {
+            ISwapboard.Order memory order = _board.getOrder(i);
+            if (order.tokenA == _ETH) {
+                total += order.availableA;
             }
         }
     }

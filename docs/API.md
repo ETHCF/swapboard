@@ -82,9 +82,16 @@ For market makers and trading bots.
   },
   {
     "type": "function",
-    "name": "nextOrderId",
+    "name": "getNextOrderId",
     "inputs": [],
     "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getWeth",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "address" }],
     "stateMutability": "view"
   },
   {
@@ -351,7 +358,7 @@ def get_open_orders(token_a=None, token_b=None, limit=100):
 
 ```solidity
 // script/CreateOrder.s.sol
-pragma solidity ^0.8.33;
+pragma solidity ^0.8.36;
 
 import {Script} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";

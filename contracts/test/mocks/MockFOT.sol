@@ -1,52 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity 0.8.33;
+pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
-contract MockFOT {
-    string public name = "Fee On Transfer";
-    string public symbol = "FOT";
-    uint8 public decimals = 18;
-    uint256 public totalSupply;
-    uint256 public feePercent = 5;
+import {MockERC20} from "./MockERC20.sol";
 
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
+contract MockFOT is MockERC20 {
+    uint256 private _feePercent = 5;
 
-    // solhint-disable-next-line gas-indexed-events
-    event Transfer(address indexed from, address indexed to, uint256 amount);
+    constructor() MockERC20("Fee On Transfer", "FOT", 18) {}
 
-    // solhint-disable-next-line gas-indexed-events
-    event Approval(address indexed owner, address indexed spender, uint256 amount);
-
-    function mint(
-        address to,
-        uint256 amount
-    ) external {
-        totalSupply += amount;
-        balanceOf[to] += amount;
-        emit Transfer(address(0), to, amount);
-    }
-
-    function approve(
-        address spender,
-        uint256 amount
-    ) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
+    function getFeePercent() external view returns (uint256) {
+        return _feePercent;
     }
 
     function transfer(
         address to,
         uint256 amount
-    ) external returns (bool) {
-        uint256 fee = (amount * feePercent) / 100;
+    ) public override returns (bool) {
+        uint256 fee = (amount * _feePercent) / 100;
         uint256 netAmount = amount - fee;
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += netAmount;
-        totalSupply -= fee;
-        emit Transfer(msg.sender, to, netAmount);
+
+        _balanceOf[msg.sender] -= amount;
+        _balanceOf[to] += netAmount;
+        _totalSupply -= fee;
+
+        emit Transfer({from: msg.sender, to: to, amount: netAmount});
+
         return true;
     }
 
@@ -54,17 +34,18 @@ contract MockFOT {
         address from,
         address to,
         uint256 amount
-    ) external returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
-        if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
-        }
-        uint256 fee = (amount * feePercent) / 100;
+    ) public override returns (bool) {
+        _spendAllowance(from, msg.sender, amount);
+
+        uint256 fee = (amount * _feePercent) / 100;
         uint256 netAmount = amount - fee;
-        balanceOf[from] -= amount;
-        balanceOf[to] += netAmount;
-        totalSupply -= fee;
-        emit Transfer(from, to, netAmount);
+
+        _balanceOf[from] -= amount;
+        _balanceOf[to] += netAmount;
+        _totalSupply -= fee;
+
+        emit Transfer({from: from, to: to, amount: netAmount});
+
         return true;
     }
 }

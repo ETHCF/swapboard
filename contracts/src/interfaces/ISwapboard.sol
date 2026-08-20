@@ -1,29 +1,42 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity ^0.8.33;
+pragma solidity ^0.8.0;
+
+import {ISemver} from "./ISemver.sol";
 
 /// @title ISwapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
 /// @notice Interface for the Swapboard OTC trading contract
 /// @dev Implement this interface for composability with the Swapboard protocol.
 ///      All amounts are in base units (wei-equivalent for 18 decimal tokens).
-interface ISwapboard {
+///      Native ETH is represented by the sentinel returned from `getEth()`.
+interface ISwapboard is ISemver {
     /// @notice Represents a single OTC order
+    /// @dev `uint128` amounts are sufficient for practical order sizes (e.g. ~3.4e20 wei ≈
+    ///      340B tokens at 18 decimals).
+    ///      Fill progress is `(amountA - availableA) / amountA` (and likewise for B).
     /// @param maker Address that created the order and deposited tokenA
-    /// @param tokenA Address of the token being sold (held in escrow)
-    /// @param amountA Amount of tokenA deposited by maker (in base units)
-    /// @param tokenB Address of the token maker wants to receive
-    /// @param amountB Amount of tokenB required to fill the order (in base units)
     /// @param active Whether the order can still be filled or cancelled
+    /// @param partialFillAllowed Whether the order may be filled in multiple parts
+    /// @param tokenA Address of the token being sold (held in escrow)
+    /// @param tokenB Address of the token maker wants to receive
+    /// @param amountA Original amount of tokenA deposited (unchanged by fills)
+    /// @param amountB Original amount of tokenB required (unchanged by fills)
+    /// @param availableA Remaining tokenA still in escrow / available to fill
+    /// @param availableB Remaining tokenB still required to complete the order
     struct Order {
         address maker;
         bool active;
+        bool partialFillAllowed;
         address tokenA;
-        uint256 amountA;
         address tokenB;
-        uint256 amountB;
+        uint128 amountA;
+        uint128 amountB;
+        uint128 availableA;
+        uint128 availableB;
     }
 
     // solhint-disable gas-indexed-events
+
     /// @notice Emitted when a new order is created
     /// @param orderId Unique identifier for the order
     /// @param maker Address that created the order
@@ -31,20 +44,25 @@ interface ISwapboard {
     /// @param amountA Amount of tokenA deposited
     /// @param tokenB Address of the token wanted
     /// @param amountB Amount of tokenB required to fill
+    /// @param partialFillAllowed Whether the order may be filled in multiple parts
     event OrderCreated(
         uint256 indexed orderId,
         address indexed maker,
         address tokenA,
-        uint256 amountA,
+        uint128 amountA,
         address tokenB,
-        uint256 amountB
+        uint128 amountB,
+        bool partialFillAllowed
     );
-    // solhint-enable gas-indexed-events
 
-    /// @notice Emitted when an order is filled by a taker
+    /// @notice Emitted when an order is filled (fully or partially) by a taker
     /// @param orderId Unique identifier for the filled order
     /// @param taker Address that filled the order
-    event OrderFilled(uint256 indexed orderId, address indexed taker);
+    /// @param amountA Amount of tokenA transferred to the taker
+    /// @param amountB Amount of tokenB paid by the taker
+    event OrderFilled(uint256 indexed orderId, address indexed taker, uint128 amountA, uint128 amountB);
+
+    // solhint-enable gas-indexed-events
 
     /// @notice Emitted when an order is cancelled by its maker
     /// @param orderId Unique identifier for the cancelled order
@@ -83,70 +101,89 @@ interface ISwapboard {
     /// @param maker The actual maker of the order
     error NotMaker(uint256 orderId, address caller, address maker);
 
-    /// @notice Thrown when a function requiring WETH is called on a non-WETH token
-    /// @param expected The WETH address
-    /// @param actual The actual token address
-    error NotWETH(address expected, address actual);
-
     /// @notice Thrown when msg.value does not match the required ETH amount
-    /// @param required The required ETH amount
+    /// @param required The required ETH amount (0 when ETH is not used)
     /// @param sent The actual msg.value
     error ETHAmountMismatch(uint256 required, uint256 sent);
-
-    /// @notice Thrown when an ETH transfer fails
-    /// @param recipient The intended recipient
-    error ETHTransferFailed(address recipient);
-
-    /// @notice Thrown when msg.value is zero for a payable function
-    error ZeroETH();
 
     /// @notice Thrown when a fill is attempted after the specified deadline
     error DeadlineExpired();
 
-    /// @notice Creates a new OTC order by depositing tokenA
-    /// @dev Transfers tokenA from caller to contract. Reverts if token is fee-on-transfer.
-    /// @param tokenA Address of the ERC20 token to sell
-    /// @param amountA Amount of tokenA to deposit (in base units)
-    /// @param tokenB Address of the ERC20 token wanted in exchange
-    /// @param amountB Amount of tokenB required to fill the order (in base units)
+    /// @notice Thrown when a partial fill is attempted on an order that disallows it
+    /// @param orderId The order ID
+    error PartialFillNotAllowed(uint256 orderId);
+
+    /// @notice Thrown when the requested fill amountA exceeds the order's available amountA
+    /// @param orderId The order ID
+    /// @param requested The requested amountA
+    /// @param remaining The available amountA on the order
+    error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining);
+
+    /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
+    /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer tokens.
+    ///      For ETH tokenA (`getEth()`), requires `msg.value == amountA`.
+    ///      Amounts use `uint128`, which is sufficient for practical order sizes.
+    /// @param tokenA Address of the asset to sell (`getEth()` for native ETH)
+    /// @param amountA Amount of tokenA to deposit (in base units / wei)
+    /// @param tokenB Address of the asset wanted in exchange (`getEth()` for native ETH)
+    /// @param amountB Amount of tokenB required to fill the order
+    /// @param partialFillAllowed Whether the order may be filled in multiple parts
     /// @return orderId The unique identifier for the created order
     function createOrder(
         address tokenA,
-        uint256 amountA,
+        uint128 amountA,
         address tokenB,
-        uint256 amountB
-    ) external returns (uint256 orderId);
+        uint128 amountB,
+        bool partialFillAllowed
+    ) external payable returns (uint256 orderId);
 
-    /// @notice Fills an existing order by transferring tokenB to maker
-    /// @dev Transfers tokenB from caller to maker, transfers tokenA from contract to caller
+    /// @notice Fills an existing order for the given amountA
+    /// @dev Taker receives `amountA` of tokenA and pays proportional tokenB.
+    ///      tokenB in is ceiled (`(amountA * availableB + availableA - 1) / availableA`) so the
+    ///      taker never underpays. Residual tokenA dust is not refunded (not worth the gas); it
+    ///      can be picked up by any user that rounds favorably on another order where the dust
+    ///      token is tokenB.
+    ///      If tokenB is ETH, requires `msg.value` equal to the ceiled tokenB amount.
+    ///      If tokenA is ETH, pays the taker in ETH.
     /// @param orderId The unique identifier of the order to fill
+    /// @param amountA Amount of tokenA to receive from the order
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrder(
         uint256 orderId,
+        uint128 amountA,
         uint256 deadline
-    ) external;
+    ) external payable;
 
-    /// @notice Cancels an existing order and returns tokenA to maker
-    /// @dev Only callable by the order's maker
+    /// @notice Cancels an existing order and returns available tokenA to maker
+    /// @dev Only callable by the order's maker. Returns ETH if tokenA is ETH.
+    ///      Original `amountA`/`amountB` are preserved; `availableA`/`availableB` are zeroed.
     /// @param orderId The unique identifier of the order to cancel
     function cancelOrder(
         uint256 orderId
     ) external;
 
+    /// @notice Canonical placeholder address representing native ETH
+    /// @return The ETH sentinel address (`0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`)
+    function getEth() external pure returns (address);
+
+    /// @notice Next order ID that will be assigned on create
+    /// @return The next order ID
+    function getNextOrderId() external view returns (uint256);
+
     /// @notice Retrieves the details of a single order
     /// @param orderId The unique identifier of the order
-    /// @return order The Order struct containing all order details
+    /// @return The Order struct containing all order details
     function getOrder(
         uint256 orderId
-    ) external view returns (Order memory order);
+    ) external view returns (Order memory);
 
     /// @notice Retrieves the details of multiple orders in a single call
     /// @dev Returns default Order struct for non-existent orderIds
     /// @param orderIds Array of order identifiers to retrieve
-    /// @return result Array of Order structs in the same order as input
+    /// @return Array of Order structs in the same order as input
     function getOrders(
         uint256[] calldata orderIds
-    ) external view returns (Order[] memory result);
+    ) external view returns (Order[] memory);
 
     /// @notice Checks whether an order can be filled
     /// @dev Returns false for non-existent orders (they have active=false by default)
@@ -155,43 +192,4 @@ interface ISwapboard {
     function canFill(
         uint256 orderId
     ) external view returns (bool);
-
-    /// @notice Returns the WETH address used by this contract
-    /// @return The WETH token address
-    function weth() external view returns (address);
-
-    /// @notice Creates an order selling ETH (auto-wrapped to WETH)
-    /// @dev Wraps msg.value to WETH and stores order with tokenA = WETH
-    /// @param tokenB Address of the ERC20 token wanted in exchange
-    /// @param amountB Amount of tokenB required to fill the order (in base units)
-    /// @return orderId The unique identifier for the created order
-    function createOrderWithEth(
-        address tokenB,
-        uint256 amountB
-    ) external payable returns (uint256 orderId);
-
-    /// @notice Fills an order by sending ETH (auto-wrapped to WETH)
-    /// @dev Requires order.tokenB == WETH and msg.value == order.amountB
-    /// @param orderId The unique identifier of the order to fill
-    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
-    function fillOrderWithEth(
-        uint256 orderId,
-        uint256 deadline
-    ) external payable;
-
-    /// @notice Cancels an order where tokenA is WETH, returning ETH to maker
-    /// @dev Only callable by the order's maker. Unwraps WETH to ETH.
-    /// @param orderId The unique identifier of the order to cancel
-    function cancelOrderUnwrap(
-        uint256 orderId
-    ) external;
-
-    /// @notice Fills an order where tokenA is WETH, receiving ETH instead
-    /// @dev Pays tokenB normally, receives ETH after WETH unwrap
-    /// @param orderId The unique identifier of the order to fill
-    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
-    function fillOrderUnwrap(
-        uint256 orderId,
-        uint256 deadline
-    ) external;
 }

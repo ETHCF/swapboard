@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity 0.8.33;
+pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
+/// @title MockERC20
+/// @notice Shared ERC20 mock base used by test tokens
 contract MockERC20 {
-    string public name;
-    string public symbol;
-    uint8 public decimals;
-    uint256 public totalSupply;
+    string private _name;
+    string private _symbol;
+    uint8 private _decimals;
 
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
+    uint256 internal _totalSupply;
+    mapping(address account => uint256 balance) internal _balanceOf;
+    mapping(address owner => mapping(address spender => uint256 allowance)) internal _allowance;
 
     // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);
@@ -19,49 +21,73 @@ contract MockERC20 {
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
     constructor(
-        string memory name_,
-        string memory symbol_,
-        uint8 decimals_
+        string memory initName,
+        string memory initSymbol,
+        uint8 initDecimals
     ) {
-        name = name_;
-        symbol = symbol_;
-        decimals = decimals_;
+        _name = initName;
+        _symbol = initSymbol;
+        _decimals = initDecimals;
+    }
+
+    function name() external view returns (string memory) {
+        return _name;
+    }
+
+    function symbol() external view returns (string memory) {
+        return _symbol;
+    }
+
+    function decimals() external view returns (uint8) {
+        return _decimals;
+    }
+
+    function totalSupply() public view virtual returns (uint256) {
+        return _totalSupply;
+    }
+
+    function balanceOf(
+        address account
+    ) public view virtual returns (uint256) {
+        return _balanceOf[account];
+    }
+
+    function allowance(
+        address owner,
+        address spender
+    ) public view virtual returns (uint256) {
+        return _allowance[owner][spender];
     }
 
     function mint(
         address to,
         uint256 amount
-    ) external {
-        totalSupply += amount;
-        balanceOf[to] += amount;
-        emit Transfer(address(0), to, amount);
+    ) public virtual {
+        _mint(to, amount);
     }
 
     function burn(
         address from,
         uint256 amount
-    ) external {
-        balanceOf[from] -= amount;
-        totalSupply -= amount;
-        emit Transfer(from, address(0), amount);
+    ) public virtual {
+        _burn(from, amount);
     }
 
     function approve(
         address spender,
         uint256 amount
-    ) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
+    ) public virtual returns (bool) {
+        _approve(msg.sender, spender, amount);
+
         return true;
     }
 
     function transfer(
         address to,
         uint256 amount
-    ) external returns (bool) {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(msg.sender, to, amount);
+    ) public virtual returns (bool) {
+        _transfer(msg.sender, to, amount);
+
         return true;
     }
 
@@ -69,14 +95,62 @@ contract MockERC20 {
         address from,
         address to,
         uint256 amount
-    ) external returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
-        if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
-        }
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(from, to, amount);
+    ) public virtual returns (bool) {
+        _spendAllowance(from, msg.sender, amount);
+        _transfer(from, to, amount);
+
         return true;
+    }
+
+    function _mint(
+        address to,
+        uint256 amount
+    ) internal virtual {
+        _totalSupply += amount;
+        _balanceOf[to] += amount;
+
+        emit Transfer({from: address(0), to: to, amount: amount});
+    }
+
+    function _burn(
+        address from,
+        uint256 amount
+    ) internal virtual {
+        _balanceOf[from] -= amount;
+        _totalSupply -= amount;
+
+        emit Transfer({from: from, to: address(0), amount: amount});
+    }
+
+    function _approve(
+        address owner,
+        address spender,
+        uint256 amount
+    ) internal virtual {
+        _allowance[owner][spender] = amount;
+
+        emit Approval({owner: owner, spender: spender, amount: amount});
+    }
+
+    function _spendAllowance(
+        address owner,
+        address spender,
+        uint256 amount
+    ) internal virtual {
+        uint256 allowed = _allowance[owner][spender];
+        if (allowed != type(uint256).max) {
+            _allowance[owner][spender] = allowed - amount;
+        }
+    }
+
+    function _transfer(
+        address from,
+        address to,
+        uint256 amount
+    ) internal virtual {
+        _balanceOf[from] -= amount;
+        _balanceOf[to] += amount;
+
+        emit Transfer({from: from, to: to, amount: amount});
     }
 }

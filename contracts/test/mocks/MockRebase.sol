@@ -1,38 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity 0.8.33;
+pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
+import {MockERC20} from "./MockERC20.sol";
+
 /// @title MockRebase
 /// @notice Mock ERC20 with rebasing functionality (like stETH, AMPL)
-contract MockRebase {
-    string public name = "Rebase Token";
-    string public symbol = "REBASE";
-    uint8 public decimals = 18;
+contract MockRebase is MockERC20 {
+    uint256 private _totalShares;
+    uint256 private _rebaseMultiplier = 100; // 100 = 1x, 110 = 1.1x
 
-    uint256 internal _totalShares;
-    uint256 internal _totalSupply;
-    uint256 internal _rebaseMultiplier = 100; // 100 = 1x, 110 = 1.1x
-
-    mapping(address => uint256) internal _shares;
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    // solhint-disable-next-line gas-indexed-events
-    event Transfer(address indexed from, address indexed to, uint256 amount);
-
-    // solhint-disable-next-line gas-indexed-events
-    event Approval(address indexed owner, address indexed spender, uint256 amount);
+    mapping(address account => uint256 shares) private _shares;
 
     // solhint-disable-next-line gas-indexed-events
     event Rebase(uint256 newMultiplier);
 
-    function totalSupply() external view returns (uint256) {
+    constructor() MockERC20("Rebase Token", "REBASE", 18) {}
+
+    function totalSupply() public view override returns (uint256) {
         return (_totalShares * _rebaseMultiplier) / 100;
     }
 
     function balanceOf(
         address account
-    ) external view returns (uint256) {
+    ) public view override returns (uint256) {
         return (_shares[account] * _rebaseMultiplier) / 100;
     }
 
@@ -42,36 +34,33 @@ contract MockRebase {
         uint256 newMultiplier
     ) external {
         _rebaseMultiplier = newMultiplier;
-        emit Rebase(newMultiplier);
+
+        emit Rebase({newMultiplier: newMultiplier});
     }
 
     function mint(
         address to,
         uint256 amount
-    ) external {
+    ) public override {
         uint256 shares = (amount * 100) / _rebaseMultiplier;
+
         _totalShares += shares;
         _shares[to] += shares;
-        emit Transfer(address(0), to, amount);
-    }
 
-    function approve(
-        address spender,
-        uint256 amount
-    ) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
+        emit Transfer({from: address(0), to: to, amount: amount});
     }
 
     function transfer(
         address to,
         uint256 amount
-    ) external returns (bool) {
+    ) public override returns (bool) {
         uint256 sharesToTransfer = (amount * 100) / _rebaseMultiplier;
+
         _shares[msg.sender] -= sharesToTransfer;
         _shares[to] += sharesToTransfer;
-        emit Transfer(msg.sender, to, amount);
+
+        emit Transfer({from: msg.sender, to: to, amount: amount});
+
         return true;
     }
 
@@ -79,15 +68,16 @@ contract MockRebase {
         address from,
         address to,
         uint256 amount
-    ) external returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
-        if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
-        }
+    ) public override returns (bool) {
+        _spendAllowance(from, msg.sender, amount);
+
         uint256 sharesToTransfer = (amount * 100) / _rebaseMultiplier;
+
         _shares[from] -= sharesToTransfer;
         _shares[to] += sharesToTransfer;
-        emit Transfer(from, to, amount);
+
+        emit Transfer({from: from, to: to, amount: amount});
+
         return true;
     }
 }

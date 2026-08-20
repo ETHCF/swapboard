@@ -1,167 +1,153 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity 0.8.33;
+pragma solidity 0.8.36;
 
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {ISwapboard} from "./interfaces/ISwapboard.sol";
-import {IWETH} from "./interfaces/IWETH.sol";
+import {Semver} from "./Semver.sol";
 
 /// @title Swapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
-/// @notice Trustless OTC bulletin board for ERC20 token swaps on Ethereum
+/// @notice Trustless OTC bulletin board for ERC20 and native ETH swaps on Ethereum
 /// @dev This contract implements a simple orderbook for peer-to-peer token swaps.
 ///
 ///      Key properties:
 ///      - No admin functions, fees, or upgrades
-///      - Orders are filled atomically (all-or-nothing)
+///      - Full fills are atomic; partial fills are opt-in via `partialFillAllowed`
+///      - Partial fill size is specified as tokenA to receive (`amountA`); tokenB paid is ceiled
 ///      - Fee-on-transfer tokens are rejected for tokenA (selling token)
+///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
+///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
+///        remaining amounts are packed separately so fill % is readable on-chain
 ///      - Reentrancy protected via OpenZeppelin ReentrancyGuardTransient (EIP-1153)
 ///
 ///      Security considerations:
 ///      - Front-running is possible on fillOrder (inherent to on-chain orderbooks)
 ///      - Rebasing tokens may cause unexpected behavior
 ///      - Malicious tokens can cause fund loss - users must verify token contracts
+///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
+///        can run `receive`/`fallback`; always after state updates (CEI)
+///      - Floor/ceil rounding on partial fills may leave tokenA dust in escrow; refunding that dust
+///        is not worth the gas. It can later benefit a user who rounds favorably on another
+///        fill where that dust token is tokenB
 ///
 /// @custom:security-contact zak@numbergroup.xyz
-contract Swapboard is ISwapboard, ReentrancyGuardTransient {
+contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
+    using Address for address payable;
 
-    /// @notice Canonical WETH address for this deployment
-    address private immutable WETH;
+    /// @notice Canonical placeholder address representing native ETH
+    address private constant _ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /// @notice Counter for generating unique order IDs
     /// @dev Starts at 0, increments by 1 for each new order
-    uint256 public nextOrderId;
+    uint256 private _nextOrderId;
 
     /// @notice Mapping from order ID to Order struct
     /// @dev Non-existent orders return default struct with maker=address(0) and active=false
-    mapping(uint256 orderId => Order order) public orders;
+    mapping(uint256 orderId => Order order) private _orders;
 
-    /// @notice Sets the canonical WETH address for this deployment
-    /// @param _weth Address of the WETH contract (must be a deployed contract)
-    constructor(
-        address _weth
-    ) {
-        if (_weth == address(0)) {
-            revert ZeroAddress();
-        }
-        if (_weth.code.length == 0) {
-            revert NotAContract(_weth);
-        }
-        WETH = _weth;
-    }
-
-    /// @notice Accept ETH only from WETH contract (for withdraw callbacks)
-    receive() external payable {
-        if (msg.sender != WETH) {
-            revert NotWETH(WETH, msg.sender);
-        }
-    }
-
-    /// @inheritdoc ISwapboard
-    function weth() external view returns (address) {
-        return WETH;
-    }
+    /// @notice Initializes Swapboard
+    constructor() Semver(2, 0, 0) {}
 
     /// @inheritdoc ISwapboard
     /// @dev Token addresses are identity-based. Aliased or rebranded tokens at different
     ///      addresses are treated as distinct tokens. Users must verify token addresses.
     function createOrder(
         address tokenA,
-        uint256 amountA,
+        uint128 amountA,
         address tokenB,
-        uint256 amountB
-    ) external nonReentrant returns (uint256 orderId) {
-        if (tokenA == address(0)) {
-            revert ZeroAddress();
-        }
-        if (tokenB == address(0)) {
-            revert ZeroAddress();
-        }
-        if (amountA == 0) {
-            revert ZeroAmount();
-        }
-        if (amountB == 0) {
-            revert ZeroAmount();
-        }
-        if (tokenA == tokenB) {
-            revert SameToken();
-        }
-        if (tokenA.code.length == 0) {
-            revert NotAContract(tokenA);
-        }
-        if (tokenB.code.length == 0) {
-            revert NotAContract(tokenB);
+        uint128 amountB,
+        bool partialFillAllowed
+    ) external payable nonReentrant returns (uint256 orderId) {
+        _validateCreateOrder(tokenA, amountA, tokenB, amountB);
+
+        if (tokenA != _ETH) {
+            _pullExactToken(tokenA, amountA);
         }
 
-        uint256 balanceBefore = IERC20(tokenA).balanceOf(address(this));
-        IERC20(tokenA).safeTransferFrom(msg.sender, address(this), amountA);
-        uint256 balanceAfter = IERC20(tokenA).balanceOf(address(this));
-
-        // Detect fee-on-transfer tokens by comparing received amount to expected
-        // Using unchecked is safe: balanceAfter >= balanceBefore after successful transfer
+        // Unchecked is safe: order IDs are sequential from 0; wrapping would require 2^256 orders.
         unchecked {
-            uint256 received = balanceAfter - balanceBefore;
-            if (received != amountA) {
-                revert BalanceMismatch(amountA, received);
-            }
-            orderId = nextOrderId;
+            orderId = _nextOrderId;
 
-            ++nextOrderId;
+            ++_nextOrderId;
         }
 
-        orders[orderId] = Order({
+        _orders[orderId] = Order({
             maker: msg.sender,
             active: true,
+            partialFillAllowed: partialFillAllowed,
+            tokenA: tokenA,
+            tokenB: tokenB,
+            amountA: amountA,
+            amountB: amountB,
+            availableA: amountA,
+            availableB: amountB
+        });
+
+        emit OrderCreated({
+            orderId: orderId,
+            maker: msg.sender,
             tokenA: tokenA,
             amountA: amountA,
             tokenB: tokenB,
-            amountB: amountB
+            amountB: amountB,
+            partialFillAllowed: partialFillAllowed
         });
-
-        emit OrderCreated(orderId, msg.sender, tokenA, amountA, tokenB, amountB);
     }
 
     /// @inheritdoc ISwapboard
     /// @dev Fee-on-transfer tokenB: maker receives less than amountB. This is maker's risk.
+    ///      tokenB in uses ceil division so the taker never underpays for the requested tokenA.
+    ///      Residual tokenA dust (when amountB is exhausted first) is not refunded (not worth the
+    ///      gas); it can be picked up by any user that rounds favorably on another order where
+    ///      the dust token is tokenB.
     function fillOrder(
         uint256 orderId,
+        uint128 amountA,
         uint256 deadline
-    ) external nonReentrant {
+    ) external payable nonReentrant {
         if (deadline != 0 && block.timestamp > deadline) {
             revert DeadlineExpired();
         }
-
-        Order storage order = orders[orderId];
-
-        (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) {
-            revert OrderNotFound(orderId);
-        }
-        if (!active) {
-            revert OrderNotActive(orderId);
+        if (amountA == 0) {
+            revert ZeroAmount();
         }
 
-        order.active = false;
+        Order storage order = _orders[orderId];
+        (address maker, address tokenA, address tokenB, uint128 amountBIn) =
+            _validateAndQuoteFill(order, orderId, amountA);
 
-        // Transfer tokenB from taker to maker
-        // Note: If tokenB is fee-on-transfer, maker receives less than amountB
-        IERC20(order.tokenB).safeTransferFrom(msg.sender, maker, order.amountB);
+        uint256 requiredEth = tokenB == _ETH ? amountBIn : 0;
+        if (msg.value != requiredEth) {
+            revert ETHAmountMismatch(requiredEth, msg.value);
+        }
 
-        // Transfer tokenA from contract to taker
-        IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
+        // Unchecked is safe: _validateAndQuoteFill ensures amountA <= availableA and
+        // amountBIn <= availableB (exact remaining or ceiled proportion).
+        unchecked {
+            order.availableA -= amountA;
+            order.availableB -= amountBIn;
+        }
+        if (order.availableA == 0 || order.availableB == 0) {
+            order.active = false;
+        }
 
-        emit OrderFilled(orderId, msg.sender);
+        _transferFill(maker, tokenA, tokenB, amountA, amountBIn);
+
+        emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB: amountBIn});
     }
 
     /// @inheritdoc ISwapboard
     function cancelOrder(
         uint256 orderId
     ) external nonReentrant {
-        Order storage order = orders[orderId];
+        Order storage order = _orders[orderId];
 
-        (address maker, bool active) = (order.maker, order.active);
+        (address maker, bool active, address tokenA, uint128 availableA) =
+            (order.maker, order.active, order.tokenA, order.availableA);
         if (maker == address(0)) {
             revert OrderNotFound(orderId);
         }
@@ -173,198 +159,185 @@ contract Swapboard is ISwapboard, ReentrancyGuardTransient {
         }
 
         order.active = false;
+        order.availableA = 0;
+        order.availableB = 0;
 
-        IERC20(order.tokenA).safeTransfer(maker, order.amountA);
+        if (tokenA == _ETH) {
+            // Forward all gas so maker contracts can execute receive/fallback.
+            payable(maker).sendValue(availableA);
+        } else {
+            IERC20(tokenA).safeTransfer(maker, availableA);
+        }
 
-        emit OrderCanceled(orderId);
+        emit OrderCanceled({orderId: orderId});
     }
 
     /// @inheritdoc ISwapboard
-    /// @dev Token addresses are identity-based. Aliased or rebranded tokens at different
-    ///      addresses are treated as distinct tokens. Users must verify token addresses.
-    function createOrderWithEth(
-        address tokenB,
-        uint256 amountB
-    ) external payable nonReentrant returns (uint256 orderId) {
-        if (msg.value == 0) {
-            revert ZeroETH();
-        }
-        if (tokenB == address(0)) {
-            revert ZeroAddress();
-        }
-        if (amountB == 0) {
-            revert ZeroAmount();
-        }
-        if (tokenB == WETH) {
-            revert SameToken();
-        }
-        if (tokenB.code.length == 0) {
-            revert NotAContract(tokenB);
-        }
-
-        IWETH(WETH).deposit{value: msg.value}();
-
-        unchecked {
-            orderId = nextOrderId;
-
-            ++nextOrderId;
-        }
-
-        orders[orderId] = Order({
-            maker: msg.sender,
-            active: true,
-            tokenA: WETH,
-            amountA: msg.value,
-            tokenB: tokenB,
-            amountB: amountB
-        });
-
-        emit OrderCreated(orderId, msg.sender, WETH, msg.value, tokenB, amountB);
+    function getEth() external pure returns (address) {
+        return _ETH;
     }
 
     /// @inheritdoc ISwapboard
-    function fillOrderWithEth(
-        uint256 orderId,
-        uint256 deadline
-    ) external payable nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) {
-            revert DeadlineExpired();
-        }
-
-        Order storage order = orders[orderId];
-
-        (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) {
-            revert OrderNotFound(orderId);
-        }
-        if (!active) {
-            revert OrderNotActive(orderId);
-        }
-
-        uint256 amountB = order.amountB;
-
-        if (order.tokenB != WETH) {
-            revert NotWETH(WETH, order.tokenB);
-        }
-        if (msg.value != amountB) {
-            revert ETHAmountMismatch(amountB, msg.value);
-        }
-
-        order.active = false;
-
-        IWETH(WETH).deposit{value: msg.value}();
-        IERC20(WETH).safeTransfer(maker, amountB);
-
-        IERC20(order.tokenA).safeTransfer(msg.sender, order.amountA);
-
-        emit OrderFilled(orderId, msg.sender);
-    }
-
-    /// @inheritdoc ISwapboard
-    function cancelOrderUnwrap(
-        uint256 orderId
-    ) external nonReentrant {
-        Order storage order = orders[orderId];
-
-        (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) {
-            revert OrderNotFound(orderId);
-        }
-        if (!active) {
-            revert OrderNotActive(orderId);
-        }
-        if (msg.sender != maker) {
-            revert NotMaker(orderId, msg.sender, maker);
-        }
-        if (order.tokenA != WETH) {
-            revert NotWETH(WETH, order.tokenA);
-        }
-
-        uint256 amountA = order.amountA;
-
-        order.active = false;
-
-        IWETH(WETH).withdraw(amountA);
-
-        bool success;
-        // solhint-disable-next-line no-inline-assembly
-        assembly {
-            success := call(gas(), maker, amountA, 0, 0, 0, 0)
-        }
-        if (!success) {
-            revert ETHTransferFailed(maker);
-        }
-
-        emit OrderCanceled(orderId);
-    }
-
-    /// @inheritdoc ISwapboard
-    function fillOrderUnwrap(
-        uint256 orderId,
-        uint256 deadline
-    ) external nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) {
-            revert DeadlineExpired();
-        }
-
-        Order storage order = orders[orderId];
-
-        (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) {
-            revert OrderNotFound(orderId);
-        }
-        if (!active) {
-            revert OrderNotActive(orderId);
-        }
-        if (order.tokenA != WETH) {
-            revert NotWETH(WETH, order.tokenA);
-        }
-
-        uint256 amountA = order.amountA;
-
-        order.active = false;
-
-        IERC20(order.tokenB).safeTransferFrom(msg.sender, maker, order.amountB);
-
-        IWETH(WETH).withdraw(amountA);
-
-        bool success;
-        // solhint-disable-next-line no-inline-assembly
-        assembly {
-            success := call(gas(), caller(), amountA, 0, 0, 0, 0)
-        }
-        if (!success) {
-            revert ETHTransferFailed(msg.sender);
-        }
-
-        emit OrderFilled(orderId, msg.sender);
+    function getNextOrderId() external view returns (uint256) {
+        return _nextOrderId;
     }
 
     /// @inheritdoc ISwapboard
     function getOrder(
         uint256 orderId
     ) external view returns (Order memory) {
-        return orders[orderId];
+        return _orders[orderId];
     }
 
     /// @inheritdoc ISwapboard
     /// @dev Gas scales linearly with array length. Callers should limit to ~100 IDs per call.
     function getOrders(
         uint256[] calldata orderIds
-    ) external view returns (Order[] memory result) {
-        result = new Order[](orderIds.length);
-        for (uint256 i; i < orderIds.length;) {
-            result[i] = orders[orderIds[i]];
-            unchecked {
-                ++i;
-            }
+    ) external view returns (Order[] memory) {
+        Order[] memory result = new Order[](orderIds.length);
+
+        for (uint256 i; i < orderIds.length; ++i) {
+            result[i] = _orders[orderIds[i]];
         }
+
+        return result;
     }
 
     /// @inheritdoc ISwapboard
     function canFill(
         uint256 orderId
     ) external view returns (bool) {
-        return orders[orderId].active;
+        return _orders[orderId].active;
+    }
+
+    /// @notice Validates createOrder arguments and exact ETH payment
+    /// @param tokenA Address of the asset to sell
+    /// @param amountA Amount of tokenA to deposit
+    /// @param tokenB Address of the asset wanted
+    /// @param amountB Amount of tokenB required to fill
+    function _validateCreateOrder(
+        address tokenA,
+        uint128 amountA,
+        address tokenB,
+        uint128 amountB
+    ) private view {
+        if (tokenA == address(0) || tokenB == address(0)) {
+            revert ZeroAddress();
+        }
+        if (amountA == 0 || amountB == 0) {
+            revert ZeroAmount();
+        }
+        if (tokenA == tokenB) {
+            revert SameToken();
+        }
+
+        bool tokenAIsEth = tokenA == _ETH;
+        bool tokenBIsEth = tokenB == _ETH;
+
+        if (!tokenAIsEth && tokenA.code.length == 0) {
+            revert NotAContract(tokenA);
+        }
+        if (!tokenBIsEth && tokenB.code.length == 0) {
+            revert NotAContract(tokenB);
+        }
+
+        uint256 requiredEth = tokenAIsEth ? amountA : 0;
+        if (msg.value != requiredEth) {
+            revert ETHAmountMismatch(requiredEth, msg.value);
+        }
+    }
+
+    /// @notice Validates a fill and quotes the ceiled tokenB payment
+    /// @dev Ceil division benefits escrow/maker. Residual tokenA dust is not refunded.
+    ///      Intermediate math widens to uint256; both factors are uint128 so the product fits.
+    /// @param order Order storage slot to read
+    /// @param orderId Order id for error payloads
+    /// @param amountA Requested tokenA out
+    /// @return maker Order maker
+    /// @return tokenA Sold asset
+    /// @return tokenB Payment asset
+    /// @return amountBIn Ceiled tokenB the taker must pay
+    function _validateAndQuoteFill(
+        Order storage order,
+        uint256 orderId,
+        uint128 amountA
+    ) private view returns (address maker, address tokenA, address tokenB, uint128 amountBIn) {
+        maker = order.maker;
+        if (maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!order.active) {
+            revert OrderNotActive(orderId);
+        }
+
+        uint128 availableA = order.availableA;
+        if (amountA > availableA) {
+            revert FillAmountTooHigh(orderId, amountA, availableA);
+        }
+        if (!order.partialFillAllowed && amountA != availableA) {
+            revert PartialFillNotAllowed(orderId);
+        }
+
+        tokenA = order.tokenA;
+        tokenB = order.tokenB;
+        uint128 availableB = order.availableB;
+        // Product of two uint128 values always fits in uint256; ceil result is <= availableB.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amountBIn = amountA == availableA
+            ? availableB
+            : uint128((uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA));
+        if (amountBIn == 0) {
+            revert ZeroAmount();
+        }
+    }
+
+    /// @notice Moves tokenB from taker to maker and tokenA from escrow to taker
+    /// @param maker Order maker receiving tokenB
+    /// @param tokenA Sold asset (possibly ETH sentinel)
+    /// @param tokenB Payment asset (possibly ETH sentinel)
+    /// @param amountA tokenA amount to send to the taker
+    /// @param amountBIn tokenB amount to take from the taker
+    function _transferFill(
+        address maker,
+        address tokenA,
+        address tokenB,
+        uint128 amountA,
+        uint128 amountBIn
+    ) private {
+        if (tokenB == _ETH) {
+            // Forward all gas so maker contracts can execute receive/fallback.
+            payable(maker).sendValue(amountBIn);
+        } else {
+            // Note: If tokenB is fee-on-transfer, maker receives less than amountB
+            IERC20(tokenB).safeTransferFrom(msg.sender, maker, amountBIn);
+        }
+
+        if (tokenA == _ETH) {
+            // Forward all gas so taker contracts can execute receive/fallback.
+            payable(msg.sender).sendValue(amountA);
+        } else {
+            IERC20(tokenA).safeTransfer(msg.sender, amountA);
+        }
+    }
+
+    /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer
+    /// @param token ERC20 token to pull from the caller
+    /// @param amount Expected amount received
+    function _pullExactToken(
+        address token,
+        uint256 amount
+    ) private {
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        uint256 balanceAfter = IERC20(token).balanceOf(address(this));
+
+        // Detect fee-on-transfer tokens by comparing received amount to expected
+        // Using unchecked is safe: balanceAfter >= balanceBefore after successful transfer
+        unchecked {
+            uint256 received = balanceAfter - balanceBefore;
+            if (received != amount) {
+                revert BalanceMismatch(amount, received);
+            }
+        }
     }
 }
