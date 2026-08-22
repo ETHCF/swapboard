@@ -686,19 +686,25 @@ describe("getCachedPrice", () => {
   // MUTATION: Use <= instead of > for TTL check
   // BREAKS: Entry at exactly TTL boundary behaves wrong
   test("TTL boundary: expired at exactly TTL+1ms", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(1_000_000);
     const cache = new Map();
-    const exactlyExpired = { usd: 3500, fetchedAt: Date.now() - 60001 };
+    const exactlyExpired = { usd: 3500, fetchedAt: 1_000_000 - 60001 };
     cache.set("weth", exactlyExpired);
     expect(getCachedPrice("weth", cache, 60000)).toBe(null);
+    jest.useRealTimers();
   });
 
   // MUTATION: Change > to >= in TTL check
   // BREAKS: Entry at exactly TTL is incorrectly expired
   test("TTL boundary: valid at exactly TTL (> not >=)", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(1_000_000);
     const cache = new Map();
-    const exactlyAtTTL = { usd: 3500, fetchedAt: Date.now() - 60000 };
+    const exactlyAtTTL = { usd: 3500, fetchedAt: 1_000_000 - 60000 };
     cache.set("weth", exactlyAtTTL);
     expect(getCachedPrice("weth", cache, 60000)).toBe(exactlyAtTTL);
+    jest.useRealTimers();
   });
 });
 

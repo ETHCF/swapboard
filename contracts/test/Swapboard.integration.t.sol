@@ -43,50 +43,18 @@ contract SwapboardIntegrationTest is Test {
     function test_multipleUsersMultipleOrders() public {
         vm.startPrank(_alice);
         _weth.approve(address(_board), 100 ether);
-        uint256 order0 = _board.createOrder(
-            ISwapboard.CreateOrderParams({
-                tokenA: address(_weth),
-                amountA: 10 ether,
-                tokenB: address(_usdc),
-                amountB: 30_000e6,
-                partialFillAllowed: false
-            })
-        );
-        uint256 order1 = _board.createOrder(
-            ISwapboard.CreateOrderParams({
-                tokenA: address(_weth),
-                amountA: 20 ether,
-                tokenB: address(_usdc),
-                amountB: 58_000e6,
-                partialFillAllowed: false
-            })
-        );
+        uint256 order0 = _board.createOrder(_order(address(_weth), 10 ether, address(_usdc), 30_000e6));
+        uint256 order1 = _board.createOrder(_order(address(_weth), 20 ether, address(_usdc), 58_000e6));
         vm.stopPrank();
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 1_000_000e6);
-        uint256 order2 = _board.createOrder(
-            ISwapboard.CreateOrderParams({
-                tokenA: address(_usdc),
-                amountA: 100_000e6,
-                tokenB: address(_weth),
-                amountB: 35 ether,
-                partialFillAllowed: false
-            })
-        );
+        uint256 order2 = _board.createOrder(_order(address(_usdc), 100_000e6, address(_weth), 35 ether));
         vm.stopPrank();
 
         vm.startPrank(_dave);
         _wbtc.approve(address(_board), 10e8);
-        uint256 order3 = _board.createOrder(
-            ISwapboard.CreateOrderParams({
-                tokenA: address(_wbtc),
-                amountA: 1e8,
-                tokenB: address(_usdc),
-                amountB: 95_000e6,
-                partialFillAllowed: false
-            })
-        );
+        uint256 order3 = _board.createOrder(_order(address(_wbtc), 1e8, address(_usdc), 95_000e6));
         vm.stopPrank();
 
         assertEq(_board.getNextOrderId(), 4);
@@ -636,5 +604,16 @@ contract SwapboardIntegrationTest is Test {
         assertTrue(_board.canFill(ids[1]));
         assertEq(_board.getOrder(ids[1]).availableA, 15 ether);
         assertEq(_weth.balanceOf(_bob), 1000 ether + 15 ether);
+    }
+
+    function _order(
+        address tokenA,
+        uint128 amountA,
+        address tokenB,
+        uint128 amountB
+    ) private pure returns (ISwapboard.CreateOrderParams memory) {
+        return ISwapboard.CreateOrderParams({
+            tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB, partialFillAllowed: false
+        });
     }
 }
