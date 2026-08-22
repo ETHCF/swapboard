@@ -562,8 +562,9 @@ contract SwapboardIntegrationTest is Test {
         _board.cancelOrder(orderId);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
         assertFalse(order.active);
-        assertEq(order.amountA, 50 ether);
+        assertEq(order.amountA, 0);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
         assertEq(_weth.balanceOf(_alice), aliceWethBefore - 20 ether);

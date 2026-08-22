@@ -45,6 +45,7 @@ contract SwapboardHandler is Test {
     uint256 private _callsCreateOrders;
     uint256 private _callsFillOrder;
     uint256 private _callsCancelOrder;
+    uint256 private _callsCancelOrders;
 
     modifier useActor(
         uint256 actorIndexSeed
@@ -156,6 +157,10 @@ contract SwapboardHandler is Test {
 
     function getCallsCancelOrder() external view returns (uint256) {
         return _callsCancelOrder;
+    }
+
+    function getCallsCancelOrders() external view returns (uint256) {
+        return _callsCancelOrders;
     }
 
     /// @notice Creates a new ERC20/ERC20 order with bounded amounts
@@ -449,6 +454,48 @@ contract SwapboardHandler is Test {
         ++_ghostOrdersCancelled;
         --_ghostActiveOrders;
         _ghostOrderActive[orderId] = false;
+    }
+
+    /// @notice Cancels two same-tokenA orders owned by the actor in one batch
+    function cancelOrders(
+        uint256 actorSeed,
+        uint256 orderIdSeed1,
+        uint256 orderIdSeed2
+    ) external useActor(actorSeed) {
+        uint256 nextId = _board.getNextOrderId();
+        if (nextId < 2) {
+            return;
+        }
+
+        uint256 id1 = bound(orderIdSeed1, 0, nextId - 1);
+        uint256 id2 = bound(orderIdSeed2, 0, nextId - 1);
+        if (id1 == id2) {
+            return;
+        }
+
+        ISwapboard.Order memory order1 = _board.getOrder(id1);
+        ISwapboard.Order memory order2 = _board.getOrder(id2);
+        if (!order1.active || !order2.active) {
+            return;
+        }
+        if (order1.maker != _currentActor || order2.maker != _currentActor) {
+            return;
+        }
+        if (order1.tokenA != order2.tokenA || order1.tokenA == _ETH) {
+            return;
+        }
+
+        ++_callsCancelOrders;
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = id1;
+        ids[1] = id2;
+        _board.cancelOrders(ids);
+
+        _ghostTotalTokenAWithdrawn += order1.availableA + order2.availableA;
+        _ghostOrdersCancelled += 2;
+        _ghostActiveOrders -= 2;
+        _ghostOrderActive[id1] = false;
+        _ghostOrderActive[id2] = false;
     }
 
     /// @notice Records ghost state for a newly created order

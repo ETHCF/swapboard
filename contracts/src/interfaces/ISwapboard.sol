@@ -133,6 +133,10 @@ interface ISwapboard is ISemver {
     /// @param remaining The available amountA on the order
     error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining);
 
+    /// @notice Thrown when the same order ID appears more than once in a cancel batch
+    /// @param orderId The duplicated order ID
+    error DuplicateOrderId(uint256 orderId);
+
     /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
     /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer tokens.
     ///      For ETH tokenA (`getEth()`), requires `msg.value == amountA`.
@@ -171,10 +175,18 @@ interface ISwapboard is ISemver {
 
     /// @notice Cancels an existing order and returns available tokenA to maker
     /// @dev Only callable by the order's maker. Returns ETH if tokenA is ETH.
-    ///      Original `amountA`/`amountB` are preserved; `availableA`/`availableB` are zeroed.
+    ///      Clears the order from storage after refunding.
     /// @param orderId The unique identifier of the order to cancel
     function cancelOrder(
         uint256 orderId
+    ) external;
+
+    /// @notice Cancels multiple orders in one call
+    /// @dev Only the maker may cancel each order. Repeated `tokenA` refunds are aggregated into
+    ///      a single ERC20 transfer per unique token. ETH refunds are summed into one send.
+    /// @param orderIds Identifiers of the orders to cancel
+    function cancelOrders(
+        uint256[] calldata orderIds
     ) external;
 
     /// @notice Canonical placeholder address representing native ETH
