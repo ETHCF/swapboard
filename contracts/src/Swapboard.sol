@@ -117,7 +117,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId
     ) external nonReentrant {
         uint256[] memory orderIds = new uint256[](1);
+
         orderIds[0] = orderId;
+
         _cancelOrders(orderIds);
     }
 
@@ -150,9 +152,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function getOrders(
         uint256[] calldata orderIds
     ) external view returns (Order[] memory) {
-        Order[] memory result = new Order[](orderIds.length);
+        uint256 length = orderIds.length;
+        Order[] memory result = new Order[](length);
 
-        for (uint256 i; i < orderIds.length; ++i) {
+        for (uint256 i; i < length; ++i) {
             result[i] = _orders[orderIds[i]];
         }
 
@@ -224,7 +227,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function _validateCreateOrders(
         CreateOrderParams[] memory orders
     ) private view {
-        for (uint256 i; i < orders.length; ++i) {
+        uint256 length = orders.length;
+        for (uint256 i; i < length; ++i) {
             CreateOrderParams memory params = orders[i];
 
             _validateCreateOrder(params.tokenA, params.amountA, params.tokenB, params.amountB);
@@ -318,7 +322,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address[] memory tokens,
         uint256[] memory amounts
     ) private {
-        for (uint256 i; i < tokens.length; ++i) {
+        uint256 length = tokens.length;
+        for (uint256 i; i < length; ++i) {
             _pullExactToken(tokens[i], amounts[i]);
         }
     }
@@ -513,7 +518,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function _deleteCanceledOrders(
         uint256[] memory orderIds
     ) private {
-        for (uint256 i; i < orderIds.length; ++i) {
+        uint256 length = orderIds.length;
+        for (uint256 i; i < length; ++i) {
             uint256 orderId = orderIds[i];
             delete _orders[orderId];
 
@@ -536,7 +542,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             // Forward all gas so maker contracts can execute receive/fallback.
             payable(recipient).sendValue(ethAmount);
         }
-        for (uint256 i; i < tokens.length; ++i) {
+
+        uint256 length = tokens.length;
+        for (uint256 i; i < length; ++i) {
             IERC20(tokens[i]).safeTransfer(recipient, amounts[i]);
         }
     }
