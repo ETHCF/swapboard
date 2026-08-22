@@ -14,6 +14,7 @@ contract EthReentrantReceiver {
         None,
         Fill,
         Cancel,
+        CancelOrders,
         Create
     }
 
@@ -51,6 +52,10 @@ contract EthReentrantReceiver {
             try _BOARD.fillOrder(_orderId, 1, 0) {} catch {}
         } else if (_attack == Attack.Cancel) {
             try _BOARD.cancelOrder(_orderId) {} catch {}
+        } else if (_attack == Attack.CancelOrders) {
+            uint256[] memory ids = new uint256[](1);
+            ids[0] = _orderId;
+            try _BOARD.cancelOrders(ids) {} catch {}
         } else if (_attack == Attack.Create) {
             try _BOARD.createOrder{value: 0}(
                 ISwapboard.CreateOrderParams({
