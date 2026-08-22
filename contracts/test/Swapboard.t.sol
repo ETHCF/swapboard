@@ -3405,6 +3405,112 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), totalA);
     }
 
+    /// @notice Tests createOrders reverts ZeroAddress on tokenB of a later item
+    function test_createOrders_revert_zeroAddress_tokenB_laterItem() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), AMOUNT_A, address(0), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        vm.expectRevert(ISwapboard.ZeroAddress.selector);
+        _board.createOrders(orders);
+        vm.stopPrank();
+
+        assertEq(_tokenA.getTransferFromCalls(), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Tests createOrders reverts NotAContract on tokenA of a later item
+    function test_createOrders_revert_notAContract_tokenA_laterItem() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(0x999), AMOUNT_A, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotAContract.selector, address(0x999)));
+        _board.createOrders(orders);
+        vm.stopPrank();
+
+        assertEq(_tokenA.getTransferFromCalls(), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Tests createOrders reverts when balance is below the aggregated amount
+    function test_createOrders_revert_insufficientBalance() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+
+        uint256 excess = _tokenA.balanceOf(_maker) - AMOUNT_A;
+        vm.prank(_maker);
+        assertTrue(_tokenA.transfer(address(0xdead), excess));
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        vm.expectRevert();
+        _board.createOrders(orders);
+        vm.stopPrank();
+
+        assertEq(_tokenA.getTransferFromCalls(), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore);
+        assertEq(_board.getNextOrderId(), 0);
+    }
+
+    /// @notice Tests createOrders then fills each order independently
+    function test_createOrders_thenFillEach() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        uint256[] memory ids = _board.createOrders(orders);
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B * 2);
+        _board.fillOrder(ids[0], AMOUNT_A, 0);
+        _board.fillOrder(ids[1], AMOUNT_A, 0);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(ids[0]));
+        assertFalse(_board.canFill(ids[1]));
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+        assertEq(_tokenA.balanceOf(_taker), AMOUNT_A * 10 + AMOUNT_A * 2);
+        assertEq(_tokenB.balanceOf(_maker), AMOUNT_B * 10 + AMOUNT_B * 2);
+    }
+
+    /// @notice Property: ETH tokenA deposits require msg.value equal to the sum
+    function testFuzz_createOrders_aggregatesEth(
+        uint256 amount1Seed,
+        uint256 amount2Seed
+    ) public {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amount1 = uint128(bound(amount1Seed, 1, 50 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amount2 = uint128(bound(amount2Seed, 1, 50 ether));
+        uint256 totalEth = uint256(amount1) + uint256(amount2);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(_eth, amount1, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(_eth, amount2, address(_tokenA), AMOUNT_A);
+
+        vm.deal(_maker, totalEth);
+        vm.prank(_maker);
+        uint256[] memory ids = _board.createOrders{value: totalEth}(orders);
+
+        assertEq(ids.length, 2);
+        assertEq(address(_board).balance, totalEth);
+        assertEq(_board.getOrder(ids[0]).availableA, amount1);
+        assertEq(_board.getOrder(ids[1]).availableA, amount2);
+        assertEq(_tokenA.getTransferFromCalls(), 0);
+    }
+
     /// @notice Tests cancelOrders returns aggregated ERC20 and ETH refunds
     function test_cancelOrders_mixedEthAndErc20() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
