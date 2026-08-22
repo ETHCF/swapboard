@@ -5,6 +5,7 @@ pragma solidity 0.8.36;
 
 import {Swapboard} from "../../src/Swapboard.sol";
 import {MockERC20} from "./MockERC20.sol";
+import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 
 /// @title EthReentrantReceiver
 /// @notice Receives ETH and attempts to reenter Swapboard (blocked by nonReentrant)
@@ -51,7 +52,12 @@ contract EthReentrantReceiver {
         } else if (_attack == Attack.Cancel) {
             try _BOARD.cancelOrder(_orderId) {} catch {}
         } else if (_attack == Attack.Create) {
-            try _BOARD.createOrder{value: 0}(address(_TOKEN), 1, address(_TOKEN), 1, false) {} catch {}
+            try _BOARD.createOrder{value: 0}(
+                ISwapboard.CreateOrderParams({
+                    tokenA: address(_TOKEN), amountA: 1, tokenB: address(_TOKEN), amountB: 1, partialFillAllowed: false
+                })
+            ) {}
+                catch {}
         }
 
         _attacking = false;
