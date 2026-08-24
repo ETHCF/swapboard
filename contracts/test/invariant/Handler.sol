@@ -42,6 +42,7 @@ contract SwapboardHandler is Test {
     uint256 private _callsCreateOrderSellEth;
     uint256 private _callsCreateOrderWantEth;
     uint256 private _callsCreateOrderAllowPartial;
+    uint256 private _callsCreateOrders;
     uint256 private _callsFillOrder;
     uint256 private _callsCancelOrder;
 
@@ -145,6 +146,10 @@ contract SwapboardHandler is Test {
         return _callsCreateOrderAllowPartial;
     }
 
+    function getCallsCreateOrders() external view returns (uint256) {
+        return _callsCreateOrders;
+    }
+
     function getCallsFillOrder() external view returns (uint256) {
         return _callsFillOrder;
     }
@@ -174,7 +179,15 @@ contract SwapboardHandler is Test {
         uint128 amountA128 = uint128(amountA);
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 amountB128 = uint128(amountB);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA128, address(_tokenB), amountB128, false);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA128,
+                tokenB: address(_tokenB),
+                amountB: amountB128,
+                partialFillAllowed: false
+            })
+        );
 
         _ghostTotalTokenADeposited += amountA;
         _trackCreatedOrder(orderId, amountA128, amountB128);
@@ -200,7 +213,15 @@ contract SwapboardHandler is Test {
         uint128 amountA128 = uint128(amountA);
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 amountB128 = uint128(amountB);
-        uint256 orderId = _board.createOrder{value: amountA}(_ETH, amountA128, address(_tokenB), amountB128, false);
+        uint256 orderId = _board.createOrder{value: amountA}(
+            ISwapboard.CreateOrderParams({
+                tokenA: _ETH,
+                amountA: amountA128,
+                tokenB: address(_tokenB),
+                amountB: amountB128,
+                partialFillAllowed: false
+            })
+        );
 
         _ghostTotalEthDeposited += amountA;
         _trackCreatedOrder(orderId, amountA128, amountB128);
@@ -226,7 +247,15 @@ contract SwapboardHandler is Test {
         uint128 amountA128 = uint128(amountA);
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 amountB128 = uint128(amountB);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA128, _ETH, amountB128, false);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA128,
+                tokenB: _ETH,
+                amountB: amountB128,
+                partialFillAllowed: false
+            })
+        );
 
         _ghostTotalTokenADeposited += amountA;
         _trackCreatedOrder(orderId, amountA128, amountB128);
@@ -252,10 +281,64 @@ contract SwapboardHandler is Test {
         uint128 amountA128 = uint128(amountA);
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 amountB128 = uint128(amountB);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA128, address(_tokenB), amountB128, true);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA128,
+                tokenB: address(_tokenB),
+                amountB: amountB128,
+                partialFillAllowed: true
+            })
+        );
 
         _ghostTotalTokenADeposited += amountA;
         _trackCreatedOrder(orderId, amountA128, amountB128);
+    }
+
+    /// @notice Creates two same-tokenA orders in one aggregated pull
+    function createOrders(
+        uint256 actorSeed,
+        uint256 amountA,
+        uint256 amountB
+    ) external useActor(actorSeed) {
+        amountA = bound(amountA, 2, 1000 ether);
+        amountB = bound(amountB, 2, 1000 ether);
+
+        if (_tokenA.balanceOf(_currentActor) < amountA) {
+            return;
+        }
+
+        uint256 amountA1 = amountA / 2;
+        uint256 amountA2 = amountA - amountA1;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA1_128 = uint128(amountA1);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA2_128 = uint128(amountA2);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB128 = uint128(amountB);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = ISwapboard.CreateOrderParams({
+            tokenA: address(_tokenA),
+            amountA: amountA1_128,
+            tokenB: address(_tokenB),
+            amountB: amountB128,
+            partialFillAllowed: false
+        });
+        orders[1] = ISwapboard.CreateOrderParams({
+            tokenA: address(_tokenA),
+            amountA: amountA2_128,
+            tokenB: address(_tokenB),
+            amountB: amountB128,
+            partialFillAllowed: true
+        });
+
+        ++_callsCreateOrders;
+        uint256[] memory ids = _board.createOrders(orders);
+
+        _ghostTotalTokenADeposited += amountA;
+        _trackCreatedOrder(ids[0], amountA1_128, amountB128);
+        _trackCreatedOrder(ids[1], amountA2_128, amountB128);
     }
 
     /// @notice Fills an existing order (full or partial when allowed)

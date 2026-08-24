@@ -35,6 +35,20 @@ interface ISwapboard is ISemver {
         uint128 availableB;
     }
 
+    /// @notice Arguments for creating a single OTC order
+    /// @param tokenA Address of the asset to sell (`getEth()` for native ETH)
+    /// @param amountA Amount of tokenA to deposit (in base units / wei)
+    /// @param tokenB Address of the asset wanted in exchange (`getEth()` for native ETH)
+    /// @param amountB Amount of tokenB required to fill the order
+    /// @param partialFillAllowed Whether the order may be filled in multiple parts
+    struct CreateOrderParams {
+        address tokenA;
+        uint128 amountA;
+        address tokenB;
+        uint128 amountB;
+        bool partialFillAllowed;
+    }
+
     // solhint-disable gas-indexed-events
 
     /// @notice Emitted when a new order is created
@@ -123,19 +137,20 @@ interface ISwapboard is ISemver {
     /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer tokens.
     ///      For ETH tokenA (`getEth()`), requires `msg.value == amountA`.
     ///      Amounts use `uint128`, which is sufficient for practical order sizes.
-    /// @param tokenA Address of the asset to sell (`getEth()` for native ETH)
-    /// @param amountA Amount of tokenA to deposit (in base units / wei)
-    /// @param tokenB Address of the asset wanted in exchange (`getEth()` for native ETH)
-    /// @param amountB Amount of tokenB required to fill the order
-    /// @param partialFillAllowed Whether the order may be filled in multiple parts
+    /// @param order Order creation arguments
     /// @return orderId The unique identifier for the created order
     function createOrder(
-        address tokenA,
-        uint128 amountA,
-        address tokenB,
-        uint128 amountB,
-        bool partialFillAllowed
-    ) external payable returns (uint256 orderId);
+        CreateOrderParams calldata order
+    ) external payable returns (uint256);
+
+    /// @notice Creates multiple OTC orders in one call
+    /// @dev Repeated `tokenA` deposits are aggregated into a single ERC20 `transferFrom` per
+    ///      unique token. ETH deposits are summed and checked against `msg.value`.
+    /// @param orders Order creation arguments
+    /// @return orderIds Identifiers assigned to each created order, in input order
+    function createOrders(
+        CreateOrderParams[] calldata orders
+    ) external payable returns (uint256[] memory);
 
     /// @notice Fills an existing order for the given amountA
     /// @dev Taker receives `amountA` of tokenA and pays proportional tokenB.

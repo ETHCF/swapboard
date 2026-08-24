@@ -56,46 +56,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @dev Token addresses are identity-based. Aliased or rebranded tokens at different
     ///      addresses are treated as distinct tokens. Users must verify token addresses.
     function createOrder(
-        address tokenA,
-        uint128 amountA,
-        address tokenB,
-        uint128 amountB,
-        bool partialFillAllowed
-    ) external payable nonReentrant returns (uint256 orderId) {
-        _validateCreateOrder(tokenA, amountA, tokenB, amountB);
+        CreateOrderParams calldata order
+    ) external payable nonReentrant returns (uint256) {
+        CreateOrderParams[] memory orders = new CreateOrderParams[](1);
+        orders[0] = order;
+        return _createOrders(orders)[0];
+    }
 
-        if (tokenA != _ETH) {
-            _pullExactToken(tokenA, amountA);
-        }
-
-        // Unchecked is safe: order IDs are sequential from 0; wrapping would require 2^256 orders.
-        unchecked {
-            orderId = _nextOrderId;
-
-            ++_nextOrderId;
-        }
-
-        _orders[orderId] = Order({
-            maker: msg.sender,
-            active: true,
-            partialFillAllowed: partialFillAllowed,
-            tokenA: tokenA,
-            tokenB: tokenB,
-            amountA: amountA,
-            amountB: amountB,
-            availableA: amountA,
-            availableB: amountB
-        });
-
-        emit OrderCreated({
-            orderId: orderId,
-            maker: msg.sender,
-            tokenA: tokenA,
-            amountA: amountA,
-            tokenB: tokenB,
-            amountB: amountB,
-            partialFillAllowed: partialFillAllowed
-        });
+    /// @inheritdoc ISwapboard
+    function createOrders(
+        CreateOrderParams[] calldata orders
+    ) external payable nonReentrant returns (uint256[] memory) {
+        return _createOrders(orders);
     }
 
     /// @inheritdoc ISwapboard
@@ -210,7 +182,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return _orders[orderId].active;
     }
 
-    /// @notice Validates createOrder arguments and exact ETH payment
+    /// @notice Validates createOrder arguments (ETH is checked after deposit aggregation)
     /// @param tokenA Address of the asset to sell
     /// @param amountA Amount of tokenA to deposit
     /// @param tokenB Address of the asset wanted
@@ -231,20 +203,187 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert SameToken();
         }
 
-        bool tokenAIsEth = tokenA == _ETH;
-        bool tokenBIsEth = tokenB == _ETH;
-
-        if (!tokenAIsEth && tokenA.code.length == 0) {
+        if (tokenA != _ETH && tokenA.code.length == 0) {
             revert NotAContract(tokenA);
         }
-        if (!tokenBIsEth && tokenB.code.length == 0) {
+        if (tokenB != _ETH && tokenB.code.length == 0) {
             revert NotAContract(tokenB);
         }
+    }
 
-        uint256 requiredEth = tokenAIsEth ? amountA : 0;
-        if (msg.value != requiredEth) {
-            revert ETHAmountMismatch(requiredEth, msg.value);
+    /// @notice Creates orders after aggregating ERC20 pulls and exact ETH payment
+    /// @param orders Order creation arguments
+    /// @return orderIds Identifiers assigned to each created order
+    function _createOrders(
+        CreateOrderParams[] memory orders
+    ) private returns (uint256[] memory) {
+        uint256 length = orders.length;
+        if (length == 0) {
+            revert ZeroAmount();
         }
+
+        _validateCreateOrders(orders);
+
+        (address[] memory tokens, uint256[] memory amounts) = _collectDepositAssets(orders);
+        (address[] memory uniqueTokens, uint256[] memory uniqueAmounts, uint256 ethAmount) =
+            _aggregateTokenAmounts(tokens, amounts);
+        if (msg.value != ethAmount) {
+            revert ETHAmountMismatch(ethAmount, msg.value);
+        }
+
+        _pullAggregatedTokens(uniqueTokens, uniqueAmounts);
+        return _storeOrders(orders);
+    }
+
+    /// @notice Validates every order in a create batch
+    /// @param orders Order creation arguments
+    function _validateCreateOrders(
+        CreateOrderParams[] memory orders
+    ) private view {
+        for (uint256 i; i < orders.length; ++i) {
+            CreateOrderParams memory params = orders[i];
+
+            _validateCreateOrder(params.tokenA, params.amountA, params.tokenB, params.amountB);
+        }
+    }
+
+    /// @notice Collects tokenA/amountA pairs to aggregate into escrow pulls
+    /// @param orders Order creation arguments
+    /// @return tokens tokenA for each order
+    /// @return amounts amountA for each order
+    function _collectDepositAssets(
+        CreateOrderParams[] memory orders
+    ) private pure returns (address[] memory tokens, uint256[] memory amounts) {
+        uint256 length = orders.length;
+        tokens = new address[](length);
+        amounts = new uint256[](length);
+        for (uint256 i; i < length; ++i) {
+            tokens[i] = orders[i].tokenA;
+            amounts[i] = orders[i].amountA;
+        }
+    }
+
+    /// @notice Aggregates per-token deposit amounts and sums native ETH
+    /// @dev ETH sentinel amounts are returned separately and omitted from `uniqueTokens`.
+    /// @param tokens Deposit token for each order (tokenA)
+    /// @param amounts Deposit amount for each order (amountA)
+    /// @return uniqueTokens Distinct ERC20 tokens in first-seen order
+    /// @return uniqueAmounts Summed deposit for each unique ERC20
+    /// @return ethAmount Summed native ETH to escrow (0 if none)
+    function _aggregateTokenAmounts(
+        address[] memory tokens,
+        uint256[] memory amounts
+    ) private pure returns (address[] memory uniqueTokens, uint256[] memory uniqueAmounts, uint256 ethAmount) {
+        uint256 length = tokens.length;
+        address[] memory stackedTokens = new address[](length);
+        uint256[] memory stackedAmounts = new uint256[](length);
+        uint256 uniqueCount;
+
+        for (uint256 i; i < length; ++i) {
+            address token = tokens[i];
+            uint256 amount = amounts[i];
+            if (token == _ETH) {
+                ethAmount += amount;
+
+                continue;
+            }
+
+            uint256 existing = _indexOfToken(stackedTokens, uniqueCount, token);
+            if (existing == uniqueCount) {
+                stackedTokens[uniqueCount] = token;
+                stackedAmounts[uniqueCount] = amount;
+
+                ++uniqueCount;
+            } else {
+                stackedAmounts[existing] += amount;
+            }
+        }
+
+        uniqueTokens = new address[](uniqueCount);
+        uniqueAmounts = new uint256[](uniqueCount);
+
+        for (uint256 j; j < uniqueCount; ++j) {
+            uniqueTokens[j] = stackedTokens[j];
+            uniqueAmounts[j] = stackedAmounts[j];
+        }
+    }
+
+    /// @notice Finds `token` in `tokens[0..length)`, or returns `length` if missing
+    /// @param tokens Candidate token list
+    /// @param length Number of populated entries
+    /// @param token Token to look up
+    /// @return index Matching index, or `length` when not found
+    function _indexOfToken(
+        address[] memory tokens,
+        uint256 length,
+        address token
+    ) private pure returns (uint256 index) {
+        for (uint256 i; i < length; ++i) {
+            if (tokens[i] == token) {
+                return i;
+            }
+        }
+
+        return length;
+    }
+
+    /// @notice Pulls each aggregated ERC20 deposit exactly once
+    /// @param tokens Unique ERC20 tokens
+    /// @param amounts Aggregated amount per token
+    function _pullAggregatedTokens(
+        address[] memory tokens,
+        uint256[] memory amounts
+    ) private {
+        for (uint256 i; i < tokens.length; ++i) {
+            _pullExactToken(tokens[i], amounts[i]);
+        }
+    }
+
+    /// @notice Writes created orders to storage and emits `OrderCreated`
+    /// @param orders Order creation arguments
+    /// @return orderIds Identifiers assigned in input order
+    function _storeOrders(
+        CreateOrderParams[] memory orders
+    ) private returns (uint256[] memory) {
+        uint256 length = orders.length;
+        uint256[] memory orderIds = new uint256[](length);
+        uint256 nextId = _nextOrderId;
+
+        for (uint256 i; i < length; ++i) {
+            CreateOrderParams memory params = orders[i];
+
+            uint256 orderId = nextId + i;
+            orderIds[i] = orderId;
+
+            _orders[orderId] = Order({
+                maker: msg.sender,
+                active: true,
+                partialFillAllowed: params.partialFillAllowed,
+                tokenA: params.tokenA,
+                tokenB: params.tokenB,
+                amountA: params.amountA,
+                amountB: params.amountB,
+                availableA: params.amountA,
+                availableB: params.amountB
+            });
+
+            emit OrderCreated({
+                orderId: orderId,
+                maker: msg.sender,
+                tokenA: params.tokenA,
+                amountA: params.amountA,
+                tokenB: params.tokenB,
+                amountB: params.amountB,
+                partialFillAllowed: params.partialFillAllowed
+            });
+        }
+
+        // Unchecked is safe: wrapping `_nextOrderId` would require 2^256 orders.
+        unchecked {
+            _nextOrderId = nextId + length;
+        }
+
+        return orderIds;
     }
 
     /// @notice Validates a fill and quotes the ceiled tokenB payment

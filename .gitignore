@@ -48,6 +48,7 @@ pnpm-debug.log*
 # Test artifacts
 e2e/.anvil/
 frontend/package-lock.json
+.latest.json
 
 # Temporary files
 *.tmp

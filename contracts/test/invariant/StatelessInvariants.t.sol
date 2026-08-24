@@ -46,7 +46,15 @@ contract SwapboardStatelessInvariantTest is Test {
         uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.amountA, amountA, "amountA not set to original");
@@ -74,7 +82,15 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.assume(amountBIn > 0);
 
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, true);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: true
+            })
+        );
 
         vm.prank(_taker);
         _board.fillOrder(orderId, fillA, 0);
@@ -100,7 +116,15 @@ contract SwapboardStatelessInvariantTest is Test {
         uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
         vm.prank(_taker);
         _board.fillOrder(orderId, amountA, 0);
@@ -131,7 +155,15 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.assume(amountBIn > 0 && amountBIn < amountB);
 
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, true);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: true
+            })
+        );
 
         vm.prank(_taker);
         _board.fillOrder(orderId, fillA, 0);
@@ -165,7 +197,15 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.assume(bIn1 > 0 && bIn1 < amountB);
 
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, true);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: true
+            })
+        );
 
         vm.prank(_taker);
         _board.fillOrder(orderId, fillA1, 0);
@@ -209,7 +249,15 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 balanceBefore = _tokenA.balanceOf(_maker);
 
         vm.prank(_maker);
-        _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
+        _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
         uint256 balanceAfter = _tokenA.balanceOf(_maker);
         assertEq(balanceBefore - balanceAfter, amountA, "Maker balance decrease incorrect");
@@ -229,7 +277,15 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 balanceBefore = _tokenA.balanceOf(address(_board));
 
         vm.prank(_maker);
-        _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
+        _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
         uint256 balanceAfter = _tokenA.balanceOf(address(_board));
         assertEq(balanceAfter - balanceBefore, amountA, "Contract balance increase incorrect");
@@ -247,7 +303,15 @@ contract SwapboardStatelessInvariantTest is Test {
         uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
         uint256 takerBalanceBefore = _tokenA.balanceOf(_taker);
 
@@ -270,7 +334,15 @@ contract SwapboardStatelessInvariantTest is Test {
         uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
         uint256 makerBalanceBefore = _tokenB.balanceOf(_maker);
 
@@ -295,7 +367,15 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 balanceInitial = _tokenA.balanceOf(_maker);
 
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
         vm.prank(_maker);
         _board.cancelOrder(orderId);
@@ -316,7 +396,15 @@ contract SwapboardStatelessInvariantTest is Test {
         uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(address(_tokenA), amountA, address(_tokenB), amountB, false);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
         assertTrue(_board.canFill(orderId), "Order should be fillable");
 
@@ -339,7 +427,15 @@ contract SwapboardStatelessInvariantTest is Test {
 
         for (uint256 i = 0; i < n; ++i) {
             vm.prank(_maker);
-            _board.createOrder(address(_tokenA), 1 ether, address(_tokenB), 1 ether, false);
+            _board.createOrder(
+                ISwapboard.CreateOrderParams({
+                    tokenA: address(_tokenA),
+                    amountA: 1 ether,
+                    tokenB: address(_tokenB),
+                    amountB: 1 ether,
+                    partialFillAllowed: false
+                })
+            );
 
             uint256 currentId = _board.getNextOrderId();
             assertGt(currentId, prevId, "nextOrderId did not increase");

@@ -49,7 +49,11 @@ contract DeployTest is Test {
         vm.deal(maker, 1 ether);
 
         vm.prank(maker);
-        uint256 orderId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6, false);
+        uint256 orderId = board.createOrder{value: 1 ether}(
+            ISwapboard.CreateOrderParams({
+                tokenA: eth, amountA: 1 ether, tokenB: address(token), amountB: 100e6, partialFillAllowed: false
+            })
+        );
 
         ISwapboard.Order memory order = board.getOrder(orderId);
         assertEq(order.maker, maker);
@@ -76,8 +80,16 @@ contract DeployTest is Test {
         token.mint(taker, 200e6);
 
         vm.startPrank(maker);
-        uint256 fillId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6, false);
-        uint256 cancelId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6, false);
+        uint256 fillId = board.createOrder{value: 1 ether}(
+            ISwapboard.CreateOrderParams({
+                tokenA: eth, amountA: 1 ether, tokenB: address(token), amountB: 100e6, partialFillAllowed: false
+            })
+        );
+        uint256 cancelId = board.createOrder{value: 1 ether}(
+            ISwapboard.CreateOrderParams({
+                tokenA: eth, amountA: 1 ether, tokenB: address(token), amountB: 100e6, partialFillAllowed: false
+            })
+        );
         vm.stopPrank();
 
         assertEq(address(board).balance, 2 ether);
@@ -114,7 +126,11 @@ contract DeployTest is Test {
 
         vm.startPrank(maker);
         token.approve(address(board), 100e6);
-        uint256 orderId = board.createOrder(address(token), 100e6, eth, 1 ether, false);
+        uint256 orderId = board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(token), amountA: 100e6, tokenB: eth, amountB: 1 ether, partialFillAllowed: false
+            })
+        );
         vm.stopPrank();
 
         uint256 makerEthBefore = maker.balance;

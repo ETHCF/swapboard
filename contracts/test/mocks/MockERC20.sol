@@ -13,6 +13,7 @@ contract MockERC20 {
     uint256 internal _totalSupply;
     mapping(address account => uint256 balance) internal _balanceOf;
     mapping(address owner => mapping(address spender => uint256 allowance)) internal _allowance;
+    uint256 private _transferFromCalls;
 
     // solhint-disable-next-line gas-indexed-events
     event Transfer(address indexed from, address indexed to, uint256 amount);
@@ -59,6 +60,10 @@ contract MockERC20 {
         return _allowance[owner][spender];
     }
 
+    function getTransferFromCalls() external view returns (uint256) {
+        return _transferFromCalls;
+    }
+
     function mint(
         address to,
         uint256 amount
@@ -96,6 +101,7 @@ contract MockERC20 {
         address to,
         uint256 amount
     ) public virtual returns (bool) {
+        ++_transferFromCalls;
         _spendAllowance(from, msg.sender, amount);
         _transfer(from, to, amount);
 
