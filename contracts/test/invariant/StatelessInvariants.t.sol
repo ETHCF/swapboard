@@ -137,8 +137,8 @@ contract SwapboardStatelessInvariantTest is Test {
         assertEq(order.availableB, 0, "availableB must be 0 after full fill");
     }
 
-    /// @notice Property: cancel zeroes available and preserves originals
-    function testFuzz_cancelOrder_zeroesAvailableKeepsOriginals(
+    /// @notice Property: cancel deletes the order and refunds remaining availableA
+    function testFuzz_cancelOrder_deletesOrderKeepsRefund(
         uint256 amountASeed,
         uint256 amountBSeed,
         uint256 fillASeed
@@ -168,15 +168,20 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.prank(_taker);
         _board.fillOrder(orderId, fillA, 0);
 
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint128 remainingA = _board.getOrder(orderId).availableA;
+
         vm.prank(_maker);
         _board.cancelOrder(orderId);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0), "order should be deleted after cancel");
         assertFalse(order.active, "order should be inactive after cancel");
-        assertEq(order.amountA, amountA, "amountA must stay fixed after cancel");
-        assertEq(order.amountB, amountB, "amountB must stay fixed after cancel");
+        assertEq(order.amountA, 0, "amountA cleared after cancel");
+        assertEq(order.amountB, 0, "amountB cleared after cancel");
         assertEq(order.availableA, 0, "availableA must be 0 after cancel");
         assertEq(order.availableB, 0, "availableB must be 0 after cancel");
+        assertEq(_tokenA.balanceOf(_maker), makerBefore + remainingA, "maker refund incorrect");
     }
 
     /// @notice Property: fill progress is readable as (amount - available) / amount

@@ -116,32 +116,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function cancelOrder(
         uint256 orderId
     ) external nonReentrant {
-        Order storage order = _orders[orderId];
+        uint256[] memory orderIds = new uint256[](1);
 
-        (address maker, bool active, address tokenA, uint128 availableA) =
-            (order.maker, order.active, order.tokenA, order.availableA);
-        if (maker == address(0)) {
-            revert OrderNotFound(orderId);
-        }
-        if (!active) {
-            revert OrderNotActive(orderId);
-        }
-        if (msg.sender != maker) {
-            revert NotMaker(orderId, msg.sender, maker);
-        }
+        orderIds[0] = orderId;
 
-        order.active = false;
-        order.availableA = 0;
-        order.availableB = 0;
+        _cancelOrders(orderIds);
+    }
 
-        if (tokenA == _ETH) {
-            // Forward all gas so maker contracts can execute receive/fallback.
-            payable(maker).sendValue(availableA);
-        } else {
-            IERC20(tokenA).safeTransfer(maker, availableA);
-        }
-
-        emit OrderCanceled({orderId: orderId});
+    /// @inheritdoc ISwapboard
+    function cancelOrders(
+        uint256[] calldata orderIds
+    ) external nonReentrant {
+        _cancelOrders(orderIds);
     }
 
     /// @inheritdoc ISwapboard
@@ -166,9 +152,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function getOrders(
         uint256[] calldata orderIds
     ) external view returns (Order[] memory) {
-        Order[] memory result = new Order[](orderIds.length);
+        uint256 length = orderIds.length;
+        Order[] memory result = new Order[](length);
 
-        for (uint256 i; i < orderIds.length; ++i) {
+        for (uint256 i; i < length; ++i) {
             result[i] = _orders[orderIds[i]];
         }
 
@@ -240,7 +227,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function _validateCreateOrders(
         CreateOrderParams[] memory orders
     ) private view {
-        for (uint256 i; i < orders.length; ++i) {
+        uint256 length = orders.length;
+        for (uint256 i; i < length; ++i) {
             CreateOrderParams memory params = orders[i];
 
             _validateCreateOrder(params.tokenA, params.amountA, params.tokenB, params.amountB);
@@ -334,7 +322,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address[] memory tokens,
         uint256[] memory amounts
     ) private {
-        for (uint256 i; i < tokens.length; ++i) {
+        uint256 length = tokens.length;
+        for (uint256 i; i < length; ++i) {
             _pullExactToken(tokens[i], amounts[i]);
         }
     }
@@ -389,7 +378,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Validates a fill and quotes the ceiled tokenB payment
     /// @dev Ceil division benefits escrow/maker. Residual tokenA dust is not refunded.
     ///      Intermediate math widens to uint256; both factors are uint128 so the product fits.
-    /// @param order Order storage slot to read
+    /// @param order Order to validate and quote (read-only copy)
     /// @param orderId Order id for error payloads
     /// @param amountA Requested tokenA out
     /// @return maker Order maker
@@ -397,10 +386,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @return tokenB Payment asset
     /// @return amountBIn Ceiled tokenB the taker must pay
     function _validateAndQuoteFill(
-        Order storage order,
+        Order memory order,
         uint256 orderId,
         uint128 amountA
-    ) private view returns (address maker, address tokenA, address tokenB, uint128 amountBIn) {
+    ) private pure returns (address maker, address tokenA, address tokenB, uint128 amountBIn) {
         maker = order.maker;
         if (maker == address(0)) {
             revert OrderNotFound(orderId);
@@ -456,6 +445,107 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             payable(msg.sender).sendValue(amountA);
         } else {
             IERC20(tokenA).safeTransfer(msg.sender, amountA);
+        }
+    }
+
+    /// @notice Cancels orders after aggregating ERC20 and ETH refunds to the maker
+    /// @param orderIds Order identifiers to cancel
+    function _cancelOrders(
+        uint256[] memory orderIds
+    ) private {
+        uint256 length = orderIds.length;
+        if (length == 0) {
+            revert ZeroAmount();
+        }
+
+        _validateCancelOrders(orderIds);
+
+        (address[] memory tokens, uint256[] memory amounts) = _collectCancelAssets(orderIds);
+        (address[] memory uniqueTokens, uint256[] memory uniqueAmounts, uint256 ethAmount) =
+            _aggregateTokenAmounts(tokens, amounts);
+
+        _deleteCanceledOrders(orderIds);
+        _returnAggregatedTokens(uniqueTokens, uniqueAmounts, ethAmount, msg.sender);
+    }
+
+    /// @notice Validates every order in a cancel batch
+    /// @param orderIds Order identifiers to cancel
+    function _validateCancelOrders(
+        uint256[] memory orderIds
+    ) private view {
+        uint256 length = orderIds.length;
+        for (uint256 i; i < length; ++i) {
+            uint256 orderId = orderIds[i];
+            for (uint256 j = i + 1; j < length; ++j) {
+                if (orderIds[j] == orderId) {
+                    revert DuplicateOrderId(orderId);
+                }
+            }
+
+            Order memory order = _orders[orderId];
+            address maker = order.maker;
+            if (maker == address(0)) {
+                revert OrderNotFound(orderId);
+            }
+            if (!order.active) {
+                revert OrderNotActive(orderId);
+            }
+            if (msg.sender != maker) {
+                revert NotMaker(orderId, msg.sender, maker);
+            }
+        }
+    }
+
+    /// @notice Collects tokenA/availableA pairs to aggregate into maker refunds
+    /// @param orderIds Order identifiers to cancel
+    /// @return tokens tokenA for each order
+    /// @return amounts availableA for each order
+    function _collectCancelAssets(
+        uint256[] memory orderIds
+    ) private view returns (address[] memory tokens, uint256[] memory amounts) {
+        uint256 length = orderIds.length;
+        tokens = new address[](length);
+        amounts = new uint256[](length);
+        for (uint256 i; i < length; ++i) {
+            Order memory order = _orders[orderIds[i]];
+            tokens[i] = order.tokenA;
+            amounts[i] = order.availableA;
+        }
+    }
+
+    /// @notice Deletes canceled orders and emits `OrderCanceled`
+    /// @param orderIds Order identifiers to cancel
+    function _deleteCanceledOrders(
+        uint256[] memory orderIds
+    ) private {
+        uint256 length = orderIds.length;
+        for (uint256 i; i < length; ++i) {
+            uint256 orderId = orderIds[i];
+            delete _orders[orderId];
+
+            emit OrderCanceled({orderId: orderId});
+        }
+    }
+
+    /// @notice Returns aggregated ERC20 and ETH refunds to the maker
+    /// @param tokens Unique ERC20 tokens
+    /// @param amounts Aggregated refund per token
+    /// @param ethAmount Summed native ETH to return
+    /// @param recipient Refund recipient (the maker)
+    function _returnAggregatedTokens(
+        address[] memory tokens,
+        uint256[] memory amounts,
+        uint256 ethAmount,
+        address recipient
+    ) private {
+        if (ethAmount > 0) {
+            // Forward all gas so maker contracts can execute receive/fallback.
+            payable(recipient).sendValue(ethAmount);
+        }
+
+        uint256 length = tokens.length;
+        for (uint256 i; i < length; ++i) {
+            IERC20(tokens[i]).safeTransfer(recipient, amounts[i]);
         }
     }
 

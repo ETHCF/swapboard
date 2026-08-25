@@ -530,8 +530,9 @@ contract SwapboardIntegrationTest is Test {
         _board.cancelOrder(orderId);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
         assertFalse(order.active);
-        assertEq(order.amountA, 50 ether);
+        assertEq(order.amountA, 0);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
         assertEq(_weth.balanceOf(_alice), aliceWethBefore - 20 ether);
@@ -603,6 +604,28 @@ contract SwapboardIntegrationTest is Test {
         assertTrue(_board.canFill(ids[1]));
         assertEq(_board.getOrder(ids[1]).availableA, 15 ether);
         assertEq(_weth.balanceOf(_bob), 1000 ether + 15 ether);
+    }
+
+    /// @notice Tests batch create then batch cancel restores maker balances
+    function test_batchCreate_thenCancelOrders() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_weth), 10 ether, address(_usdc), 30_000e6);
+        orders[1] = _order(address(_weth), 20 ether, address(_usdc), 58_000e6);
+
+        uint256 aliceWethBefore = _weth.balanceOf(_alice);
+
+        vm.startPrank(_alice);
+        _weth.approve(address(_board), 30 ether);
+        uint256[] memory ids = _board.createOrders(orders);
+        _board.cancelOrders(ids);
+        vm.stopPrank();
+
+        assertEq(_weth.balanceOf(_alice), aliceWethBefore);
+        assertEq(_weth.balanceOf(address(_board)), 0);
+        assertEq(_board.getOrder(ids[0]).maker, address(0));
+        assertEq(_board.getOrder(ids[1]).maker, address(0));
+        assertFalse(_board.canFill(ids[0]));
+        assertFalse(_board.canFill(ids[1]));
     }
 
     function _order(

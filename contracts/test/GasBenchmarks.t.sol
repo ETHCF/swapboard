@@ -143,6 +143,31 @@ contract GasBenchmarks is Test {
         assertLt(gasUsed, 100_000, "cancelOrder exceeds gas ceiling");
     }
 
+    /// @notice Benchmarks gas used by cancelOrders for three same-token orders
+    function test_gas_cancelOrders() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
+        for (uint256 i; i < 3; ++i) {
+            orders[i] = ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: 100 ether,
+                tokenB: address(_tokenB),
+                amountB: 100 ether,
+                partialFillAllowed: false
+            });
+        }
+
+        vm.prank(_maker);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        vm.prank(_maker);
+        uint256 gasBefore = gasleft();
+        _board.cancelOrders(ids);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        console2.log("cancelOrders(3) gas:", gasUsed);
+        assertLt(gasUsed, 200_000, "cancelOrders exceeds gas ceiling");
+    }
+
     /// @notice Benchmarks gas used by getOrder
     function test_gas_getOrder() public {
         vm.prank(_maker);
