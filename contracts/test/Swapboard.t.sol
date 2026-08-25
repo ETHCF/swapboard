@@ -3212,6 +3212,7 @@ contract SwapboardTest is Test {
         uint128 fillA2 = AMOUNT_A / 4;
         uint256 bIn1 = (uint256(fillA1) * uint256(AMOUNT_B) + uint256(AMOUNT_A) - 1) / uint256(AMOUNT_A);
         uint128 remA = AMOUNT_A - fillA1;
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint128 remB = uint128(uint256(AMOUNT_B) - bIn1);
         uint256 bIn2 = (uint256(fillA2) * uint256(remB) + uint256(remA) - 1) / uint256(remA);
 
