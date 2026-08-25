@@ -97,9 +97,17 @@ contract ReentrantAttacker is MockERC20 {
         if (keccak256(bytes(_attackType)) == keccak256(bytes("fill"))) {
             // Try to fill the same order again
             try _BOARD.fillOrder(_orderId, 1, 0) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("fillOrders"))) {
+            ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
+            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountA: 1});
+            try _BOARD.fillOrders(fills, 0) {} catch {}
         } else if (keccak256(bytes(_attackType)) == keccak256(bytes("cancel"))) {
             // Try to cancel the same order again
             try _BOARD.cancelOrder(_orderId) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("cancelOrders"))) {
+            uint256[] memory ids = new uint256[](1);
+            ids[0] = _orderId;
+            try _BOARD.cancelOrders(ids) {} catch {}
         } else if (keccak256(bytes(_attackType)) == keccak256(bytes("createOrders"))) {
             ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](1);
             orders[0] = ISwapboard.CreateOrderParams({

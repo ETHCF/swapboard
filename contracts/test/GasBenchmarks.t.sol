@@ -52,7 +52,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("createOrder gas:", gasUsed);
-        assertLt(gasUsed, 250_000, "createOrder exceeds gas ceiling");
+        assertLt(gasUsed, 250_000);
     }
 
     /// @notice Benchmarks gas used by createOrders for three same-token orders
@@ -74,7 +74,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("createOrders(3) gas:", gasUsed);
-        assertLt(gasUsed, 500_000, "createOrders exceeds gas ceiling");
+        assertLt(gasUsed, 500_000);
     }
 
     /// @notice Benchmarks gas used by fillOrder
@@ -96,7 +96,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("fillOrder gas:", gasUsed);
-        assertLt(gasUsed, 150_000, "fillOrder exceeds gas ceiling");
+        assertLt(gasUsed, 150_000);
     }
 
     /// @notice Benchmarks gas used by a partial fillOrder
@@ -118,7 +118,37 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("fillOrder partial gas:", gasUsed);
-        assertLt(gasUsed, 150_000, "partial fillOrder exceeds gas ceiling");
+        assertLt(gasUsed, 150_000);
+    }
+
+    /// @notice Benchmarks gas used by fillOrders for three same-tokenB orders
+    function test_gas_fillOrders() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
+        for (uint256 i; i < 3; ++i) {
+            orders[i] = ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: 100 ether,
+                tokenB: address(_tokenB),
+                amountB: 100 ether,
+                partialFillAllowed: false
+            });
+        }
+
+        vm.prank(_maker);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](3);
+        for (uint256 j; j < 3; ++j) {
+            fills[j] = ISwapboard.FillOrderParams({orderId: ids[j], amountA: 100 ether});
+        }
+
+        vm.prank(_taker);
+        uint256 gasBefore = gasleft();
+        _board.fillOrders(fills, 0);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        console2.log("fillOrders(3) gas:", gasUsed);
+        assertLt(gasUsed, 400_000);
     }
 
     /// @notice Benchmarks gas used by cancelOrder
@@ -140,7 +170,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("cancelOrder gas:", gasUsed);
-        assertLt(gasUsed, 100_000, "cancelOrder exceeds gas ceiling");
+        assertLt(gasUsed, 100_000);
     }
 
     /// @notice Benchmarks gas used by cancelOrders for three same-token orders
@@ -165,7 +195,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("cancelOrders(3) gas:", gasUsed);
-        assertLt(gasUsed, 200_000, "cancelOrders exceeds gas ceiling");
+        assertLt(gasUsed, 200_000);
     }
 
     /// @notice Benchmarks gas used by getOrder
@@ -186,7 +216,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrder gas:", gasUsed);
-        assertLt(gasUsed, 10_000, "getOrder exceeds gas ceiling");
+        assertLt(gasUsed, 10_000);
     }
 
     /// @notice Benchmarks gas used by getOrders for 10 orders
@@ -214,7 +244,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrders(10) gas:", gasUsed);
-        assertLt(gasUsed, 70_000, "getOrders(10) exceeds gas ceiling");
+        assertLt(gasUsed, 70_000);
     }
 
     /// @notice Benchmarks gas used by getOrders for 100 orders
@@ -242,7 +272,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrders(100) gas:", gasUsed);
-        assertLt(gasUsed, 700_000, "getOrders(100) exceeds gas ceiling");
+        assertLt(gasUsed, 700_000);
     }
 
     /// @notice Benchmarks gas used by canFill
@@ -263,6 +293,6 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("canFill gas:", gasUsed);
-        assertLt(gasUsed, 5000, "canFill exceeds gas ceiling");
+        assertLt(gasUsed, 5000);
     }
 }

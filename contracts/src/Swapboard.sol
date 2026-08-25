@@ -71,45 +71,28 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc ISwapboard
-    /// @dev Fee-on-transfer tokenB: maker receives less than amountB. This is maker's risk.
-    ///      tokenB in uses ceil division so the taker never underpays for the requested tokenA.
-    ///      Residual tokenA dust (when amountB is exhausted first) is not refunded (not worth the
-    ///      gas); it can be picked up by any user that rounds favorably on another order where
-    ///      the dust token is tokenB.
+    /// @dev Inbound tokenB pulls use `_pullExactToken` and reject fee-on-transfer / phantom
+    ///      transfers via `BalanceMismatch`. Residual risk is fee-on-transfer only on the outbound
+    ///      `transfer` to the maker after an exact pull. tokenB in uses ceil division so the
+    ///      taker never underpays for the requested tokenA. Residual tokenA dust (when amountB
+    ///      is exhausted first) is not refunded (not worth the gas); it can be picked up by any
+    ///      user that rounds favorably on another order where the dust token is tokenB.
     function fillOrder(
         uint256 orderId,
         uint128 amountA,
         uint256 deadline
     ) external payable nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) {
-            revert DeadlineExpired();
-        }
-        if (amountA == 0) {
-            revert ZeroAmount();
-        }
+        FillOrderParams[] memory fills = new FillOrderParams[](1);
+        fills[0] = FillOrderParams({orderId: orderId, amountA: amountA});
+        _fillOrders(fills, deadline);
+    }
 
-        Order storage order = _orders[orderId];
-        (address maker, address tokenA, address tokenB, uint128 amountBIn) =
-            _validateAndQuoteFill(order, orderId, amountA);
-
-        uint256 requiredEth = tokenB == _ETH ? amountBIn : 0;
-        if (msg.value != requiredEth) {
-            revert ETHAmountMismatch(requiredEth, msg.value);
-        }
-
-        // Unchecked is safe: _validateAndQuoteFill ensures amountA <= availableA and
-        // amountBIn <= availableB (exact remaining or ceiled proportion).
-        unchecked {
-            order.availableA -= amountA;
-            order.availableB -= amountBIn;
-        }
-        if (order.availableA == 0 || order.availableB == 0) {
-            order.active = false;
-        }
-
-        _transferFill(maker, tokenA, tokenB, amountA, amountBIn);
-
-        emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB: amountBIn});
+    /// @inheritdoc ISwapboard
+    function fillOrders(
+        FillOrderParams[] calldata fills,
+        uint256 deadline
+    ) external payable nonReentrant {
+        _fillOrders(fills, deadline);
     }
 
     /// @inheritdoc ISwapboard
@@ -419,33 +402,247 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
-    /// @notice Moves tokenB from taker to maker and tokenA from escrow to taker
-    /// @param maker Order maker receiving tokenB
-    /// @param tokenA Sold asset (possibly ETH sentinel)
-    /// @param tokenB Payment asset (possibly ETH sentinel)
-    /// @param amountA tokenA amount to send to the taker
-    /// @param amountBIn tokenB amount to take from the taker
-    function _transferFill(
-        address maker,
-        address tokenA,
-        address tokenB,
-        uint128 amountA,
-        uint128 amountBIn
+    /// @notice Fills orders after aggregating tokenB pulls and tokenA/tokenB payouts
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    function _fillOrders(
+        FillOrderParams[] memory fills,
+        uint256 deadline
     ) private {
-        if (tokenB == _ETH) {
-            // Forward all gas so maker contracts can execute receive/fallback.
-            payable(maker).sendValue(amountBIn);
-        } else {
-            // Note: If tokenB is fee-on-transfer, maker receives less than amountB
-            IERC20(tokenB).safeTransferFrom(msg.sender, maker, amountBIn);
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
         }
 
-        if (tokenA == _ETH) {
-            // Forward all gas so taker contracts can execute receive/fallback.
-            payable(msg.sender).sendValue(amountA);
-        } else {
-            IERC20(tokenA).safeTransfer(msg.sender, amountA);
+        uint256 length = fills.length;
+        if (length == 0) {
+            revert ZeroAmount();
         }
+
+        (
+            address[] memory makers,
+            address[] memory tokenAs,
+            uint256[] memory amountAs,
+            address[] memory tokenBs,
+            uint256[] memory amountBs
+        ) = _applyFillEffects(fills);
+
+        (address[] memory uniqueTokenB, uint256[] memory uniqueAmountB, uint256 ethIn) =
+            _aggregateTokenAmounts(tokenBs, amountBs);
+        if (msg.value != ethIn) {
+            revert ETHAmountMismatch(ethIn, msg.value);
+        }
+
+        _pullAggregatedTokens(uniqueTokenB, uniqueAmountB);
+        _payMakersAggregated(makers, tokenBs, amountBs);
+        _payTakerAggregated(tokenAs, amountAs);
+    }
+
+    /// @notice Validates fills, updates order storage, and collects transfer legs
+    /// @dev Same `orderId` may appear more than once; later legs see reduced available amounts.
+    /// @param fills Fill arguments in execution order
+    /// @return makers Maker for each fill
+    /// @return tokenAs tokenA for each fill
+    /// @return amountAs tokenA out for each fill
+    /// @return tokenBs tokenB for each fill
+    /// @return amountBs tokenB in for each fill
+    function _applyFillEffects(
+        FillOrderParams[] memory fills
+    )
+        private
+        returns (
+            address[] memory makers,
+            address[] memory tokenAs,
+            uint256[] memory amountAs,
+            address[] memory tokenBs,
+            uint256[] memory amountBs
+        )
+    {
+        uint256 length = fills.length;
+        makers = new address[](length);
+        tokenAs = new address[](length);
+        amountAs = new uint256[](length);
+        tokenBs = new address[](length);
+        amountBs = new uint256[](length);
+
+        for (uint256 i; i < length; ++i) {
+            FillOrderParams memory fill = fills[i];
+            if (fill.amountA == 0) {
+                revert ZeroAmount();
+            }
+
+            Order storage order = _orders[fill.orderId];
+            (address maker, address tokenA, address tokenB, uint128 amountBIn) =
+                _validateAndQuoteFill(order, fill.orderId, fill.amountA);
+
+            // Unchecked is safe: _validateAndQuoteFill ensures amountA <= availableA and
+            // amountBIn <= availableB (exact remaining or ceiled proportion).
+            unchecked {
+                order.availableA -= fill.amountA;
+                order.availableB -= amountBIn;
+            }
+            if (order.availableA == 0 || order.availableB == 0) {
+                order.active = false;
+            }
+
+            makers[i] = maker;
+            tokenAs[i] = tokenA;
+            amountAs[i] = fill.amountA;
+            tokenBs[i] = tokenB;
+            amountBs[i] = amountBIn;
+
+            emit OrderFilled({orderId: fill.orderId, taker: msg.sender, amountA: fill.amountA, amountB: amountBIn});
+        }
+    }
+
+    /// @notice Pays makers their aggregated tokenB (ERC20 and/or ETH)
+    /// @param makers Maker for each fill leg
+    /// @param tokens tokenB for each fill leg
+    /// @param amounts tokenB amount for each fill leg
+    function _payMakersAggregated(
+        address[] memory makers,
+        address[] memory tokens,
+        uint256[] memory amounts
+    ) private {
+        (address[] memory ethMakers, uint256[] memory ethAmounts, uint256 ethCount) =
+            _aggregateEthByRecipient(makers, tokens, amounts);
+        for (uint256 i; i < ethCount; ++i) {
+            // Forward all gas so maker contracts can execute receive/fallback.
+            payable(ethMakers[i]).sendValue(ethAmounts[i]);
+        }
+
+        (
+            address[] memory recipients,
+            address[] memory uniqueTokens,
+            uint256[] memory uniqueAmounts,
+            uint256 uniqueCount
+        ) = _aggregateRecipientTokenAmounts(makers, tokens, amounts);
+        for (uint256 j; j < uniqueCount; ++j) {
+            // Fee-on-transfer applies only on this outbound transfer; the pull was already exact.
+            IERC20(uniqueTokens[j]).safeTransfer(recipients[j], uniqueAmounts[j]);
+        }
+    }
+
+    /// @notice Pays the taker aggregated tokenA out of escrow (ERC20 and/or ETH)
+    /// @param tokens tokenA for each fill leg
+    /// @param amounts tokenA amount for each fill leg
+    function _payTakerAggregated(
+        address[] memory tokens,
+        uint256[] memory amounts
+    ) private {
+        (address[] memory uniqueTokens, uint256[] memory uniqueAmounts, uint256 ethOut) =
+            _aggregateTokenAmounts(tokens, amounts);
+        if (ethOut > 0) {
+            // Forward all gas so taker contracts can execute receive/fallback.
+            payable(msg.sender).sendValue(ethOut);
+        }
+
+        uint256 length = uniqueTokens.length;
+        for (uint256 i; i < length; ++i) {
+            IERC20(uniqueTokens[i]).safeTransfer(msg.sender, uniqueAmounts[i]);
+        }
+    }
+
+    /// @notice Aggregates ETH amounts by recipient; skips non-ETH tokens
+    /// @param recipients Recipient for each leg
+    /// @param tokens Token for each leg
+    /// @param amounts Amount for each leg
+    /// @return ethRecipients Distinct ETH recipients in first-seen order
+    /// @return ethAmounts Summed ETH per recipient
+    /// @return ethCount Number of populated ETH recipients
+    function _aggregateEthByRecipient(
+        address[] memory recipients,
+        address[] memory tokens,
+        uint256[] memory amounts
+    ) private pure returns (address[] memory ethRecipients, uint256[] memory ethAmounts, uint256 ethCount) {
+        uint256 length = recipients.length;
+        ethRecipients = new address[](length);
+        ethAmounts = new uint256[](length);
+
+        for (uint256 i; i < length; ++i) {
+            if (tokens[i] != _ETH) {
+                continue;
+            }
+
+            uint256 existing = _indexOfToken(ethRecipients, ethCount, recipients[i]);
+            if (existing == ethCount) {
+                ethRecipients[ethCount] = recipients[i];
+                ethAmounts[ethCount] = amounts[i];
+
+                ++ethCount;
+            } else {
+                ethAmounts[existing] += amounts[i];
+            }
+        }
+    }
+
+    /// @notice Aggregates ERC20 amounts by (recipient, token); skips ETH
+    /// @param recipients Recipient for each leg
+    /// @param tokens Token for each leg
+    /// @param amounts Amount for each leg
+    /// @return uniqueRecipients Recipient for each unique pair
+    /// @return uniqueTokens Token for each unique pair
+    /// @return uniqueAmounts Summed amount for each unique pair
+    /// @return uniqueCount Number of unique (recipient, token) pairs
+    function _aggregateRecipientTokenAmounts(
+        address[] memory recipients,
+        address[] memory tokens,
+        uint256[] memory amounts
+    )
+        private
+        pure
+        returns (
+            address[] memory uniqueRecipients,
+            address[] memory uniqueTokens,
+            uint256[] memory uniqueAmounts,
+            uint256 uniqueCount
+        )
+    {
+        uint256 length = recipients.length;
+        uniqueRecipients = new address[](length);
+        uniqueTokens = new address[](length);
+        uniqueAmounts = new uint256[](length);
+
+        for (uint256 i; i < length; ++i) {
+            address token = tokens[i];
+            if (token == _ETH) {
+                continue;
+            }
+
+            uint256 existing =
+                _indexOfRecipientToken(uniqueRecipients, uniqueTokens, uniqueCount, recipients[i], token);
+            if (existing == uniqueCount) {
+                uniqueRecipients[uniqueCount] = recipients[i];
+                uniqueTokens[uniqueCount] = token;
+                uniqueAmounts[uniqueCount] = amounts[i];
+
+                ++uniqueCount;
+            } else {
+                uniqueAmounts[existing] += amounts[i];
+            }
+        }
+    }
+
+    /// @notice Finds `(recipient, token)` in parallel arrays, or returns `length` if missing
+    /// @param recipients Candidate recipient list
+    /// @param tokens Candidate token list
+    /// @param length Number of populated entries
+    /// @param recipient Recipient to look up
+    /// @param token Token to look up
+    /// @return index Matching index, or `length` when not found
+    function _indexOfRecipientToken(
+        address[] memory recipients,
+        address[] memory tokens,
+        uint256 length,
+        address recipient,
+        address token
+    ) private pure returns (uint256 index) {
+        for (uint256 i; i < length; ++i) {
+            if (recipients[i] == recipient && tokens[i] == token) {
+                return i;
+            }
+        }
+
+        return length;
     }
 
     /// @notice Cancels orders after aggregating ERC20 and ETH refunds to the maker

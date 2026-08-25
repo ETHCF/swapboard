@@ -57,10 +57,10 @@ contract SwapboardStatelessInvariantTest is Test {
         );
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertEq(order.amountA, amountA, "amountA not set to original");
-        assertEq(order.amountB, amountB, "amountB not set to original");
-        assertEq(order.availableA, amountA, "availableA must equal amountA on create");
-        assertEq(order.availableB, amountB, "availableB must equal amountB on create");
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, amountA);
+        assertEq(order.availableB, amountB);
     }
 
     /// @notice Property: fills decrement available only; originals stay fixed
@@ -96,12 +96,12 @@ contract SwapboardStatelessInvariantTest is Test {
         _board.fillOrder(orderId, fillA, 0);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertEq(order.amountA, amountA, "amountA must stay fixed across fills");
-        assertEq(order.amountB, amountB, "amountB must stay fixed across fills");
-        assertEq(order.availableA, amountA - fillA, "availableA not decremented correctly");
-        assertEq(order.availableB, amountB - amountBIn, "availableB not decremented correctly");
-        assertTrue(!(order.availableA > order.amountA), "availableA exceeds amountA");
-        assertTrue(!(order.availableB > order.amountB), "availableB exceeds amountB");
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, amountA - fillA);
+        assertEq(order.availableB, amountB - amountBIn);
+        assertTrue(!(order.availableA > order.amountA));
+        assertTrue(!(order.availableB > order.amountB));
     }
 
     /// @notice Property: full fill zeroes available and preserves originals
@@ -130,11 +130,11 @@ contract SwapboardStatelessInvariantTest is Test {
         _board.fillOrder(orderId, amountA, 0);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active, "order should be inactive after full fill");
-        assertEq(order.amountA, amountA, "amountA must stay fixed after full fill");
-        assertEq(order.amountB, amountB, "amountB must stay fixed after full fill");
-        assertEq(order.availableA, 0, "availableA must be 0 after full fill");
-        assertEq(order.availableB, 0, "availableB must be 0 after full fill");
+        assertFalse(order.active);
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, 0);
+        assertEq(order.availableB, 0);
     }
 
     /// @notice Property: cancel deletes the order and refunds remaining availableA
@@ -175,13 +175,13 @@ contract SwapboardStatelessInvariantTest is Test {
         _board.cancelOrder(orderId);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertEq(order.maker, address(0), "order should be deleted after cancel");
-        assertFalse(order.active, "order should be inactive after cancel");
-        assertEq(order.amountA, 0, "amountA cleared after cancel");
-        assertEq(order.amountB, 0, "amountB cleared after cancel");
-        assertEq(order.availableA, 0, "availableA must be 0 after cancel");
-        assertEq(order.availableB, 0, "availableB must be 0 after cancel");
-        assertEq(_tokenA.balanceOf(_maker), makerBefore + remainingA, "maker refund incorrect");
+        assertEq(order.maker, address(0));
+        assertFalse(order.active);
+        assertEq(order.amountA, 0);
+        assertEq(order.amountB, 0);
+        assertEq(order.availableA, 0);
+        assertEq(order.availableB, 0);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore + remainingA);
     }
 
     /// @notice Property: fill progress is readable as (amount - available) / amount
@@ -218,10 +218,10 @@ contract SwapboardStatelessInvariantTest is Test {
         ISwapboard.Order memory afterFirst = _board.getOrder(orderId);
         uint256 filledA1 = uint256(afterFirst.amountA) - uint256(afterFirst.availableA);
         uint256 filledB1 = uint256(afterFirst.amountB) - uint256(afterFirst.availableB);
-        assertEq(filledA1, fillA1, "filled A after first fill incorrect");
-        assertEq(filledB1, bIn1, "filled B after first fill incorrect");
-        assertEq(afterFirst.amountA, amountA, "amountA changed after first fill");
-        assertEq(afterFirst.amountB, amountB, "amountB changed after first fill");
+        assertEq(filledA1, fillA1);
+        assertEq(filledB1, bIn1);
+        assertEq(afterFirst.amountA, amountA);
+        assertEq(afterFirst.amountB, amountB);
 
         uint128 fillA2 = afterFirst.availableA;
         vm.assume(fillA2 > 0 && afterFirst.availableB > 0);
@@ -230,14 +230,13 @@ contract SwapboardStatelessInvariantTest is Test {
         _board.fillOrder(orderId, fillA2, 0);
 
         ISwapboard.Order memory afterSecond = _board.getOrder(orderId);
-        assertEq(afterSecond.amountA, amountA, "amountA changed after second fill");
-        assertEq(afterSecond.amountB, amountB, "amountB changed after second fill");
+        assertEq(afterSecond.amountA, amountA);
+        assertEq(afterSecond.amountB, amountB);
         assertTrue(
-            !(afterSecond.availableA > afterFirst.availableA) && !(afterSecond.availableB > afterFirst.availableB),
-            "available amounts must not increase"
+            !(afterSecond.availableA > afterFirst.availableA) && !(afterSecond.availableB > afterFirst.availableB)
         );
         uint256 filledA2 = uint256(afterSecond.amountA) - uint256(afterSecond.availableA);
-        assertTrue(!(filledA2 < filledA1), "filled A must be monotonic");
+        assertTrue(!(filledA2 < filledA1));
     }
 
     /// @notice Property: After createOrder, _maker loses exactly amountA
@@ -265,7 +264,7 @@ contract SwapboardStatelessInvariantTest is Test {
         );
 
         uint256 balanceAfter = _tokenA.balanceOf(_maker);
-        assertEq(balanceBefore - balanceAfter, amountA, "Maker balance decrease incorrect");
+        assertEq(balanceBefore - balanceAfter, amountA);
     }
 
     /// @notice Property: After createOrder, contract gains exactly amountA
@@ -293,7 +292,7 @@ contract SwapboardStatelessInvariantTest is Test {
         );
 
         uint256 balanceAfter = _tokenA.balanceOf(address(_board));
-        assertEq(balanceAfter - balanceBefore, amountA, "Contract balance increase incorrect");
+        assertEq(balanceAfter - balanceBefore, amountA);
     }
 
     /// @notice Property: After fillOrder, _taker gains exactly amountA
@@ -324,7 +323,7 @@ contract SwapboardStatelessInvariantTest is Test {
         _board.fillOrder(orderId, amountA, 0);
 
         uint256 takerBalanceAfter = _tokenA.balanceOf(_taker);
-        assertEq(takerBalanceAfter - takerBalanceBefore, amountA, "Taker did not receive correct amountA");
+        assertEq(takerBalanceAfter - takerBalanceBefore, amountA);
     }
 
     /// @notice Property: After fillOrder, _maker gains exactly amountB
@@ -355,7 +354,7 @@ contract SwapboardStatelessInvariantTest is Test {
         _board.fillOrder(orderId, amountA, 0);
 
         uint256 makerBalanceAfter = _tokenB.balanceOf(_maker);
-        assertEq(makerBalanceAfter - makerBalanceBefore, amountB, "Maker did not receive correct amountB");
+        assertEq(makerBalanceAfter - makerBalanceBefore, amountB);
     }
 
     /// @notice Property: After cancelOrder, _maker regains exactly amountA
@@ -386,7 +385,7 @@ contract SwapboardStatelessInvariantTest is Test {
         _board.cancelOrder(orderId);
 
         uint256 balanceFinal = _tokenA.balanceOf(_maker);
-        assertEq(balanceFinal, balanceInitial, "Maker did not regain full amountA after cancel");
+        assertEq(balanceFinal, balanceInitial);
     }
 
     /// @notice Property: Order state transitions are final
@@ -411,15 +410,15 @@ contract SwapboardStatelessInvariantTest is Test {
             })
         );
 
-        assertTrue(_board.canFill(orderId), "Order should be fillable");
+        assertTrue(_board.canFill(orderId));
 
         vm.prank(_taker);
         _board.fillOrder(orderId, amountA, 0);
 
-        assertFalse(_board.canFill(orderId), "Order should not be fillable after fill");
+        assertFalse(_board.canFill(orderId));
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active, "Order should be inactive after fill");
+        assertFalse(order.active);
     }
 
     /// @notice Property: nextOrderId monotonically increases
@@ -443,7 +442,7 @@ contract SwapboardStatelessInvariantTest is Test {
             );
 
             uint256 currentId = _board.getNextOrderId();
-            assertGt(currentId, prevId, "nextOrderId did not increase");
+            assertGt(currentId, prevId);
             prevId = currentId;
         }
     }
