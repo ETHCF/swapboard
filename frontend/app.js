@@ -408,6 +408,9 @@
   /** @param {string} sel - CSS selector */
   const $ = (sel) => document.querySelector(sel);
 
+  /** @param {string} sel - CSS selector */
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
   /**
    * Resolves an address to its ENS name if available.
    * Results are cached to avoid redundant lookups.
@@ -968,59 +971,6 @@
         }
       }
     }
-  }
-
-  /**
-   * Creates a recent tokens dropdown for a token input field.
-   * @param {HTMLInputElement} input - Token input element
-   * @param {string} infoId - Info element selector
-   */
-  function createRecentTokensDropdown(input, infoId) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "recent-tokens-wrapper";
-    wrapper.style.position = "relative";
-
-    input.parentNode.insertBefore(wrapper, input);
-    wrapper.appendChild(input);
-
-    const dropdown = document.createElement("div");
-    dropdown.className = "recent-tokens-dropdown hidden";
-    wrapper.appendChild(dropdown);
-
-    function showDropdown() {
-      const recent = getRecentTokens();
-      if (recent.length === 0) return;
-
-      dropdown.textContent = "";
-      const title = document.createElement("div");
-      title.className = "recent-tokens-title";
-      title.textContent = "Recent:";
-      dropdown.appendChild(title);
-
-      recent.forEach((token) => {
-        const item = document.createElement("div");
-        item.className = "recent-token-item";
-        item.textContent = token.symbol;
-        item.title = token.address;
-        item.addEventListener("click", () => {
-          input.value = token.address;
-          input.dispatchEvent(new Event("input"));
-          dropdown.classList.add("hidden");
-        });
-        dropdown.appendChild(item);
-      });
-
-      dropdown.classList.remove("hidden");
-    }
-
-    function hideDropdown() {
-      setTimeout(() => {
-        dropdown.classList.add("hidden");
-      }, 200);
-    }
-
-    input.addEventListener("focus", showDropdown);
-    input.addEventListener("blur", hideDropdown);
   }
 
   /**
@@ -5116,16 +5066,161 @@
     }, AUTO_REFRESH_MS);
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
-
-  // Register service worker for PWA support
-  if ("serviceWorker" in navigator) {
+  /**
+   * Registers the service worker for PWA support. No-op where unsupported.
+   */
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) {
+      return;
+    }
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     });
+  }
+
+  /**
+   * Boots the app once the DOM is ready, then registers the service worker.
+   */
+  function bootstrap() {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+    registerServiceWorker();
+  }
+
+  // index.html loads this as a classic <script>, where `module` is undefined, so the
+  // app boots normally. Under Jest the module is required instead: expose the closure
+  // surface for tests and skip bootstrap so require() has no side effects.
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      // The version connectors. Exported so each adapter method can be asserted
+      // against the call it makes, including the defensive v1 stubs that the
+      // capability gates deliberately keep unreachable from the UI.
+      V1,
+      V2,
+      addCreateRow,
+      addRecentToken,
+      appendBatchTxNote,
+      appendTotalRow,
+      applyVersionUi,
+      applyWalletFilter,
+      batchResolveEns,
+      bootstrap,
+      buildAmountCell,
+      buildBatchItem,
+      buildPartialFillControls,
+      buildTokenCell,
+      cancelSelectedOrders,
+      checkWatchedOrders,
+      clearSelection,
+      collectCreateParams,
+      connectWallet,
+      connectWithProvider,
+      createCopyButton,
+      createTokenSelector,
+      disconnectWallet,
+      estimateGasCost,
+      exportMyOrders,
+      fakeTxHash,
+      fetchTokenInfo,
+      fetchUniswapTokenList,
+      fillOrderModalAmount,
+      fillSelectedOrders,
+      findOrderById,
+      getCachedEns,
+      getCreateRows,
+      getEthToken,
+      getOrderIdFromHash,
+      getOrderShareUrl,
+      getRecentTokens,
+      getRowState,
+      getSelectedOrders,
+      getSelectionAnchor,
+      getWatchedOrders,
+      handleCancelOrder,
+      handleCreateOrder,
+      handleFillOrder,
+      handleSort,
+      hideToast,
+      init,
+      initApp,
+      initTheme,
+      isOrderWatched,
+      isStable,
+      isWeth,
+      loadFilterPreferences,
+      loadOrders,
+      loadPopularPairs,
+      loadRowBalance,
+      loadSortPreferences,
+      loadStats,
+      loadTokenFilters,
+      loadUserApprovals,
+      logV2Call,
+      openOrderModal,
+      orderColumnCount,
+      preferredQuoteSide,
+      pruneSelection,
+      querySubgraph,
+      readStoredVersion,
+      refreshCreateRows,
+      registerServiceWorker,
+      renderOrders,
+      renderRowQuickAmounts,
+      renderSelectionBar,
+      renderSkeletonRows,
+      renderTokenInfoLine,
+      requestNotificationPermission,
+      resetCreateForm,
+      resolveBuildInfo,
+      resolveEns,
+      retryRpc,
+      revokeApproval,
+      rowField,
+      runBatchTransactions,
+      saveFilterPreferences,
+      saveSortPreferences,
+      searchTokens,
+      selectAllOwnOrders,
+      setRevokeStatus,
+      setTextWithDots,
+      setVersion,
+      setupEIP6963Discovery,
+      setupProviderListeners,
+      setupRowTokenField,
+      showModal,
+      showNotification,
+      showToast,
+      showWalletModal,
+      sortOrders,
+      startAutoRefresh,
+      switchToExpectedNetwork,
+      switchWallet,
+      toCreateParams,
+      toggleNotifications,
+      toggleOrderSelection,
+      toggleRowNativeEth,
+      toggleTheme,
+      tryParseAmount,
+      unwatchOrder,
+      updateNetworkIndicator,
+      updateNotifyText,
+      updatePagination,
+      updateRowPriceDisplay,
+      updateSortIndicators,
+      updateThemeIcons,
+      updateWalletMenu,
+      v1Unsupported,
+      v2Send,
+      validateConfig,
+      validateNetwork,
+      validateRowAmount,
+      waitForOrderUpdate,
+      watchOrder,
+    };
+  } else {
+    bootstrap();
   }
 })();
