@@ -17,16 +17,18 @@ import {Semver} from "./Semver.sol";
 ///      - No admin functions, fees, or upgrades
 ///      - Full fills are atomic; partial fills are opt-in via `partialFillAllowed`
 ///      - Partial fill size is specified as tokenA to receive (`amountA`); tokenB paid is ceiled
-///      - Fee-on-transfer tokens are rejected for tokenA (selling token)
+///      - Fee-on-transfer / phantom transfers are rejected on inbound pulls (tokenA deposits and
+///        tokenB payments) via `_pullExactToken` / `BalanceMismatch`
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
 ///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
 ///        remaining amounts are packed separately so fill % is readable on-chain
 ///      - Reentrancy protected via OpenZeppelin ReentrancyGuardTransient (EIP-1153)
 ///
 ///      Security considerations:
-///      - Front-running is possible on fillOrder (inherent to on-chain orderbooks)
+///      - Front-running is possible on `fillOrder` / `fillOrders` (inherent to on-chain orderbooks)
 ///      - Rebasing tokens may cause unexpected behavior
 ///      - Malicious tokens can cause fund loss - users must verify token contracts
+///      - Outbound fee-on-transfer on maker payout remains possible after an exact tokenB pull
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
 ///        can run `receive`/`fallback`; always after state updates (CEI)
 ///      - Floor/ceil rounding on partial fills may leave tokenA dust in escrow; refunding that dust
@@ -40,6 +42,15 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Canonical placeholder address representing native ETH
     address private constant _ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+    /// @notice One fill leg after validation/quote (internal batch settlement)
+    struct FillLeg {
+        address maker;
+        address tokenA;
+        uint256 amountA;
+        address tokenB;
+        uint256 amountB;
+    }
 
     /// @notice Counter for generating unique order IDs
     /// @dev Starts at 0, increments by 1 for each new order
@@ -58,9 +69,17 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function createOrder(
         CreateOrderParams calldata order
     ) external payable nonReentrant returns (uint256) {
-        CreateOrderParams[] memory orders = new CreateOrderParams[](1);
-        orders[0] = order;
-        return _createOrders(orders)[0];
+        _validateCreateOrder(order.tokenA, order.amountA, order.tokenB, order.amountB);
+
+        uint256 ethAmount = order.tokenA == _ETH ? uint256(order.amountA) : 0;
+        if (msg.value != ethAmount) {
+            revert ETHAmountMismatch(ethAmount, msg.value);
+        }
+        if (order.tokenA != _ETH) {
+            _pullExactToken(order.tokenA, order.amountA);
+        }
+
+        return _storeOrder(order);
     }
 
     /// @inheritdoc ISwapboard
@@ -82,9 +101,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountA,
         uint256 deadline
     ) external payable nonReentrant {
-        FillOrderParams[] memory fills = new FillOrderParams[](1);
-        fills[0] = FillOrderParams({orderId: orderId, amountA: amountA});
-        _fillOrders(fills, deadline);
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
+        }
+        if (amountA == 0) {
+            revert ZeroAmount();
+        }
+
+        FillLeg[] memory legs = new FillLeg[](1);
+        legs[0] = _applyOneFillEffect(orderId, amountA);
+        _settleFills(legs);
     }
 
     /// @inheritdoc ISwapboard
@@ -99,11 +125,27 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function cancelOrder(
         uint256 orderId
     ) external nonReentrant {
-        uint256[] memory orderIds = new uint256[](1);
+        Order storage order = _requireActiveOrder(orderId);
+        address maker = order.maker;
+        if (msg.sender != maker) {
+            revert NotMaker(orderId, msg.sender, maker);
+        }
 
-        orderIds[0] = orderId;
+        address tokenA = order.tokenA;
+        uint256 amountA = order.availableA;
 
-        _cancelOrders(orderIds);
+        delete _orders[orderId];
+        emit OrderCanceled({orderId: orderId});
+
+        if (tokenA == _ETH) {
+            _sendAggregated(new address[](0), new uint256[](0), amountA, msg.sender);
+        } else {
+            address[] memory tokens = new address[](1);
+            uint256[] memory amounts = new uint256[](1);
+            tokens[0] = tokenA;
+            amounts[0] = amountA;
+            _sendAggregated(tokens, amounts, 0, msg.sender);
+        }
     }
 
     /// @inheritdoc ISwapboard
@@ -152,6 +194,23 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return _orders[orderId].active;
     }
 
+    /// @notice Reverts unless the order exists and is active
+    /// @param orderId Order to load
+    /// @return order Storage pointer to the active order
+    function _requireActiveOrder(
+        uint256 orderId
+    ) private view returns (Order storage) {
+        Order storage order = _orders[orderId];
+        if (order.maker == address(0)) {
+            revert OrderNotFound(orderId);
+        }
+        if (!order.active) {
+            revert OrderNotActive(orderId);
+        }
+
+        return order;
+    }
+
     /// @notice Validates createOrder arguments (ETH is checked after deposit aggregation)
     /// @param tokenA Address of the asset to sell
     /// @param amountA Amount of tokenA to deposit
@@ -185,7 +244,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param orders Order creation arguments
     /// @return orderIds Identifiers assigned to each created order
     function _createOrders(
-        CreateOrderParams[] memory orders
+        CreateOrderParams[] calldata orders
     ) private returns (uint256[] memory) {
         uint256 length = orders.length;
         if (length == 0) {
@@ -208,11 +267,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Validates every order in a create batch
     /// @param orders Order creation arguments
     function _validateCreateOrders(
-        CreateOrderParams[] memory orders
+        CreateOrderParams[] calldata orders
     ) private view {
         uint256 length = orders.length;
         for (uint256 i; i < length; ++i) {
-            CreateOrderParams memory params = orders[i];
+            CreateOrderParams calldata params = orders[i];
 
             _validateCreateOrder(params.tokenA, params.amountA, params.tokenB, params.amountB);
         }
@@ -223,7 +282,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @return tokens tokenA for each order
     /// @return amounts amountA for each order
     function _collectDepositAssets(
-        CreateOrderParams[] memory orders
+        CreateOrderParams[] calldata orders
     ) private pure returns (address[] memory tokens, uint256[] memory amounts) {
         uint256 length = orders.length;
         tokens = new address[](length);
@@ -288,7 +347,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address[] memory tokens,
         uint256 length,
         address token
-    ) private pure returns (uint256 index) {
+    ) private pure returns (uint256) {
         for (uint256 i; i < length; ++i) {
             if (tokens[i] == token) {
                 return i;
@@ -311,18 +370,55 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
+    /// @notice Writes one created order to storage and emits `OrderCreated`
+    /// @param params Order creation arguments
+    /// @return orderId Identifier assigned to the order
+    function _storeOrder(
+        CreateOrderParams calldata params
+    ) private returns (uint256) {
+        uint256 orderId = _nextOrderId;
+        // Unchecked is safe: wrapping `_nextOrderId` would require 2^256 orders.
+        unchecked {
+            _nextOrderId = orderId + 1;
+        }
+
+        _orders[orderId] = Order({
+            maker: msg.sender,
+            active: true,
+            partialFillAllowed: params.partialFillAllowed,
+            tokenA: params.tokenA,
+            tokenB: params.tokenB,
+            amountA: params.amountA,
+            amountB: params.amountB,
+            availableA: params.amountA,
+            availableB: params.amountB
+        });
+
+        emit OrderCreated({
+            orderId: orderId,
+            maker: msg.sender,
+            tokenA: params.tokenA,
+            amountA: params.amountA,
+            tokenB: params.tokenB,
+            amountB: params.amountB,
+            partialFillAllowed: params.partialFillAllowed
+        });
+
+        return orderId;
+    }
+
     /// @notice Writes created orders to storage and emits `OrderCreated`
     /// @param orders Order creation arguments
     /// @return orderIds Identifiers assigned in input order
     function _storeOrders(
-        CreateOrderParams[] memory orders
+        CreateOrderParams[] calldata orders
     ) private returns (uint256[] memory) {
         uint256 length = orders.length;
         uint256[] memory orderIds = new uint256[](length);
         uint256 nextId = _nextOrderId;
 
         for (uint256 i; i < length; ++i) {
-            CreateOrderParams memory params = orders[i];
+            CreateOrderParams calldata params = orders[i];
 
             uint256 orderId = nextId + i;
             orderIds[i] = orderId;
@@ -358,28 +454,22 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return orderIds;
     }
 
-    /// @notice Validates a fill and quotes the ceiled tokenB payment
+    /// @notice Quotes the ceiled tokenB payment for an active order
     /// @dev Ceil division benefits escrow/maker. Residual tokenA dust is not refunded.
     ///      Intermediate math widens to uint256; both factors are uint128 so the product fits.
-    /// @param order Order to validate and quote (read-only copy)
+    /// @param order Order to quote (must already be active)
     /// @param orderId Order id for error payloads
     /// @param amountA Requested tokenA out
     /// @return maker Order maker
     /// @return tokenA Sold asset
     /// @return tokenB Payment asset
     /// @return amountBIn Ceiled tokenB the taker must pay
-    function _validateAndQuoteFill(
+    function _quoteFill(
         Order memory order,
         uint256 orderId,
         uint128 amountA
     ) private pure returns (address maker, address tokenA, address tokenB, uint128 amountBIn) {
         maker = order.maker;
-        if (maker == address(0)) {
-            revert OrderNotFound(orderId);
-        }
-        if (!order.active) {
-            revert OrderNotActive(orderId);
-        }
 
         uint128 availableA = order.availableA;
         if (amountA > availableA) {
@@ -406,7 +496,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     function _fillOrders(
-        FillOrderParams[] memory fills,
+        FillOrderParams[] calldata fills,
         uint256 deadline
     ) private {
         if (deadline != 0 && block.timestamp > deadline) {
@@ -418,13 +508,77 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert ZeroAmount();
         }
 
-        (
-            address[] memory makers,
-            address[] memory tokenAs,
-            uint256[] memory amountAs,
-            address[] memory tokenBs,
-            uint256[] memory amountBs
-        ) = _applyFillEffects(fills);
+        _settleFills(_applyFillEffects(fills));
+    }
+
+    /// @notice Validates one fill, updates order storage, emits `OrderFilled`, and returns the leg
+    /// @param orderId Order to fill
+    /// @param amountA Requested tokenA out
+    /// @return leg Settled fill leg
+    function _applyOneFillEffect(
+        uint256 orderId,
+        uint128 amountA
+    ) private returns (FillLeg memory) {
+        Order storage order = _requireActiveOrder(orderId);
+        (address maker, address tokenA, address tokenB, uint128 amountBIn) = _quoteFill(order, orderId, amountA);
+
+        // Unchecked is safe: _quoteFill ensures amountA <= availableA and
+        // amountBIn <= availableB (exact remaining or ceiled proportion).
+        unchecked {
+            order.availableA -= amountA;
+            order.availableB -= amountBIn;
+        }
+        if (order.availableA == 0 || order.availableB == 0) {
+            order.active = false;
+        }
+
+        emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB: amountBIn});
+
+        return FillLeg({maker: maker, tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountBIn});
+    }
+
+    /// @notice Validates fills, updates order storage, and collects transfer legs
+    /// @dev Same `orderId` may appear more than once; later legs see reduced available amounts.
+    /// @param fills Fill arguments in execution order
+    /// @return legs Settled fill legs in input order
+    function _applyFillEffects(
+        FillOrderParams[] calldata fills
+    ) private returns (FillLeg[] memory) {
+        uint256 length = fills.length;
+        FillLeg[] memory legs = new FillLeg[](length);
+
+        for (uint256 i; i < length; ++i) {
+            FillOrderParams calldata fill = fills[i];
+            if (fill.amountA == 0) {
+                revert ZeroAmount();
+            }
+
+            legs[i] = _applyOneFillEffect(fill.orderId, fill.amountA);
+        }
+
+        return legs;
+    }
+
+    /// @notice Pulls aggregated tokenB and pays makers/taker for settled fill legs
+    /// @param legs Settled fill legs
+    function _settleFills(
+        FillLeg[] memory legs
+    ) private {
+        uint256 length = legs.length;
+        address[] memory makers = new address[](length);
+        address[] memory tokenAs = new address[](length);
+        uint256[] memory amountAs = new uint256[](length);
+        address[] memory tokenBs = new address[](length);
+        uint256[] memory amountBs = new uint256[](length);
+
+        for (uint256 i; i < length; ++i) {
+            FillLeg memory leg = legs[i];
+            makers[i] = leg.maker;
+            tokenAs[i] = leg.tokenA;
+            amountAs[i] = leg.amountA;
+            tokenBs[i] = leg.tokenB;
+            amountBs[i] = leg.amountB;
+        }
 
         (address[] memory uniqueTokenB, uint256[] memory uniqueAmountB, uint256 ethIn) =
             _aggregateTokenAmounts(tokenBs, amountBs);
@@ -435,63 +589,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _pullAggregatedTokens(uniqueTokenB, uniqueAmountB);
         _payMakersAggregated(makers, tokenBs, amountBs);
         _payTakerAggregated(tokenAs, amountAs);
-    }
-
-    /// @notice Validates fills, updates order storage, and collects transfer legs
-    /// @dev Same `orderId` may appear more than once; later legs see reduced available amounts.
-    /// @param fills Fill arguments in execution order
-    /// @return makers Maker for each fill
-    /// @return tokenAs tokenA for each fill
-    /// @return amountAs tokenA out for each fill
-    /// @return tokenBs tokenB for each fill
-    /// @return amountBs tokenB in for each fill
-    function _applyFillEffects(
-        FillOrderParams[] memory fills
-    )
-        private
-        returns (
-            address[] memory makers,
-            address[] memory tokenAs,
-            uint256[] memory amountAs,
-            address[] memory tokenBs,
-            uint256[] memory amountBs
-        )
-    {
-        uint256 length = fills.length;
-        makers = new address[](length);
-        tokenAs = new address[](length);
-        amountAs = new uint256[](length);
-        tokenBs = new address[](length);
-        amountBs = new uint256[](length);
-
-        for (uint256 i; i < length; ++i) {
-            FillOrderParams memory fill = fills[i];
-            if (fill.amountA == 0) {
-                revert ZeroAmount();
-            }
-
-            Order storage order = _orders[fill.orderId];
-            (address maker, address tokenA, address tokenB, uint128 amountBIn) =
-                _validateAndQuoteFill(order, fill.orderId, fill.amountA);
-
-            // Unchecked is safe: _validateAndQuoteFill ensures amountA <= availableA and
-            // amountBIn <= availableB (exact remaining or ceiled proportion).
-            unchecked {
-                order.availableA -= fill.amountA;
-                order.availableB -= amountBIn;
-            }
-            if (order.availableA == 0 || order.availableB == 0) {
-                order.active = false;
-            }
-
-            makers[i] = maker;
-            tokenAs[i] = tokenA;
-            amountAs[i] = fill.amountA;
-            tokenBs[i] = tokenB;
-            amountBs[i] = amountBIn;
-
-            emit OrderFilled({orderId: fill.orderId, taker: msg.sender, amountA: fill.amountA, amountB: amountBIn});
-        }
     }
 
     /// @notice Pays makers their aggregated tokenB (ERC20 and/or ETH)
@@ -517,7 +614,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             uint256 uniqueCount
         ) = _aggregateRecipientTokenAmounts(makers, tokens, amounts);
         for (uint256 j; j < uniqueCount; ++j) {
-            // Fee-on-transfer applies only on this outbound transfer; the pull was already exact.
             IERC20(uniqueTokens[j]).safeTransfer(recipients[j], uniqueAmounts[j]);
         }
     }
@@ -531,14 +627,28 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) private {
         (address[] memory uniqueTokens, uint256[] memory uniqueAmounts, uint256 ethOut) =
             _aggregateTokenAmounts(tokens, amounts);
-        if (ethOut > 0) {
-            // Forward all gas so taker contracts can execute receive/fallback.
-            payable(msg.sender).sendValue(ethOut);
+        _sendAggregated(uniqueTokens, uniqueAmounts, ethOut, msg.sender);
+    }
+
+    /// @notice Sends aggregated ERC20 and optional ETH to one recipient
+    /// @param tokens Unique ERC20 tokens
+    /// @param amounts Aggregated amount per token
+    /// @param ethAmount Native ETH to send (0 if none)
+    /// @param recipient Token/ETH recipient
+    function _sendAggregated(
+        address[] memory tokens,
+        uint256[] memory amounts,
+        uint256 ethAmount,
+        address recipient
+    ) private {
+        if (ethAmount > 0) {
+            // Forward all gas so recipient contracts can execute receive/fallback.
+            payable(recipient).sendValue(ethAmount);
         }
 
-        uint256 length = uniqueTokens.length;
+        uint256 length = tokens.length;
         for (uint256 i; i < length; ++i) {
-            IERC20(uniqueTokens[i]).safeTransfer(msg.sender, uniqueAmounts[i]);
+            IERC20(tokens[i]).safeTransfer(recipient, amounts[i]);
         }
     }
 
@@ -635,7 +745,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length,
         address recipient,
         address token
-    ) private pure returns (uint256 index) {
+    ) private pure returns (uint256) {
         for (uint256 i; i < length; ++i) {
             if (recipients[i] == recipient && tokens[i] == token) {
                 return i;
@@ -648,7 +758,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Cancels orders after aggregating ERC20 and ETH refunds to the maker
     /// @param orderIds Order identifiers to cancel
     function _cancelOrders(
-        uint256[] memory orderIds
+        uint256[] calldata orderIds
     ) private {
         uint256 length = orderIds.length;
         if (length == 0) {
@@ -662,13 +772,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             _aggregateTokenAmounts(tokens, amounts);
 
         _deleteCanceledOrders(orderIds);
-        _returnAggregatedTokens(uniqueTokens, uniqueAmounts, ethAmount, msg.sender);
+        _sendAggregated(uniqueTokens, uniqueAmounts, ethAmount, msg.sender);
     }
 
     /// @notice Validates every order in a cancel batch
     /// @param orderIds Order identifiers to cancel
     function _validateCancelOrders(
-        uint256[] memory orderIds
+        uint256[] calldata orderIds
     ) private view {
         uint256 length = orderIds.length;
         for (uint256 i; i < length; ++i) {
@@ -679,14 +789,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 }
             }
 
-            Order memory order = _orders[orderId];
+            Order storage order = _requireActiveOrder(orderId);
             address maker = order.maker;
-            if (maker == address(0)) {
-                revert OrderNotFound(orderId);
-            }
-            if (!order.active) {
-                revert OrderNotActive(orderId);
-            }
             if (msg.sender != maker) {
                 revert NotMaker(orderId, msg.sender, maker);
             }
@@ -698,13 +802,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @return tokens tokenA for each order
     /// @return amounts availableA for each order
     function _collectCancelAssets(
-        uint256[] memory orderIds
+        uint256[] calldata orderIds
     ) private view returns (address[] memory tokens, uint256[] memory amounts) {
         uint256 length = orderIds.length;
         tokens = new address[](length);
         amounts = new uint256[](length);
         for (uint256 i; i < length; ++i) {
-            Order memory order = _orders[orderIds[i]];
+            Order storage order = _orders[orderIds[i]];
             tokens[i] = order.tokenA;
             amounts[i] = order.availableA;
         }
@@ -713,7 +817,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Deletes canceled orders and emits `OrderCanceled`
     /// @param orderIds Order identifiers to cancel
     function _deleteCanceledOrders(
-        uint256[] memory orderIds
+        uint256[] calldata orderIds
     ) private {
         uint256 length = orderIds.length;
         for (uint256 i; i < length; ++i) {
@@ -721,28 +825,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             delete _orders[orderId];
 
             emit OrderCanceled({orderId: orderId});
-        }
-    }
-
-    /// @notice Returns aggregated ERC20 and ETH refunds to the maker
-    /// @param tokens Unique ERC20 tokens
-    /// @param amounts Aggregated refund per token
-    /// @param ethAmount Summed native ETH to return
-    /// @param recipient Refund recipient (the maker)
-    function _returnAggregatedTokens(
-        address[] memory tokens,
-        uint256[] memory amounts,
-        uint256 ethAmount,
-        address recipient
-    ) private {
-        if (ethAmount > 0) {
-            // Forward all gas so maker contracts can execute receive/fallback.
-            payable(recipient).sendValue(ethAmount);
-        }
-
-        uint256 length = tokens.length;
-        for (uint256 i; i < length; ++i) {
-            IERC20(tokens[i]).safeTransfer(recipient, amounts[i]);
         }
     }
 
