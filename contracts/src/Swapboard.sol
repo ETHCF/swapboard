@@ -379,7 +379,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         CreateOrderParams calldata params
     ) private returns (uint256) {
         uint256 orderId = _nextOrderId;
-        
+
         // Unchecked is safe: wrapping `_nextOrderId` would require 2^256 orders.
         unchecked {
             _nextOrderId = orderId + 1;
