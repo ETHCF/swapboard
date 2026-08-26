@@ -17,8 +17,8 @@ import {Semver} from "./Semver.sol";
 ///      - No admin functions, fees, or upgrades
 ///      - Full fills are atomic; partial fills are opt-in via `partialFillAllowed`
 ///      - Partial fill size is specified as tokenA to receive (`amountA`); tokenB paid is ceiled
-///      - Fee-on-transfer / phantom transfers are rejected on inbound pulls (tokenA deposits and
-///        tokenB payments) via `_pullExactToken` / `BalanceMismatch`
+///      - Fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on inbound
+///        pulls (tokenA deposits and tokenB payments) via `_pullExactToken` / `BalanceMismatch`
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
 ///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
 ///        remaining amounts are packed separately so fill % is readable on-chain
@@ -28,7 +28,8 @@ import {Semver} from "./Semver.sol";
 ///      - Front-running is possible on `fillOrder` / `fillOrders` (inherent to on-chain orderbooks)
 ///      - Rebasing tokens may cause unexpected behavior
 ///      - Malicious tokens can cause fund loss - users must verify token contracts
-///      - Outbound fee-on-transfer on maker payout remains possible after an exact tokenB pull
+///      - Outbound fee-on-transfer / mid-transfer rebase on maker payout remains possible after an
+///        exact tokenB pull
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
 ///        can run `receive`/`fallback`; always after state updates (CEI)
 ///      - Floor/ceil rounding on partial fills may leave tokenA dust in escrow; refunding that dust
@@ -90,12 +91,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc ISwapboard
-    /// @dev Inbound tokenB pulls use `_pullExactToken` and reject fee-on-transfer / phantom
-    ///      transfers via `BalanceMismatch`. Residual risk is fee-on-transfer only on the outbound
-    ///      `transfer` to the maker after an exact pull. tokenB in uses ceil division so the
-    ///      taker never underpays for the requested tokenA. Residual tokenA dust (when amountB
-    ///      is exhausted first) is not refunded (not worth the gas); it can be picked up by any
-    ///      user that rounds favorably on another order where the dust token is tokenB.
+    /// @dev Inbound tokenB pulls use `_pullExactToken` and reject fee-on-transfer / mid-transfer
+    ///      rebase / phantom transfers via `BalanceMismatch`. Residual risk is fee-on-transfer /
+    ///      mid-transfer rebase only on the outbound `transfer` to the maker after an exact pull.
+    ///      tokenB in uses ceil division so the taker never underpays for the requested tokenA.
+    ///      Residual tokenA dust (when amountB is exhausted first) is not refunded (not worth the
+    ///      gas); it can be picked up by any user that rounds favorably on another order where the
+    ///      dust token is tokenB.
     function fillOrder(
         uint256 orderId,
         uint128 amountA,
@@ -377,6 +379,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         CreateOrderParams calldata params
     ) private returns (uint256) {
         uint256 orderId = _nextOrderId;
+        
         // Unchecked is safe: wrapping `_nextOrderId` would require 2^256 orders.
         unchecked {
             _nextOrderId = orderId + 1;
@@ -828,7 +831,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
-    /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer
+    /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer rebase
     /// @param token ERC20 token to pull from the caller
     /// @param amount Expected amount received
     function _pullExactToken(
@@ -839,7 +842,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         uint256 balanceAfter = IERC20(token).balanceOf(address(this));
 
-        // Detect fee-on-transfer tokens by comparing received amount to expected
+        // Detect fee-on-transfer / mid-transfer rebase by comparing received amount to expected
         // Using unchecked is safe: balanceAfter >= balanceBefore after successful transfer
         unchecked {
             uint256 received = balanceAfter - balanceBefore;

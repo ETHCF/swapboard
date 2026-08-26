@@ -104,7 +104,7 @@ interface ISwapboard is ISemver {
     error NotAContract(address token);
 
     /// @notice Thrown when the received token amount differs from expected
-    /// @dev Used to detect fee-on-transfer tokens
+    /// @dev Used to detect fee-on-transfer / mid-transfer rebase tokens
     /// @param expected The amount that was expected to be received
     /// @param received The amount that was actually received
     error BalanceMismatch(uint256 expected, uint256 received);
@@ -146,7 +146,8 @@ interface ISwapboard is ISemver {
     error DuplicateOrderId(uint256 orderId);
 
     /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
-    /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer tokens.
+    /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer / mid-transfer
+    ///      rebase tokens.
     ///      For ETH tokenA (`getEth()`), requires `msg.value == amountA`.
     ///      Amounts use `uint128`, which is sufficient for practical order sizes.
     /// @param order Order creation arguments
