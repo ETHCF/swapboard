@@ -19,6 +19,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFOT} from "./mocks/MockFOT.sol";
 import {ETHRejecter} from "./mocks/ETHRejecter.sol";
 import {FillTestLib} from "./helpers/FillTestLib.sol";
+import {OrderTestLib} from "./helpers/OrderTestLib.sol";
 
 /// @notice Unit tests for Swapboard contract
 /// @dev Uses Foundry's Test framework with MockERC20 tokens
@@ -63,9 +64,7 @@ contract SwapboardTest is Test {
         address tokenB,
         uint128 amountB
     ) private pure returns (ISwapboard.CreateOrderParams memory) {
-        return ISwapboard.CreateOrderParams({
-            tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB, partialFillAllowed: false
-        });
+        return OrderTestLib.order(tokenA, amountA, tokenB, amountB);
     }
 
     function _orderPartial(
@@ -74,24 +73,14 @@ contract SwapboardTest is Test {
         address tokenB,
         uint128 amountB
     ) private pure returns (ISwapboard.CreateOrderParams memory) {
-        return ISwapboard.CreateOrderParams({
-            tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB, partialFillAllowed: true
-        });
-    }
-
-    function _quoteFillAmountB(
-        ISwapboard.Order memory order,
-        uint128 amountA
-    ) private pure returns (uint128) {
-        return FillTestLib.quoteAmountB(order, amountA);
+        return OrderTestLib.orderPartial(tokenA, amountA, tokenB, amountB);
     }
 
     function _fillOrder(
         uint256 orderId,
         uint128 amountA
     ) private {
-        ISwapboard.Order memory order = _board.getOrder(orderId);
-        _board.fillOrder(orderId, amountA, FillTestLib.quoteAmountB(order, amountA), 0);
+        FillTestLib.fill(_board, orderId, amountA);
     }
 
     function _fillOrder(
@@ -100,7 +89,7 @@ contract SwapboardTest is Test {
         uint256 deadline
     ) private {
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        _board.fillOrder(orderId, amountA, FillTestLib.quoteAmountB(order, amountA), deadline);
+        FillTestLib.fill(_board, orderId, amountA, FillTestLib.quoteAmountB(order, amountA), deadline);
     }
 
     function _fillOrderQuoted(
@@ -108,7 +97,7 @@ contract SwapboardTest is Test {
         uint256 orderId,
         uint128 amountA
     ) private {
-        _board.fillOrder(orderId, amountA, FillTestLib.quoteAmountB(order, amountA), 0);
+        FillTestLib.fill(_board, order, orderId, amountA);
     }
 
     function _fillOrderQuoted(
@@ -117,7 +106,7 @@ contract SwapboardTest is Test {
         uint128 amountA,
         uint256 deadline
     ) private {
-        _board.fillOrder(orderId, amountA, FillTestLib.quoteAmountB(order, amountA), deadline);
+        FillTestLib.fill(_board, order, orderId, amountA, deadline);
     }
 
     function _fillOrderPayEth(
@@ -125,7 +114,7 @@ contract SwapboardTest is Test {
         uint128 amountA,
         uint128 amountB
     ) private {
-        _board.fillOrder{value: amountB}(orderId, amountA, amountB, 0);
+        FillTestLib.fillPayEth(_board, orderId, amountA, amountB);
     }
 
     function _fillOrderPayEth(
@@ -134,7 +123,7 @@ contract SwapboardTest is Test {
         uint128 amountB,
         uint256 deadline
     ) private {
-        _board.fillOrder{value: amountB}(orderId, amountA, amountB, deadline);
+        FillTestLib.fillPayEth(_board, orderId, amountA, amountB, deadline);
     }
 
     function _tf(

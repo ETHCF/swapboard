@@ -8,6 +8,7 @@ import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {FillTestLib} from "./helpers/FillTestLib.sol";
+import {OrderTestLib} from "./helpers/OrderTestLib.sol";
 
 contract SwapboardIntegrationTest is Test {
     Swapboard internal _board;
@@ -666,8 +667,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 orderId,
         uint128 amountA
     ) private {
-        ISwapboard.Order memory order = _board.getOrder(orderId);
-        _board.fillOrder(orderId, amountA, FillTestLib.quoteAmountB(order, amountA), 0);
+        FillTestLib.fill(_board, orderId, amountA);
     }
 
     function _fillOrderPayEth(
@@ -675,7 +675,7 @@ contract SwapboardIntegrationTest is Test {
         uint128 amountA,
         uint128 amountB
     ) private {
-        _board.fillOrder{value: amountB}(orderId, amountA, amountB, 0);
+        FillTestLib.fillPayEth(_board, orderId, amountA, amountB);
     }
 
     function _order(
@@ -684,9 +684,7 @@ contract SwapboardIntegrationTest is Test {
         address tokenB,
         uint128 amountB
     ) private pure returns (ISwapboard.CreateOrderParams memory) {
-        return ISwapboard.CreateOrderParams({
-            tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB, partialFillAllowed: false
-        });
+        return OrderTestLib.order(tokenA, amountA, tokenB, amountB);
     }
 
     function _orderPartial(
@@ -695,8 +693,6 @@ contract SwapboardIntegrationTest is Test {
         address tokenB,
         uint128 amountB
     ) private pure returns (ISwapboard.CreateOrderParams memory) {
-        return ISwapboard.CreateOrderParams({
-            tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB, partialFillAllowed: true
-        });
+        return OrderTestLib.orderPartial(tokenA, amountA, tokenB, amountB);
     }
 }

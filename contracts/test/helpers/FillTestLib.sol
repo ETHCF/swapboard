@@ -33,6 +33,27 @@ library FillTestLib {
         return ISwapboard.FillOrderParams({orderId: orderId, amountA: amountA, amountB: quoteAmountB(order, amountA)});
     }
 
+    /// @notice Fills an order with an explicit amountB and deadline
+    function fill(
+        ISwapboard board,
+        uint256 orderId,
+        uint128 amountA,
+        uint128 amountB,
+        uint256 deadline
+    ) internal {
+        board.fillOrder(orderId, amountA, amountB, deadline);
+    }
+
+    /// @notice Fills an order with an explicit amountB (no order fetch; safe after `vm.expectRevert`)
+    function fill(
+        ISwapboard board,
+        uint256 orderId,
+        uint128 amountA,
+        uint128 amountB
+    ) internal {
+        fill(board, orderId, amountA, amountB, 0);
+    }
+
     /// @notice Fills an order with a quoted amountB
     function fill(
         ISwapboard board,
@@ -40,7 +61,39 @@ library FillTestLib {
         uint128 amountA
     ) internal {
         ISwapboard.Order memory order = board.getOrder(orderId);
-        board.fillOrder(orderId, amountA, quoteAmountB(order, amountA), 0);
+        fill(board, orderId, amountA, quoteAmountB(order, amountA), 0);
+    }
+
+    /// @notice Fills using a pre-fetched order snapshot and deadline
+    function fill(
+        ISwapboard board,
+        ISwapboard.Order memory order,
+        uint256 orderId,
+        uint128 amountA,
+        uint256 deadline
+    ) internal {
+        fill(board, orderId, amountA, quoteAmountB(order, amountA), deadline);
+    }
+
+    /// @notice Fills using a pre-fetched order snapshot (no extra `getOrder`; safe after `vm.expectRevert`)
+    function fill(
+        ISwapboard board,
+        ISwapboard.Order memory order,
+        uint256 orderId,
+        uint128 amountA
+    ) internal {
+        fill(board, orderId, amountA, quoteAmountB(order, amountA), 0);
+    }
+
+    /// @notice Fills an order paying native ETH as tokenB with a deadline
+    function fillPayEth(
+        ISwapboard board,
+        uint256 orderId,
+        uint128 amountA,
+        uint128 amountB,
+        uint256 deadline
+    ) internal {
+        board.fillOrder{value: amountB}(orderId, amountA, amountB, deadline);
     }
 
     /// @notice Fills an order paying native ETH as tokenB
@@ -50,6 +103,6 @@ library FillTestLib {
         uint128 amountA,
         uint128 amountB
     ) internal {
-        board.fillOrder{value: amountB}(orderId, amountA, amountB, 0);
+        fillPayEth(board, orderId, amountA, amountB, 0);
     }
 }
