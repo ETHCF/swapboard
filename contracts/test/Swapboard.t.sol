@@ -2534,7 +2534,7 @@ contract SwapboardTest is Test {
         uint128[9] memory amounts = [uint128(1 ether), 2e6, 0.1 ether, 3 ether, 4 ether, 0.2 ether, 5e6, 6 ether, 7e6];
 
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](9);
-        for (uint256 i; i < 9; ++i) {
+        for (uint256 i = 0; i < 9; ++i) {
             address tokenB = tokens[i] == address(_tokenA) ? address(_tokenB) : address(_tokenA);
             orders[i] = _order(tokens[i], amounts[i], tokenB, 1e6);
         }
@@ -2551,7 +2551,7 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), 14 ether);
         assertEq(_tokenB.balanceOf(address(_board)), 14e6);
         assertEq(address(_board).balance, 0.3 ether);
-        for (uint256 i; i < 9; ++i) {
+        for (uint256 i = 0; i < 9; ++i) {
             assertEq(_board.getOrder(ids[i]).tokenA, tokens[i]);
             assertEq(_board.getOrder(ids[i]).availableA, amounts[i]);
         }
@@ -3095,7 +3095,7 @@ contract SwapboardTest is Test {
 
         assertEq(_tokenA.balanceOf(address(_board)), 0);
         assertEq(_tokenA.balanceOf(_maker), makerBefore + 40 ether);
-        for (uint256 i; i < 3; ++i) {
+        for (uint256 i = 0; i < 3; ++i) {
             assertFalse(_board.canFill(ids[i]));
             assertFalse(_board.getOrder(ids[i]).active);
             assertEq(_board.getOrder(ids[i]).availableA, 0);
@@ -3340,7 +3340,7 @@ contract SwapboardTest is Test {
         _board.cancelOrders(ids);
         vm.stopPrank();
 
-        for (uint256 i; i < 2; ++i) {
+        for (uint256 i = 0; i < 2; ++i) {
             ISwapboard.Order memory order = _board.getOrder(ids[i]);
             assertEq(order.maker, address(0));
             assertFalse(order.active);

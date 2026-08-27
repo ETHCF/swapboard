@@ -432,6 +432,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             uint256 orderId = nextId + i;
             orderIds[i] = orderId;
 
+            // forge-lint: disable-next-item(costly-loop)
             _orders[orderId] = Order({
                 maker: msg.sender,
                 active: true,
@@ -842,6 +843,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = orderIds.length;
         for (uint256 i = 0; i < length; ++i) {
             uint256 orderId = orderIds[i];
+            // forge-lint: disable-next-line(costly-loop)
             delete _orders[orderId];
 
             emit OrderCanceled({orderId: orderId});
