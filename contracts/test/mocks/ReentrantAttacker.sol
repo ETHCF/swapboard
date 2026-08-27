@@ -10,6 +10,8 @@ import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 /// @title ReentrantAttacker
 /// @notice Mock ERC20 that attempts reentrancy on transfer
 contract ReentrantAttacker is MockERC20 {
+    error ZeroAddress();
+
     Swapboard private immutable _BOARD;
     string private _attackType;
     uint256 private _orderId;
@@ -54,12 +56,18 @@ contract ReentrantAttacker is MockERC20 {
     function setAttacker(
         address attacker
     ) external {
+        if (attacker == address(0)) {
+            revert ZeroAddress();
+        }
         _attacker = attacker;
     }
 
     function setTokenB(
         address tokenB
     ) external {
+        if (tokenB == address(0)) {
+            revert ZeroAddress();
+        }
         _tokenB = tokenB;
     }
 
@@ -86,6 +94,7 @@ contract ReentrantAttacker is MockERC20 {
         return true;
     }
 
+    // forge-lint: disable-next-item(reentrancy-no-eth)
     function _attemptReentrancy() internal {
         if (_attacking) {
             // Prevent infinite loop

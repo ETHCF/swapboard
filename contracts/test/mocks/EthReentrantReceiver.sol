@@ -9,6 +9,7 @@ import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 
 /// @title EthReentrantReceiver
 /// @notice Receives ETH and attempts to reenter Swapboard (blocked by nonReentrant)
+// forge-lint: disable-next-item(locked-ether)
 contract EthReentrantReceiver {
     enum Attack {
         None,
@@ -42,6 +43,7 @@ contract EthReentrantReceiver {
     }
 
     // solhint-disable no-complex-fallback
+    // forge-lint: disable-next-item(reentrancy-no-eth)
     receive() external payable {
         if (_attacking || _attack == Attack.None) {
             return;

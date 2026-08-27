@@ -27,7 +27,7 @@ contract MockOutboundFOT is MockERC20 {
         _balanceOf[to] += netAmount;
         _totalSupply -= fee;
 
-        emit Transfer({from: msg.sender, to: to, amount: netAmount});
+        emit Transfer({from: msg.sender, to: to, value: netAmount});
 
         return true;
     }
