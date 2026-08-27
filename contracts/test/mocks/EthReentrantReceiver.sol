@@ -44,6 +44,7 @@ contract EthReentrantReceiver {
 
     // solhint-disable no-complex-fallback
     // forge-lint: disable-next-item(reentrancy-no-eth)
+    // forge-lint: disable-next-item(cyclomatic-complexity)
     receive() external payable {
         if (_attacking || _attack == Attack.None) {
             return;

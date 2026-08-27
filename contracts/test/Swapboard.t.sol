@@ -126,6 +126,13 @@ contract SwapboardTest is Test {
         FillTestLib.fillPayEth(_board, orderId, amountA, minAmountB, deadline);
     }
 
+    /// @notice Net amount after MockFOT's 5% fee (matches `transfer` / `transferFrom`)
+    function _fotNet(
+        uint256 gross
+    ) private pure returns (uint256) {
+        return gross - (gross * 5) / 100;
+    }
+
     function _tf(
         MockERC20 token
     ) private view returns (uint256) {
@@ -2148,9 +2155,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         fotB.approve(address(_board), expectedBIn);
         ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
-        vm.expectRevert(
-            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, expectedBIn, expectedBIn * 95 / 100)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, expectedBIn, _fotNet(expectedBIn)));
         _fillOrderQuoted(orderBefore, orderId, fillA);
         vm.stopPrank();
 
@@ -2179,7 +2184,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         fotB.approve(address(_board), AMOUNT_B);
         ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_B, AMOUNT_B * 95 / 100));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_B, _fotNet(AMOUNT_B)));
         _fillOrderQuoted(orderBefore, orderId, AMOUNT_A);
         vm.stopPrank();
 
@@ -2213,9 +2218,7 @@ contract SwapboardTest is Test {
 
         vm.startPrank(_taker);
         fotB.approve(address(_board), expectedBIn);
-        vm.expectRevert(
-            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, expectedBIn, expectedBIn * 95 / 100)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, expectedBIn, _fotNet(expectedBIn)));
         _board.fillOrders(fills, 0);
         vm.stopPrank();
 
