@@ -67,7 +67,7 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by createOrders for three same-token orders
     function test_gas_createOrders() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i; i < 3; ++i) {
+        for (uint256 i = 0; i < 3; ++i) {
             orders[i] = _order();
         }
 
@@ -115,7 +115,7 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by fillOrders for three same-tokenB orders
     function test_gas_fillOrders() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i; i < 3; ++i) {
+        for (uint256 i = 0; i < 3; ++i) {
             orders[i] = _order();
         }
 
@@ -123,7 +123,7 @@ contract GasBenchmarks is Test {
         uint256[] memory ids = _board.createOrders(orders);
 
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](3);
-        for (uint256 j; j < 3; ++j) {
+        for (uint256 j = 0; j < 3; ++j) {
             fills[j] = FillTestLib.fillParams(_board.getOrder(ids[j]), ids[j], ORDER_A);
         }
 
@@ -153,7 +153,7 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by cancelOrders for three same-token orders
     function test_gas_cancelOrders() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i; i < 3; ++i) {
+        for (uint256 i = 0; i < 3; ++i) {
             orders[i] = _order();
         }
 

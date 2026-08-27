@@ -619,6 +619,7 @@ contract SwapboardTest is Test {
         _tokenB.approve(address(_board), AMOUNT_B);
 
         vm.expectEmit(true, true, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: AMOUNT_A, amountB: AMOUNT_B});
 
         _fillOrder(orderId, AMOUNT_A);
@@ -637,6 +638,7 @@ contract SwapboardTest is Test {
         uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
 
         vm.expectEmit(true, false, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderCanceled({orderId: orderId});
 
         _board.cancelOrder(orderId);
@@ -809,6 +811,7 @@ contract SwapboardTest is Test {
     /// @notice Tests createOrder selling ETH emits OrderCreated
     function test_createOrder_sellEth_event() public {
         vm.expectEmit(true, true, false, true);
+        // forge-lint: disable-next-item(reentrancy-events)
         emit ISwapboard.OrderCreated({
             orderId: 0,
             maker: _maker,
@@ -995,6 +998,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         vm.expectEmit(true, true, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: AMOUNT_B, amountB: ETH_AMOUNT});
 
         vm.prank(_taker);
@@ -1126,6 +1130,7 @@ contract SwapboardTest is Test {
         uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         vm.expectEmit(true, false, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderCanceled({orderId: orderId});
 
         vm.prank(_maker);
@@ -1239,6 +1244,7 @@ contract SwapboardTest is Test {
 
         uint256 tokenBPullsBefore = _tf(_tokenB);
         vm.expectEmit(true, true, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: ETH_AMOUNT, amountB: AMOUNT_B});
         _fillOrder(orderId, ETH_AMOUNT);
         vm.stopPrank();
@@ -1604,6 +1610,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), quotedB);
         vm.expectEmit(true, true, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: fillA, amountB: quotedB});
         _board.fillOrder(orderId, fillA, quotedB - 1, 0);
         vm.stopPrank();
@@ -1635,6 +1642,7 @@ contract SwapboardTest is Test {
 
         vm.startPrank(_taker);
         vm.expectEmit(true, true, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: fillA, amountB: quotedEth});
         _board.fillOrder{value: quotedEth}(orderId, fillA, quotedEth - 1, 0);
         vm.stopPrank();
@@ -1668,6 +1676,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), quotedB);
         vm.expectEmit(true, true, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: fillA, amountB: quotedB});
         _board.fillOrders(fills, 0);
         vm.stopPrank();
@@ -1941,6 +1950,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), expectedBIn);
         vm.expectEmit(true, true, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: fillA, amountB: expectedBIn});
         _fillOrder(orderId, fillA);
         vm.stopPrank();
@@ -3625,8 +3635,10 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B * 2);
         vm.expectEmit(true, true, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderFilled({orderId: ids[0], taker: _taker, amountA: AMOUNT_A, amountB: AMOUNT_B});
         vm.expectEmit(true, true, false, true);
+        // forge-lint: disable-next-line(reentrancy-events)
         emit ISwapboard.OrderFilled({orderId: ids[1], taker: _taker, amountA: AMOUNT_A, amountB: AMOUNT_B});
         _board.fillOrders(fills, 0);
         vm.stopPrank();

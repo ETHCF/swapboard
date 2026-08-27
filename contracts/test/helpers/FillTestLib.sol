@@ -19,6 +19,8 @@ library FillTestLib {
             return order.availableB;
         }
 
+        // Ceil of uint128 values; result is <= order.availableB.
+        // forge-lint: disable-next-item(unsafe-typecast)
         return uint128(
             (uint256(amountA) * uint256(order.availableB) + uint256(order.availableA) - 1) / uint256(order.availableA)
         );
@@ -66,6 +68,7 @@ library FillTestLib {
     }
 
     /// @notice Fills using a pre-fetched order snapshot and deadline
+    // forge-lint: disable-next-item(internal-function-used-once)
     function fill(
         ISwapboard board,
         ISwapboard.Order memory order,
@@ -77,6 +80,7 @@ library FillTestLib {
     }
 
     /// @notice Fills using a pre-fetched order snapshot (no extra `getOrder`; safe after `vm.expectRevert`)
+    // forge-lint: disable-next-item(internal-function-used-once)
     function fill(
         ISwapboard board,
         ISwapboard.Order memory order,
@@ -99,6 +103,7 @@ library FillTestLib {
     }
 
     /// @notice Fills paying ETH when `minAmountB` may be below the quoted payment
+    // forge-lint: disable-next-item(internal-function-used-once)
     function fillPayEthQuoted(
         ISwapboard board,
         uint256 orderId,
