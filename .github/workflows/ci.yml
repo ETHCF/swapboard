@@ -21,6 +21,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
+          version: stable
           cache: true
 
       - name: Check formatting
@@ -123,6 +124,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
+          version: stable
           cache: true
 
       - name: Run Slither
