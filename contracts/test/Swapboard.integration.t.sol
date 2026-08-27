@@ -673,9 +673,9 @@ contract SwapboardIntegrationTest is Test {
     function _fillOrderPayEth(
         uint256 orderId,
         uint128 amountA,
-        uint128 amountB
+        uint128 minAmountB
     ) private {
-        FillTestLib.fillPayEth(_board, orderId, amountA, amountB);
+        FillTestLib.fillPayEth(_board, orderId, amountA, minAmountB);
     }
 
     function _order(

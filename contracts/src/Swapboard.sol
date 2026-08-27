@@ -106,7 +106,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function fillOrder(
         uint256 orderId,
         uint128 amountA,
-        uint128 amountB,
+        uint128 minAmountB,
         uint256 deadline
     ) external payable nonReentrant {
         if (deadline != 0 && block.timestamp > deadline) {
@@ -117,7 +117,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         FillLeg[] memory legs = new FillLeg[](1);
-        legs[0] = _applyOneFillEffect(orderId, amountA, amountB);
+        legs[0] = _applyOneFillEffect(orderId, amountA, minAmountB);
         _settleFills(legs);
     }
 
@@ -523,18 +523,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Validates one fill, updates order storage, emits `OrderFilled`, and returns the leg
     /// @param orderId Order to fill
     /// @param amountA Requested tokenA out
-    /// @param amountB TokenB payment declared by the taker
+    /// @param minAmountB Minimum tokenB payment declared by the taker
     /// @return leg Settled fill leg
     function _applyOneFillEffect(
         uint256 orderId,
         uint128 amountA,
-        uint128 amountB
+        uint128 minAmountB
     ) private returns (FillLeg memory) {
         Order storage order = _requireActiveOrder(orderId);
         (address maker, address tokenA, address tokenB, uint128 amountBIn) = _quoteFill(order, orderId, amountA);
 
-        if (amountB != amountBIn) {
-            revert FillAmountMismatch(orderId, amountBIn, amountB);
+        if (amountBIn < minAmountB) {
+            revert FillAmountMismatch(orderId, amountBIn, minAmountB);
         }
 
         // Unchecked is safe: _quoteFill ensures amountA <= availableA and
@@ -568,7 +568,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 revert ZeroAmount();
             }
 
-            legs[i] = _applyOneFillEffect(fill.orderId, fill.amountA, fill.amountB);
+            legs[i] = _applyOneFillEffect(fill.orderId, fill.amountA, fill.minAmountB);
         }
 
         return legs;
