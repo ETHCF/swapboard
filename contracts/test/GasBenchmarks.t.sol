@@ -25,6 +25,8 @@ contract GasBenchmarks is Test {
 
     uint128 private constant ORDER_A = 100 ether;
     uint128 private constant ORDER_B = 100 ether;
+    uint8 private constant TOKEN_DECIMALS = 18;
+    uint256 private constant MINT_AMOUNT = 1_000_000 ether;
 
     function _order() private view returns (ISwapboard.CreateOrderParams memory) {
         return OrderTestLib.order(address(_tokenA), ORDER_A, address(_tokenB), ORDER_B);
@@ -37,11 +39,11 @@ contract GasBenchmarks is Test {
     /// @notice Deploys Swapboard, tokens, and approvals for gas benchmarks
     function setUp() public {
         _board = new Swapboard();
-        _tokenA = new MockERC20("Token A", "TKA", 18);
-        _tokenB = new MockERC20("Token B", "TKB", 18);
+        _tokenA = new MockERC20("Token A", "TKA", TOKEN_DECIMALS);
+        _tokenB = new MockERC20("Token B", "TKB", TOKEN_DECIMALS);
 
-        _tokenA.mint(_maker, 1_000_000 ether);
-        _tokenB.mint(_taker, 1_000_000 ether);
+        _tokenA.mint(_maker, MINT_AMOUNT);
+        _tokenB.mint(_taker, MINT_AMOUNT);
 
         vm.prank(_maker);
         _tokenA.approve(address(_board), type(uint256).max);

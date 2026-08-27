@@ -35,7 +35,6 @@ number_underscore = "thousands"
 
 [lint]
 exclude_lints = ["block-timestamp"]
-ignore = ["lib/**"]
 
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"
