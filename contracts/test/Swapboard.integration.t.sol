@@ -347,7 +347,6 @@ contract SwapboardIntegrationTest is Test {
         _weth.approve(address(_board), 10 ether);
 
         vm.expectEmit(true, true, false, true);
-        // forge-lint: disable-next-item(reentrancy-events)
         emit ISwapboard.OrderCreated({
             orderId: 0,
             maker: _alice,
