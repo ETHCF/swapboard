@@ -6,7 +6,6 @@ pragma solidity 0.8.36;
 // solhint-disable gas-small-strings
 
 import {Test, console2} from "forge-std/Test.sol";
-import {VmSafe} from "forge-std/Vm.sol";
 import {FillTestLib} from "./helpers/FillTestLib.sol";
 import {OrderTestLib} from "./helpers/OrderTestLib.sol";
 import {Swapboard} from "../src/Swapboard.sol";
@@ -30,17 +29,6 @@ contract GasBenchmarks is Test {
     uint128 private constant ORDER_B = 100 ether;
     uint8 private constant TOKEN_DECIMALS = 18;
     uint256 private constant MINT_AMOUNT = 1_000_000 ether;
-
-    /// @dev Coverage instrumentation inflates gas; limits apply only under `forge test` / snapshot.
-    function _assertGasLt(
-        uint256 gasUsed,
-        uint256 limit
-    ) private view {
-        if (vm.isContext(VmSafe.ForgeContext.Coverage)) {
-            return;
-        }
-        _assertGasLt(gasUsed, limit);
-    }
 
     function _order() private view returns (ISwapboard.CreateOrderParams memory) {
         return OrderTestLib.order(address(_tokenA), ORDER_A, address(_tokenB), ORDER_B);
@@ -73,7 +61,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("createOrder gas:", gasUsed);
-        _assertGasLt(gasUsed, 250_000);
+        assertLt(gasUsed, 250_000);
     }
 
     /// @notice Benchmarks gas used by createOrders for three same-token orders
@@ -89,7 +77,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("createOrders(3) gas:", gasUsed);
-        _assertGasLt(gasUsed, 500_000);
+        assertLt(gasUsed, 500_000);
     }
 
     /// @notice Benchmarks gas used by fillOrder
@@ -105,7 +93,7 @@ contract GasBenchmarks is Test {
         vm.stopPrank();
 
         console2.log("fillOrder gas:", gasUsed);
-        _assertGasLt(gasUsed, 150_000);
+        assertLt(gasUsed, 150_000);
     }
 
     /// @notice Benchmarks gas used by a partial fillOrder
@@ -121,7 +109,7 @@ contract GasBenchmarks is Test {
         vm.stopPrank();
 
         console2.log("fillOrder partial gas:", gasUsed);
-        _assertGasLt(gasUsed, 155_000);
+        assertLt(gasUsed, 155_000);
     }
 
     /// @notice Benchmarks gas used by fillOrders for three same-tokenB orders
@@ -145,7 +133,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("fillOrders(3) gas:", gasUsed);
-        _assertGasLt(gasUsed, 400_000);
+        assertLt(gasUsed, 400_000);
     }
 
     /// @notice Benchmarks gas used by cancelOrder
@@ -159,7 +147,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("cancelOrder gas:", gasUsed);
-        _assertGasLt(gasUsed, 100_000);
+        assertLt(gasUsed, 100_000);
     }
 
     /// @notice Benchmarks gas used by cancelOrders for three same-token orders
@@ -178,7 +166,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("cancelOrders(3) gas:", gasUsed);
-        _assertGasLt(gasUsed, 200_000);
+        assertLt(gasUsed, 200_000);
     }
 
     /// @notice Benchmarks gas used by getOrder
@@ -191,7 +179,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrder gas:", gasUsed);
-        _assertGasLt(gasUsed, 15_000);
+        assertLt(gasUsed, 15_000);
     }
 
     /// @notice Benchmarks gas used by getOrders for 10 orders
@@ -211,7 +199,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrders(10) gas:", gasUsed);
-        _assertGasLt(gasUsed, 140_000);
+        assertLt(gasUsed, 140_000);
     }
 
     /// @notice Benchmarks gas used by getOrders for 100 orders
@@ -231,7 +219,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrders(100) gas:", gasUsed);
-        _assertGasLt(gasUsed, 1_400_000);
+        assertLt(gasUsed, 1_400_000);
     }
 
     /// @notice Benchmarks gas used by canFill
@@ -244,6 +232,6 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("canFill gas:", gasUsed);
-        _assertGasLt(gasUsed, 5000);
+        assertLt(gasUsed, 5000);
     }
 }
