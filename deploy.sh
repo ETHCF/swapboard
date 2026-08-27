@@ -116,7 +116,8 @@ log "Using START_BLOCK=$START_BLOCK"
 
 log "Step 2: Updating subgraph configuration..."
 
-SUBGRAPH_YAML="$SCRIPT_DIR/subgraph/subgraph.yaml"
+SUBGRAPH_DIR="$SCRIPT_DIR/subgraph/${SUBGRAPH_VERSION:-v2}"
+SUBGRAPH_YAML="$SUBGRAPH_DIR/subgraph.yaml"
 
 # Update contract address
 sed -i.bak "s/address: \"0x[a-fA-F0-9]\{40\}\"/address: \"$CONTRACT_ADDRESS\"/" "$SUBGRAPH_YAML"
@@ -152,7 +153,7 @@ if [[ "$SKIP_SUBGRAPH" != "true" ]]; then
 
     check_env "GRAPH_AUTH_TOKEN"
 
-    cd "$SCRIPT_DIR/subgraph"
+    cd "$SUBGRAPH_DIR"
 
     # Authenticate
     graph auth --studio "$GRAPH_AUTH_TOKEN"

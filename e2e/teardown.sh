@@ -12,6 +12,6 @@ docker compose down -v --remove-orphans
 
 # Clean up generated files
 rm -f .env.e2e
-rm -f ../subgraph/subgraph.e2e.yaml
+rm -f ../subgraph/v1/subgraph.e2e.yaml
 
 echo "=== E2E Teardown Complete ==="

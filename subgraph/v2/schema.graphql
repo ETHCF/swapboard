@@ -1,0 +1,263 @@
+# Swapboard v2 Subgraph Schema
+# Indexes orders, partial fills, tokens, pairs, accounts, and global statistics
+# for the Swapboard v2 OTC bulletin board.
+#
+# v2 differences from v1:
+# - Orders may be filled in multiple parts (`partialFillAllowed`), so an Order
+#   carries remaining/filled amounts and has many Fill children.
+# - Native ETH participates directly via the `0xEeee...eEeE` sentinel address and
+#   is modelled as a Token with `isNative: true`.
+# - Amounts are `uint128` on-chain; they are still stored as BigInt here.
+
+"""
+Lifecycle state of an order.
+"""
+enum OrderStatus {
+  "Created, never filled, still fillable"
+  OPEN
+  "Partially filled, still fillable"
+  PARTIALLY_FILLED
+  "Fully filled (no tokenA or no tokenB remaining)"
+  FILLED
+  "Cancelled by the maker; remaining tokenA was refunded"
+  CANCELED
+}
+
+"""
+A single OTC order on the board.
+Amounts are in base units; `amountA`/`amountB` are the originals and never change,
+`availableA`/`availableB` shrink as the order is filled.
+"""
+type Order @entity(immutable: false) {
+  "Order ID from the contract, as a decimal string"
+  id: ID!
+  "Numeric order ID from the contract"
+  orderId: BigInt! @index
+  "Account that created the order and deposited tokenA"
+  maker: Account! @index
+  "Token being sold (held in escrow)"
+  tokenA: Token! @index
+  "Token wanted in exchange"
+  tokenB: Token! @index
+  "The (tokenA, tokenB) pair this order belongs to"
+  pair: Pair! @index
+  "Original amount of tokenA deposited (unchanged by fills)"
+  amountA: BigInt!
+  "Original amount of tokenB required (unchanged by fills)"
+  amountB: BigInt!
+  "Remaining tokenA still in escrow. After a cancel, the amount refunded to the maker"
+  availableA: BigInt!
+  "Remaining tokenB still required to complete the order"
+  availableB: BigInt!
+  "Total tokenA taken from this order so far (amountA - availableA)"
+  filledA: BigInt!
+  "Total tokenB paid to the maker so far (amountB - availableB)"
+  filledB: BigInt!
+  "Fraction of tokenA filled, 0 to 1"
+  filledFraction: BigDecimal! @index
+  "Whether the order may be filled in multiple parts"
+  partialFillAllowed: Boolean! @index
+  "Current lifecycle state"
+  status: OrderStatus! @index
+  "Whether the order can still be filled (status OPEN or PARTIALLY_FILLED)"
+  active: Boolean! @index
+  "Asking price in human units: tokenB per 1 tokenA (0 if undeterminable)"
+  priceBPerA: BigDecimal! @index
+  "Inverse asking price in human units: tokenA per 1 tokenB (0 if undeterminable)"
+  priceAPerB: BigDecimal! @index
+  "Number of OrderFilled events seen for this order"
+  fillCount: Int! @index
+  "Individual fills against this order, oldest first"
+  fills: [Fill!]! @derivedFrom(field: "order")
+  "Block timestamp when the order was created"
+  createdAt: BigInt! @index
+  "Block number when the order was created"
+  createdBlock: BigInt!
+  "Transaction hash of order creation"
+  createdTx: Bytes!
+  "Block timestamp of the most recent state change"
+  updatedAt: BigInt! @index
+  "Block timestamp when the order became fully filled"
+  filledAt: BigInt
+  "Transaction hash of the fill that completed the order"
+  filledTx: Bytes
+  "Block timestamp when the order was cancelled"
+  canceledAt: BigInt
+  "Transaction hash of order cancellation"
+  canceledTx: Bytes
+}
+
+"""
+A single OrderFilled event. An order that allows partial fills produces one Fill
+per fill; a full fill produces exactly one.
+"""
+type Fill @entity(immutable: true) {
+  "Transaction hash + log index"
+  id: ID!
+  "The order that was filled"
+  order: Order! @index
+  "Order ID from the contract, denormalised for cheap filtering"
+  orderId: BigInt! @index
+  "Account that filled the order"
+  taker: Account! @index
+  "Account that created the order"
+  maker: Account! @index
+  "Token the taker received"
+  tokenA: Token! @index
+  "Token the taker paid"
+  tokenB: Token! @index
+  "The (tokenA, tokenB) pair traded"
+  pair: Pair! @index
+  "Amount of tokenA transferred to the taker"
+  amountA: BigInt!
+  "Amount of tokenB paid by the taker (ceiled on partial fills)"
+  amountB: BigInt!
+  "Execution price in human units: tokenB per 1 tokenA (0 if undeterminable)"
+  priceBPerA: BigDecimal!
+  "tokenA still in escrow after this fill"
+  remainingA: BigInt!
+  "tokenB still required after this fill"
+  remainingB: BigInt!
+  "Whether this fill completed the order"
+  closedOrder: Boolean! @index
+  "Block timestamp of the fill"
+  timestamp: BigInt! @index
+  "Block number of the fill"
+  blockNumber: BigInt!
+  "Transaction hash of the fill"
+  transactionHash: Bytes! @index
+  "Log index within the transaction (batch fills emit several)"
+  logIndex: BigInt!
+}
+
+"""
+An asset that has appeared in at least one order. Native ETH is included via the
+Swapboard ETH sentinel address and has `isNative: true`.
+"""
+type Token @entity(immutable: false) {
+  "Token contract address, lowercase hex"
+  id: ID!
+  "Token contract address"
+  address: Bytes!
+  "Token symbol (\"ETH\" for native, \"UNKNOWN\" if the call reverts)"
+  symbol: String! @index
+  "Token name (\"Ether\" for native, \"Unknown Token\" if the call reverts)"
+  name: String! @index
+  "Token decimals (18 for native, 18 assumed if the call reverts)"
+  decimals: Int!
+  "Whether this is the native ETH sentinel rather than an ERC20"
+  isNative: Boolean! @index
+  "Total tokenA volume taken from filled orders"
+  volumeSold: BigInt!
+  "Total tokenB volume paid into filled orders"
+  volumeBought: BigInt!
+  "Orders ever created with this token as tokenA"
+  ordersSelling: BigInt!
+  "Orders ever created with this token as tokenB"
+  ordersBuying: BigInt!
+  "Fillable orders with this token as tokenA"
+  openOrdersSelling: BigInt! @index
+  "Fillable orders with this token as tokenB"
+  openOrdersBuying: BigInt! @index
+  "Fills involving this token on either side"
+  fillCount: BigInt! @index
+  "Block timestamp this token was first seen"
+  firstSeenAt: BigInt!
+  "Orders where this token is tokenA"
+  sellOrders: [Order!]! @derivedFrom(field: "tokenA")
+  "Orders where this token is tokenB"
+  buyOrders: [Order!]! @derivedFrom(field: "tokenB")
+}
+
+"""
+A directional token pair (selling tokenA for tokenB).
+`tokenB -> tokenA` is a separate Pair entity.
+"""
+type Pair @entity(immutable: false) {
+  "Composite ID: <tokenA>-<tokenB>, lowercase addresses"
+  id: ID!
+  "Token being sold"
+  tokenA: Token! @index
+  "Token wanted in exchange"
+  tokenB: Token! @index
+  "Orders ever created for this pair"
+  orderCount: BigInt! @index
+  "Fillable orders for this pair"
+  openOrderCount: BigInt! @index
+  "Orders for this pair that reached FILLED"
+  filledOrderCount: BigInt! @index
+  "Orders for this pair that were cancelled"
+  canceledOrderCount: BigInt!
+  "Individual fills against this pair"
+  fillCount: BigInt! @index
+  "Cumulative tokenA traded"
+  volumeA: BigInt!
+  "Cumulative tokenB traded"
+  volumeB: BigInt!
+  "Block timestamp of the most recent fill"
+  lastTradeAt: BigInt @index
+  "Orders belonging to this pair"
+  orders: [Order!]! @derivedFrom(field: "pair")
+  "Fills belonging to this pair"
+  fills: [Fill!]! @derivedFrom(field: "pair")
+}
+
+"""
+An address that has made or taken at least one order.
+"""
+type Account @entity(immutable: false) {
+  "Account address, lowercase hex"
+  id: ID!
+  "Account address"
+  address: Bytes!
+  "Orders ever created by this account"
+  ordersCreated: BigInt! @index
+  "Orders created by this account that are still fillable"
+  ordersOpen: BigInt! @index
+  "Orders created by this account that reached FILLED"
+  ordersFilled: BigInt!
+  "Orders created by this account that were cancelled"
+  ordersCanceled: BigInt!
+  "Fills this account executed as taker"
+  fillsTakenCount: BigInt! @index
+  "Fills executed against this account's orders"
+  fillsReceivedCount: BigInt!
+  "Block timestamp this account was first seen"
+  firstSeenAt: BigInt!
+  "Block timestamp of this account's most recent activity"
+  lastActiveAt: BigInt! @index
+  "Orders created by this account"
+  orders: [Order!]! @derivedFrom(field: "maker")
+  "Fills this account executed as taker"
+  fillsTaken: [Fill!]! @derivedFrom(field: "taker")
+  "Fills executed against this account's orders"
+  fillsReceived: [Fill!]! @derivedFrom(field: "maker")
+}
+
+"""
+Board-wide statistics. Single entity with id "global".
+"""
+type GlobalStats @entity(immutable: false) {
+  "Always 'global'"
+  id: ID!
+  "Total orders ever created"
+  totalOrders: BigInt!
+  "Orders currently fillable (OPEN or PARTIALLY_FILLED)"
+  openOrders: BigInt!
+  "Orders currently in PARTIALLY_FILLED"
+  partiallyFilledOrders: BigInt!
+  "Orders that reached FILLED"
+  filledOrders: BigInt!
+  "Orders that were cancelled"
+  canceledOrders: BigInt!
+  "Total OrderFilled events indexed"
+  totalFills: BigInt!
+  "Distinct tokens seen"
+  totalTokens: BigInt!
+  "Distinct directional pairs seen"
+  totalPairs: BigInt!
+  "Distinct accounts seen"
+  totalAccounts: BigInt!
+  "Block timestamp of the most recent indexed event"
+  updatedAt: BigInt!
+}
