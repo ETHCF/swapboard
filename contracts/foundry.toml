@@ -43,6 +43,7 @@ exclude_lints = [
     "calls-loop",
     "require-revert-in-loop",
     "reentrancy-events",
+    "pragma-inconsistent",
 ]
 
 [rpc_endpoints]
