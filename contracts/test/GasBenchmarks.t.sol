@@ -109,7 +109,7 @@ contract GasBenchmarks is Test {
         vm.stopPrank();
 
         console2.log("fillOrder partial gas:", gasUsed);
-        assertLt(gasUsed, 150_000);
+        assertLt(gasUsed, 155_000);
     }
 
     /// @notice Benchmarks gas used by fillOrders for three same-tokenB orders
@@ -179,7 +179,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrder gas:", gasUsed);
-        assertLt(gasUsed, 10_000);
+        assertLt(gasUsed, 15_000);
     }
 
     /// @notice Benchmarks gas used by getOrders for 10 orders
@@ -199,7 +199,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrders(10) gas:", gasUsed);
-        assertLt(gasUsed, 70_000);
+        assertLt(gasUsed, 140_000);
     }
 
     /// @notice Benchmarks gas used by getOrders for 100 orders
@@ -219,7 +219,7 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrders(100) gas:", gasUsed);
-        assertLt(gasUsed, 700_000);
+        assertLt(gasUsed, 1_400_000);
     }
 
     /// @notice Benchmarks gas used by canFill

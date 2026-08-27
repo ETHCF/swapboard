@@ -24,7 +24,7 @@ build: lint build-contracts
 
 # Build contracts only
 build-contracts:
-	forge build $(FORGE_ROOT) --sizes
+	cd $(CONTRACTS) && forge build --sizes
 
 # Run unit/integration tests (no full Docker e2e stack)
 test:
