@@ -52,9 +52,11 @@ interface ISwapboard is ISemver {
     /// @notice Arguments for filling a single OTC order
     /// @param orderId Unique identifier of the order to fill
     /// @param amountA Amount of tokenA to receive from the order
+    /// @param amountB Amount of tokenB the taker agrees to pay (must match the quoted ceiled amount)
     struct FillOrderParams {
         uint256 orderId;
         uint128 amountA;
+        uint128 amountB;
     }
 
     // solhint-disable gas-indexed-events
@@ -141,6 +143,12 @@ interface ISwapboard is ISemver {
     /// @param remaining The available amountA on the order
     error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining);
 
+    /// @notice Thrown when the taker-provided payment amount does not match the quoted fill payment
+    /// @param orderId The order ID
+    /// @param expected The quoted payment amount for this fill
+    /// @param provided The payment amount supplied by the taker
+    error FillAmountMismatch(uint256 orderId, uint128 expected, uint128 provided);
+
     /// @notice Thrown when the same order ID appears more than once in a cancel batch
     /// @param orderId The duplicated order ID
     error DuplicateOrderId(uint256 orderId);
@@ -171,14 +179,17 @@ interface ISwapboard is ISemver {
     ///      taker never underpays. Residual tokenA dust is not refunded (not worth the gas); it
     ///      can be picked up by any user that rounds favorably on another order where the dust
     ///      token is tokenB.
+    ///      `amountB` must equal the quoted ceiled payment or the fill reverts (`FillAmountMismatch`).
     ///      If tokenB is ETH, requires `msg.value` equal to the ceiled tokenB amount.
     ///      If tokenA is ETH, pays the taker in ETH.
     /// @param orderId The unique identifier of the order to fill
     /// @param amountA Amount of tokenA to receive from the order
+    /// @param amountB Amount of tokenB the taker agrees to pay
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrder(
         uint256 orderId,
         uint128 amountA,
+        uint128 amountB,
         uint256 deadline
     ) external payable;
 

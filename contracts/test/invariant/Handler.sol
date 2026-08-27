@@ -7,6 +7,7 @@ import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
 import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {FillTestLib} from "../helpers/FillTestLib.sol";
 
 /// @title SwapboardHandler
 /// @notice Handler contract for invariant testing of Swapboard
@@ -387,9 +388,9 @@ contract SwapboardHandler is Test {
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 fillA128 = uint128(fillA);
         if (order.tokenB == _ETH) {
-            _board.fillOrder{value: amountBIn}(orderId, fillA128, 0);
+            _board.fillOrder{value: amountBIn}(orderId, fillA128, uint128(amountBIn), 0);
         } else {
-            _board.fillOrder(orderId, fillA128, 0);
+            _board.fillOrder(orderId, fillA128, uint128(amountBIn), 0);
         }
 
         _recordFillGhosts(order, orderId, fillA);
@@ -430,8 +431,8 @@ contract SwapboardHandler is Test {
 
         ++_callsFillOrders;
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
-        fills[0] = ISwapboard.FillOrderParams({orderId: id1, amountA: order1.availableA});
-        fills[1] = ISwapboard.FillOrderParams({orderId: id2, amountA: order2.availableA});
+        fills[0] = FillTestLib.fillParams(_board.getOrder(id1), id1, order1.availableA);
+        fills[1] = FillTestLib.fillParams(_board.getOrder(id2), id2, order2.availableA);
         _board.fillOrders(fills, 0);
 
         _recordFillGhosts(order1, id1, order1.availableA);
@@ -470,8 +471,8 @@ contract SwapboardHandler is Test {
 
         ++_callsFillOrders;
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
-        fills[0] = ISwapboard.FillOrderParams({orderId: orderId, amountA: fillA1});
-        fills[1] = ISwapboard.FillOrderParams({orderId: orderId, amountA: fillA2});
+        fills[0] = FillTestLib.fillParams(_board.getOrder(orderId), orderId, fillA1);
+        fills[1] = FillTestLib.fillParams(_board.getOrder(orderId), orderId, fillA2);
         _board.fillOrders(fills, 0);
 
         _recordFillGhosts(order, orderId, uint256(fillA1) + uint256(fillA2));

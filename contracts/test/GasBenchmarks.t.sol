@@ -6,6 +6,7 @@ pragma solidity 0.8.36;
 // solhint-disable gas-small-strings
 
 import {Test, console2} from "forge-std/Test.sol";
+import {FillTestLib} from "./helpers/FillTestLib.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
@@ -90,10 +91,12 @@ contract GasBenchmarks is Test {
             })
         );
 
-        vm.prank(_taker);
+        uint128 amountB = FillTestLib.quoteAmountB(_board.getOrder(orderId), 100 ether);
+        vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        _board.fillOrder(orderId, 100 ether, 0);
+        _board.fillOrder(orderId, 100 ether, amountB, 0);
         uint256 gasUsed = gasBefore - gasleft();
+        vm.stopPrank();
 
         console2.log("fillOrder gas:", gasUsed);
         assertLt(gasUsed, 150_000);
@@ -112,10 +115,12 @@ contract GasBenchmarks is Test {
             })
         );
 
-        vm.prank(_taker);
+        uint128 amountB = FillTestLib.quoteAmountB(_board.getOrder(orderId), 40 ether);
+        vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        _board.fillOrder(orderId, 40 ether, 0);
+        _board.fillOrder(orderId, 40 ether, amountB, 0);
         uint256 gasUsed = gasBefore - gasleft();
+        vm.stopPrank();
 
         console2.log("fillOrder partial gas:", gasUsed);
         assertLt(gasUsed, 150_000);
@@ -139,7 +144,7 @@ contract GasBenchmarks is Test {
 
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](3);
         for (uint256 j; j < 3; ++j) {
-            fills[j] = ISwapboard.FillOrderParams({orderId: ids[j], amountA: 100 ether});
+            fills[j] = FillTestLib.fillParams(_board.getOrder(ids[j]), ids[j], 100 ether);
         }
 
         vm.prank(_taker);

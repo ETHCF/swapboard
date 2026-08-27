@@ -106,6 +106,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function fillOrder(
         uint256 orderId,
         uint128 amountA,
+        uint128 amountB,
         uint256 deadline
     ) external payable nonReentrant {
         if (deadline != 0 && block.timestamp > deadline) {
@@ -116,7 +117,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         FillLeg[] memory legs = new FillLeg[](1);
-        legs[0] = _applyOneFillEffect(orderId, amountA);
+        legs[0] = _applyOneFillEffect(orderId, amountA, amountB);
         _settleFills(legs);
     }
 
@@ -522,13 +523,19 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Validates one fill, updates order storage, emits `OrderFilled`, and returns the leg
     /// @param orderId Order to fill
     /// @param amountA Requested tokenA out
+    /// @param amountB TokenB payment declared by the taker
     /// @return leg Settled fill leg
     function _applyOneFillEffect(
         uint256 orderId,
-        uint128 amountA
+        uint128 amountA,
+        uint128 amountB
     ) private returns (FillLeg memory) {
         Order storage order = _requireActiveOrder(orderId);
         (address maker, address tokenA, address tokenB, uint128 amountBIn) = _quoteFill(order, orderId, amountA);
+
+        if (amountB != amountBIn) {
+            revert FillAmountMismatch(orderId, amountBIn, amountB);
+        }
 
         // Unchecked is safe: _quoteFill ensures amountA <= availableA and
         // amountBIn <= availableB (exact remaining or ceiled proportion).
@@ -561,7 +568,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 revert ZeroAmount();
             }
 
-            legs[i] = _applyOneFillEffect(fill.orderId, fill.amountA);
+            legs[i] = _applyOneFillEffect(fill.orderId, fill.amountA, fill.amountB);
         }
 
         return legs;

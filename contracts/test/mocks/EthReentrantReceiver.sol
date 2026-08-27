@@ -50,10 +50,10 @@ contract EthReentrantReceiver {
         _attacking = true;
 
         if (_attack == Attack.Fill) {
-            try _BOARD.fillOrder(_orderId, 1, 0) {} catch {}
+            try _BOARD.fillOrder(_orderId, 1, 1, 0) {} catch {}
         } else if (_attack == Attack.FillOrders) {
             ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
-            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountA: 1});
+            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountA: 1, amountB: 1});
             try _BOARD.fillOrders(fills, 0) {} catch {}
         } else if (_attack == Attack.Cancel) {
             try _BOARD.cancelOrder(_orderId) {} catch {}

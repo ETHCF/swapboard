@@ -4,6 +4,7 @@ pragma solidity 0.8.36;
 // solhint-disable use-natspec
 
 import {Test} from "forge-std/Test.sol";
+import {FillTestLib} from "./helpers/FillTestLib.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
@@ -97,7 +98,7 @@ contract DeployTest is Test {
         vm.startPrank(taker);
         token.approve(address(board), 100e6);
         uint256 tokenPullsBefore = token.getTransferFromCalls();
-        board.fillOrder(fillId, 1 ether, 0);
+        FillTestLib.fill(board, fillId, 1 ether);
         vm.stopPrank();
 
         assertFalse(board.canFill(fillId));
@@ -144,8 +145,9 @@ contract DeployTest is Test {
         uint256 makerEthBefore = maker.balance;
         uint256 tokenPullsBefore = token.getTransferFromCalls();
 
-        vm.prank(taker);
-        board.fillOrder{value: 1 ether}(orderId, 100e6, 0);
+        vm.startPrank(taker);
+        FillTestLib.fillPayEth(board, orderId, 100e6, 1 ether);
+        vm.stopPrank();
 
         assertFalse(board.canFill(orderId));
         assertFalse(board.getOrder(orderId).active);
