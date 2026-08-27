@@ -104,7 +104,7 @@ interface ISwapboard is ISemver {
     error NotAContract(address token);
 
     /// @notice Thrown when the received token amount differs from expected
-    /// @dev Used to detect fee-on-transfer / mid-transfer rebase tokens
+    /// @dev Used to detect fee-on-transfer / mid-transfer rebase / phantom tokens
     /// @param expected The amount that was expected to be received
     /// @param received The amount that was actually received
     error BalanceMismatch(uint256 expected, uint256 received);

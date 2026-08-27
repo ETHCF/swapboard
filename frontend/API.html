@@ -481,7 +481,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast</code></pre
       <tr>
         <td><code>BalanceMismatch(uint256,uint256)</code></td>
         <td><code>0x2c5211c6</code></td>
-        <td>FOT token detected</td>
+        <td>Inbound transfer mismatch (fee-on-transfer, mid-transfer rebase, or phantom token)</td>
       </tr>
       <tr>
         <td><code>OrderNotFound(uint256)</code></td>
@@ -504,8 +504,8 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast</code></pre
     <ul>
       <li>All amounts are in base units (wei-style). Multiply by 10^decimals.</li>
       <li>Orders can be front-run. Consider using Flashbots for fills.</li>
-      <li>Fee-on-transfer tokens for tokenA are rejected at creation.</li>
-      <li>Fee-on-transfer tokens for tokenB: maker receives less than amountB.</li>
+      <li>Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and tokenB pulls (<code>BalanceMismatch</code>).</li>
+      <li>Outbound fee-on-transfer / mid-transfer rebase on maker payout remains possible after an exact tokenB pull.</li>
       <li>No partial fills. Orders are filled completely or not at all.</li>
       <li>Self-fills are allowed (maker can fill own order).</li>
       <li>No expiry. Orders remain active until filled or canceled.</li>

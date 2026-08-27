@@ -45,6 +45,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     address private constant _ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /// @notice One fill leg after validation/quote (internal batch settlement)
+    /// @param maker Address that receives tokenB for this leg
+    /// @param tokenA Address of the token paid out to the taker
+    /// @param amountA Amount of tokenA transferred to the taker
+    /// @param tokenB Address of the token pulled from the taker
+    /// @param amountB Amount of tokenB paid to the maker (ceiled proportion)
     struct FillLeg {
         address maker;
         address tokenA;
@@ -831,7 +836,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
-    /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer rebase
+    /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer
+    ///         rebase / phantom transfers
     /// @param token ERC20 token to pull from the caller
     /// @param amount Expected amount received
     function _pullExactToken(
@@ -842,7 +848,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         uint256 balanceAfter = IERC20(token).balanceOf(address(this));
 
-        // Detect fee-on-transfer / mid-transfer rebase by comparing received amount to expected
+        // Detect fee-on-transfer / mid-transfer rebase / phantom by comparing received to expected
         // Using unchecked is safe: balanceAfter >= balanceBefore after successful transfer
         unchecked {
             uint256 received = balanceAfter - balanceBefore;

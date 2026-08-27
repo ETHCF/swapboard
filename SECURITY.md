@@ -71,9 +71,9 @@ The following are documented design decisions, not vulnerabilities:
 
 1. **Front-running**: Inherent to on-chain orderbooks. Orders can be front-run by MEV bots. Users should consider using private mempools for large orders.
 
-2. **Rebasing tokens**: May cause unexpected behavior. If tokenA rebases down after order creation, the contract may not have enough to fulfill the order. Users should not use rebasing tokens.
+2. **Rebasing tokens**: Mid-transfer rebases on inbound pulls are rejected via `BalanceMismatch`. Post-deposit rebases (while tokenA sits in escrow) may leave the contract under-collateralized or lock surplus; positive rebases can strand excess. Users should not use rebasing tokens.
 
-3. **Fee-on-transfer tokens**: Blocked for tokenA (selling token) via balance checks. Allowed for tokenB at maker's risk (maker receives less than amountB).
+3. **Fee-on-transfer and phantom tokens**: Inbound fee-on-transfer, mid-transfer rebase, and phantom transfers are rejected on tokenA deposits and tokenB pulls via balance checks. Outbound fee-on-transfer or mid-transfer rebase on maker payout remains possible after an exact tokenB pull; makers may receive less than quoted `amountB`.
 
 4. **Malicious tokens**: The contract cannot detect malicious token implementations. Tokens with blacklists, pausability, or admin mint functions can disrupt trades.
 
