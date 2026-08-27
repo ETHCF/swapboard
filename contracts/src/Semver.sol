@@ -33,8 +33,8 @@ contract Semver is ISemver {
 
     /// @inheritdoc ISemver
     function version() external view returns (string memory) {
-        return string(
-            abi.encodePacked(Strings.toString(_MAJOR), ".", Strings.toString(_MINOR), ".", Strings.toString(_PATCH))
+        return string.concat(
+            Strings.toString(_MAJOR), ".", Strings.toString(_MINOR), ".", Strings.toString(_PATCH)
         );
     }
 }
