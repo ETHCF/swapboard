@@ -17,8 +17,11 @@ contract SwapboardStatelessInvariantTest is Test {
     MockERC20 internal _tokenA;
     MockERC20 internal _tokenB;
 
+    // forge-lint: disable-start(function-init-state)
     address internal _maker = makeAddr("maker");
     address internal _taker = makeAddr("taker");
+
+    // forge-lint: disable-end(function-init-state)
 
     /// @notice Deploys fixtures for each test
     function setUp() public {

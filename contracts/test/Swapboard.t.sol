@@ -1318,6 +1318,7 @@ contract SwapboardTest is Test {
         uint256 makerBefore = _maker.balance;
 
         vm.prank(_maker);
+        // forge-lint: disable-next-line(low-level-calls)
         (bool success,) = address(_board).call{value: 1 ether}("");
 
         assertFalse(success);

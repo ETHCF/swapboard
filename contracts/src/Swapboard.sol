@@ -494,8 +494,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         if (amountA == availableA) {
             amountBIn = availableB;
         } else {
-            uint256 quotedB =
-                (uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA);
+            uint256 quotedB = (uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA);
             // Product of two uint128 values always fits in uint256; ceil result is <= availableB.
             // forge-lint: disable-next-line(unsafe-typecast)
             amountBIn = uint128(quotedB);

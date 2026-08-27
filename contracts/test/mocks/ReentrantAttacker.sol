@@ -95,6 +95,7 @@ contract ReentrantAttacker is MockERC20 {
     }
 
     // forge-lint: disable-next-item(reentrancy-no-eth)
+    // forge-lint: disable-next-item(cyclomatic-complexity)
     function _attemptReentrancy() internal {
         if (_attacking) {
             // Prevent infinite loop

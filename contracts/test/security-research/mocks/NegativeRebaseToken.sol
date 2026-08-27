@@ -56,6 +56,7 @@ contract NegativeRebaseToken is MockERC20 {
             revert InsufficientShares();
         }
 
+        // forge-lint: disable-next-line(missing-events-access-control)
         _shares[msg.sender] -= sharesToTransfer;
         _shares[to] += sharesToTransfer;
 

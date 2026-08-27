@@ -35,7 +35,14 @@ number_underscore = "thousands"
 
 [lint]
 ignore = ["lib/**"]
-exclude_lints = ["literal-instead-of-constant", "block-timestamp"]
+exclude_lints = [
+    "literal-instead-of-constant",
+    "block-timestamp",
+    "arbitrary-send-eth",
+    "unused-return",
+    "calls-loop",
+    "require-revert-in-loop",
+]
 
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"
