@@ -322,23 +322,23 @@ contract SwapboardHandler is Test {
         uint256 amountA1 = amountA / 2;
         uint256 amountA2 = amountA - amountA1;
         // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 amountA1_128 = uint128(amountA1);
+        uint128 amountA1128 = uint128(amountA1);
         // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 amountA2_128 = uint128(amountA2);
+        uint128 amountA2128 = uint128(amountA2);
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 amountB128 = uint128(amountB);
 
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
         orders[0] = ISwapboard.CreateOrderParams({
             tokenA: address(_tokenA),
-            amountA: amountA1_128,
+            amountA: amountA1128,
             tokenB: address(_tokenB),
             amountB: amountB128,
             partialFillAllowed: false
         });
         orders[1] = ISwapboard.CreateOrderParams({
             tokenA: address(_tokenA),
-            amountA: amountA2_128,
+            amountA: amountA2128,
             tokenB: address(_tokenB),
             amountB: amountB128,
             partialFillAllowed: true
@@ -348,8 +348,8 @@ contract SwapboardHandler is Test {
         uint256[] memory ids = _board.createOrders(orders);
 
         _ghostTotalTokenADeposited += amountA;
-        _trackCreatedOrder(ids[0], amountA1_128, amountB128);
-        _trackCreatedOrder(ids[1], amountA2_128, amountB128);
+        _trackCreatedOrder(ids[0], amountA1128, amountB128);
+        _trackCreatedOrder(ids[1], amountA2128, amountB128);
     }
 
     /// @notice Fills an existing order (full or partial when allowed)

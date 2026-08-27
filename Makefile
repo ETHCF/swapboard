@@ -58,7 +58,7 @@ fmt-check:
 # Lint contracts (fmt check + forge lint + solhint). Non-zero exit on any issues.
 lint:
 	forge fmt $(FORGE_ROOT) --check
-	cd $(CONTRACTS) && forge lint --deny warnings
+	cd $(CONTRACTS) && forge lint --deny warnings src script test
 	cd $(CONTRACTS) && npx --yes solhint --max-warnings 0 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 
 # Clean build artifacts
