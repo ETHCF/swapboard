@@ -41,7 +41,7 @@ test-e2e:
 
 # Run contract tests with coverage (src only; mocks/tests excluded from report)
 coverage:
-	$(FORGE) coverage --report summary --report lcov --exclude-tests --no-match-coverage 'test/'
+	$(FORGE) coverage --report summary --report lcov --exclude-tests --no-match-coverage 'test/' --no-match-contract GasBenchmarks
 
 # Coverage summary + HTML report at contracts/coverage/
 coverage-html: coverage
