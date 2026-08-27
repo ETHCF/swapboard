@@ -2,7 +2,6 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-dotenv = "../.env"
 solc = "0.8.36"
 optimizer = true
 optimizer_runs = 10000
