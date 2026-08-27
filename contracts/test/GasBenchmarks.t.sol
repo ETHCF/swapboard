@@ -32,7 +32,10 @@ contract GasBenchmarks is Test {
     uint256 private constant MINT_AMOUNT = 1_000_000 ether;
 
     /// @dev Coverage instrumentation inflates gas; limits apply only under `forge test` / snapshot.
-    function _assertGasLt(uint256 gasUsed, uint256 limit) private view {
+    function _assertGasLt(
+        uint256 gasUsed,
+        uint256 limit
+    ) private view {
         if (vm.isContext(VmSafe.ForgeContext.Coverage)) {
             return;
         }
