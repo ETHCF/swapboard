@@ -5,6 +5,7 @@ pragma solidity 0.8.36;
 
 import {MockERC20} from "./MockERC20.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
+import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 
 /// @title ReentrantAttacker
 /// @notice Mock ERC20 that attempts reentrancy on transfer
@@ -13,6 +14,7 @@ contract ReentrantAttacker is MockERC20 {
     string private _attackType;
     uint256 private _orderId;
     address private _attacker;
+    address private _tokenB;
     bool private _attacking;
 
     constructor(
@@ -55,6 +57,12 @@ contract ReentrantAttacker is MockERC20 {
         _attacker = attacker;
     }
 
+    function setTokenB(
+        address tokenB
+    ) external {
+        _tokenB = tokenB;
+    }
+
     function transfer(
         address to,
         uint256 amount
@@ -89,9 +97,23 @@ contract ReentrantAttacker is MockERC20 {
         if (keccak256(bytes(_attackType)) == keccak256(bytes("fill"))) {
             // Try to fill the same order again
             try _BOARD.fillOrder(_orderId, 1, 0) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("fillOrders"))) {
+            ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
+            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountA: 1});
+            try _BOARD.fillOrders(fills, 0) {} catch {}
         } else if (keccak256(bytes(_attackType)) == keccak256(bytes("cancel"))) {
             // Try to cancel the same order again
             try _BOARD.cancelOrder(_orderId) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("cancelOrders"))) {
+            uint256[] memory ids = new uint256[](1);
+            ids[0] = _orderId;
+            try _BOARD.cancelOrders(ids) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("createOrders"))) {
+            ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](1);
+            orders[0] = ISwapboard.CreateOrderParams({
+                tokenA: address(this), amountA: 1, tokenB: _tokenB, amountB: 1, partialFillAllowed: false
+            });
+            try _BOARD.createOrders(orders) {} catch {}
         }
 
         _attacking = false;

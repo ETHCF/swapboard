@@ -49,7 +49,11 @@ contract DeployTest is Test {
         vm.deal(maker, 1 ether);
 
         vm.prank(maker);
-        uint256 orderId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6, false);
+        uint256 orderId = board.createOrder{value: 1 ether}(
+            ISwapboard.CreateOrderParams({
+                tokenA: eth, amountA: 1 ether, tokenB: address(token), amountB: 100e6, partialFillAllowed: false
+            })
+        );
 
         ISwapboard.Order memory order = board.getOrder(orderId);
         assertEq(order.maker, maker);
@@ -76,18 +80,30 @@ contract DeployTest is Test {
         token.mint(taker, 200e6);
 
         vm.startPrank(maker);
-        uint256 fillId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6, false);
-        uint256 cancelId = board.createOrder{value: 1 ether}(eth, 1 ether, address(token), 100e6, false);
+        uint256 fillId = board.createOrder{value: 1 ether}(
+            ISwapboard.CreateOrderParams({
+                tokenA: eth, amountA: 1 ether, tokenB: address(token), amountB: 100e6, partialFillAllowed: false
+            })
+        );
+        uint256 cancelId = board.createOrder{value: 1 ether}(
+            ISwapboard.CreateOrderParams({
+                tokenA: eth, amountA: 1 ether, tokenB: address(token), amountB: 100e6, partialFillAllowed: false
+            })
+        );
         vm.stopPrank();
 
         assertEq(address(board).balance, 2 ether);
 
         vm.startPrank(taker);
         token.approve(address(board), 100e6);
+        uint256 tokenPullsBefore = token.getTransferFromCalls();
         board.fillOrder(fillId, 1 ether, 0);
         vm.stopPrank();
 
         assertFalse(board.canFill(fillId));
+        assertFalse(board.getOrder(fillId).active);
+        assertEq(board.getOrder(fillId).availableA, 0);
+        assertEq(token.getTransferFromCalls(), tokenPullsBefore + 1);
         assertEq(taker.balance, 1 ether);
         assertEq(token.balanceOf(maker), 100e6);
         assertEq(address(board).balance, 1 ether);
@@ -97,6 +113,8 @@ contract DeployTest is Test {
         board.cancelOrder(cancelId);
 
         assertFalse(board.canFill(cancelId));
+        assertFalse(board.getOrder(cancelId).active);
+        assertEq(board.getOrder(cancelId).availableA, 0);
         assertEq(maker.balance, makerEthBefore + 1 ether);
         assertEq(address(board).balance, 0);
     }
@@ -114,15 +132,25 @@ contract DeployTest is Test {
 
         vm.startPrank(maker);
         token.approve(address(board), 100e6);
-        uint256 orderId = board.createOrder(address(token), 100e6, eth, 1 ether, false);
+        uint256 orderId = board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(token), amountA: 100e6, tokenB: eth, amountB: 1 ether, partialFillAllowed: false
+            })
+        );
         vm.stopPrank();
 
+        assertEq(token.getTransferFromCalls(), 1);
+
         uint256 makerEthBefore = maker.balance;
+        uint256 tokenPullsBefore = token.getTransferFromCalls();
 
         vm.prank(taker);
         board.fillOrder{value: 1 ether}(orderId, 100e6, 0);
 
         assertFalse(board.canFill(orderId));
+        assertFalse(board.getOrder(orderId).active);
+        assertEq(board.getOrder(orderId).availableA, 0);
+        assertEq(token.getTransferFromCalls(), tokenPullsBefore);
         assertEq(maker.balance, makerEthBefore + 1 ether);
         assertEq(token.balanceOf(taker), 100e6);
         assertEq(address(board).balance, 0);

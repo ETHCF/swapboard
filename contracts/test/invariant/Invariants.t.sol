@@ -41,7 +41,7 @@ contract SwapboardInvariantTest is Test {
         uint256 actualBalance = _tokenA.balanceOf(address(_board));
         uint256 expectedBalance = _handler.getGhostTotalTokenADeposited() - _handler.getGhostTotalTokenAWithdrawn();
 
-        assertEq(actualBalance, expectedBalance, "Solvency violated: balance mismatch");
+        assertEq(actualBalance, expectedBalance);
     }
 
     /// @notice Contract ETH balance must equal deposited minus withdrawn
@@ -49,7 +49,7 @@ contract SwapboardInvariantTest is Test {
         uint256 actualBalance = address(_board).balance;
         uint256 expectedBalance = _handler.getGhostTotalEthDeposited() - _handler.getGhostTotalEthWithdrawn();
 
-        assertEq(actualBalance, expectedBalance, "ETH solvency violated: balance mismatch");
+        assertEq(actualBalance, expectedBalance);
     }
 
     /// @notice Contract tokenA balance must equal sum of remaining escrow across all orders
@@ -58,7 +58,7 @@ contract SwapboardInvariantTest is Test {
         uint256 actualBalance = _tokenA.balanceOf(address(_board));
         uint256 activeOrderSum = _handler.sumActiveOrderAmounts();
 
-        assertEq(actualBalance, activeOrderSum, "Balance does not equal sum of remaining order amounts");
+        assertEq(actualBalance, activeOrderSum);
     }
 
     /// @notice Contract ETH balance must equal sum of remaining ETH escrow across all orders
@@ -66,7 +66,7 @@ contract SwapboardInvariantTest is Test {
         uint256 actualBalance = address(_board).balance;
         uint256 activeOrderSum = _handler.sumActiveEthOrderAmounts();
 
-        assertEq(actualBalance, activeOrderSum, "ETH balance does not equal sum of remaining ETH order amounts");
+        assertEq(actualBalance, activeOrderSum);
     }
 
     /// @notice Orders created must equal filled + cancelled + active
@@ -76,12 +76,12 @@ contract SwapboardInvariantTest is Test {
         uint256 cancelled = _handler.getGhostOrdersCancelled();
         uint256 active = _handler.getGhostActiveOrders();
 
-        assertEq(created, filled + cancelled + active, "Order accounting mismatch");
+        assertEq(created, filled + cancelled + active);
     }
 
     /// @notice nextOrderId must equal total orders created
     function invariant_nextOrderIdConsistency() public view {
-        assertEq(_board.getNextOrderId(), _handler.getGhostOrdersCreated(), "nextOrderId mismatch");
+        assertEq(_board.getNextOrderId(), _handler.getGhostOrdersCreated());
     }
 
     /// @notice Active order count from ghost must match actual count
@@ -89,7 +89,7 @@ contract SwapboardInvariantTest is Test {
         uint256 ghostActive = _handler.getGhostActiveOrders();
         uint256 actualActive = _handler.countActiveOrders();
 
-        assertEq(ghostActive, actualActive, "Active order count mismatch");
+        assertEq(ghostActive, actualActive);
     }
 
     /// @notice Filled + cancelled orders must not exceed created orders
@@ -98,7 +98,7 @@ contract SwapboardInvariantTest is Test {
         uint256 filled = _handler.getGhostOrdersFilled();
         uint256 cancelled = _handler.getGhostOrdersCancelled();
 
-        assertLe(filled + cancelled, created, "More orders filled/cancelled than created");
+        assertLe(filled + cancelled, created);
     }
 
     /// @notice Original amountA/amountB never change; available never exceeds them
@@ -110,7 +110,7 @@ contract SwapboardInvariantTest is Test {
     /// @notice Token balance should never be negative (implicit via uint256 but good sanity check)
     function invariant_nonNegativeBalance() public view {
         uint256 balance = _tokenA.balanceOf(address(_board));
-        assertGe(balance, 0, "Negative balance detected");
+        assertGe(balance, 0);
     }
 
     /// @notice Call summary for debugging
@@ -120,8 +120,11 @@ contract SwapboardInvariantTest is Test {
         console2.log("createOrderSellEth calls:", _handler.getCallsCreateOrderSellEth());
         console2.log("createOrderWantEth calls:", _handler.getCallsCreateOrderWantEth());
         console2.log("createOrderAllowPartial calls:", _handler.getCallsCreateOrderAllowPartial());
+        console2.log("createOrders calls:", _handler.getCallsCreateOrders());
         console2.log("fillOrder calls:", _handler.getCallsFillOrder());
+        console2.log("fillOrders calls:", _handler.getCallsFillOrders());
         console2.log("cancelOrder calls:", _handler.getCallsCancelOrder());
+        console2.log("cancelOrders calls:", _handler.getCallsCancelOrders());
         console2.log("Orders created:", _handler.getGhostOrdersCreated());
         console2.log("Orders filled:", _handler.getGhostOrdersFilled());
         console2.log("Orders cancelled:", _handler.getGhostOrdersCancelled());

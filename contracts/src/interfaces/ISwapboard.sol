@@ -35,6 +35,28 @@ interface ISwapboard is ISemver {
         uint128 availableB;
     }
 
+    /// @notice Arguments for creating a single OTC order
+    /// @param tokenA Address of the asset to sell (`getEth()` for native ETH)
+    /// @param amountA Amount of tokenA to deposit (in base units / wei)
+    /// @param tokenB Address of the asset wanted in exchange (`getEth()` for native ETH)
+    /// @param amountB Amount of tokenB required to fill the order
+    /// @param partialFillAllowed Whether the order may be filled in multiple parts
+    struct CreateOrderParams {
+        address tokenA;
+        uint128 amountA;
+        address tokenB;
+        uint128 amountB;
+        bool partialFillAllowed;
+    }
+
+    /// @notice Arguments for filling a single OTC order
+    /// @param orderId Unique identifier of the order to fill
+    /// @param amountA Amount of tokenA to receive from the order
+    struct FillOrderParams {
+        uint256 orderId;
+        uint128 amountA;
+    }
+
     // solhint-disable gas-indexed-events
 
     /// @notice Emitted when a new order is created
@@ -82,7 +104,7 @@ interface ISwapboard is ISemver {
     error NotAContract(address token);
 
     /// @notice Thrown when the received token amount differs from expected
-    /// @dev Used to detect fee-on-transfer tokens
+    /// @dev Used to detect fee-on-transfer / mid-transfer rebase tokens
     /// @param expected The amount that was expected to be received
     /// @param received The amount that was actually received
     error BalanceMismatch(uint256 expected, uint256 received);
@@ -119,23 +141,29 @@ interface ISwapboard is ISemver {
     /// @param remaining The available amountA on the order
     error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining);
 
+    /// @notice Thrown when the same order ID appears more than once in a cancel batch
+    /// @param orderId The duplicated order ID
+    error DuplicateOrderId(uint256 orderId);
+
     /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
-    /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer tokens.
+    /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer / mid-transfer
+    ///      rebase tokens.
     ///      For ETH tokenA (`getEth()`), requires `msg.value == amountA`.
     ///      Amounts use `uint128`, which is sufficient for practical order sizes.
-    /// @param tokenA Address of the asset to sell (`getEth()` for native ETH)
-    /// @param amountA Amount of tokenA to deposit (in base units / wei)
-    /// @param tokenB Address of the asset wanted in exchange (`getEth()` for native ETH)
-    /// @param amountB Amount of tokenB required to fill the order
-    /// @param partialFillAllowed Whether the order may be filled in multiple parts
+    /// @param order Order creation arguments
     /// @return orderId The unique identifier for the created order
     function createOrder(
-        address tokenA,
-        uint128 amountA,
-        address tokenB,
-        uint128 amountB,
-        bool partialFillAllowed
-    ) external payable returns (uint256 orderId);
+        CreateOrderParams calldata order
+    ) external payable returns (uint256);
+
+    /// @notice Creates multiple OTC orders in one call
+    /// @dev Repeated `tokenA` deposits are aggregated into a single ERC20 `transferFrom` per
+    ///      unique token. ETH deposits are summed and checked against `msg.value`.
+    /// @param orders Order creation arguments
+    /// @return orderIds Identifiers assigned to each created order, in input order
+    function createOrders(
+        CreateOrderParams[] calldata orders
+    ) external payable returns (uint256[] memory);
 
     /// @notice Fills an existing order for the given amountA
     /// @dev Taker receives `amountA` of tokenA and pays proportional tokenB.
@@ -154,12 +182,33 @@ interface ISwapboard is ISemver {
         uint256 deadline
     ) external payable;
 
+    /// @notice Fills multiple orders in one call
+    /// @dev The same `orderId` may appear more than once when the order allows partial fills and
+    ///      still has remaining liquidity; otherwise later legs revert (`FillAmountTooHigh` /
+    ///      `OrderNotActive` / `PartialFillNotAllowed`). Repeated tokenB payments are aggregated
+    ///      into a single ERC20 pull per unique token (and one `msg.value` check for ETH). tokenA
+    ///      payouts to the taker and tokenB payouts to makers are similarly aggregated.
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    function fillOrders(
+        FillOrderParams[] calldata fills,
+        uint256 deadline
+    ) external payable;
+
     /// @notice Cancels an existing order and returns available tokenA to maker
     /// @dev Only callable by the order's maker. Returns ETH if tokenA is ETH.
-    ///      Original `amountA`/`amountB` are preserved; `availableA`/`availableB` are zeroed.
+    ///      Clears the order from storage after refunding.
     /// @param orderId The unique identifier of the order to cancel
     function cancelOrder(
         uint256 orderId
+    ) external;
+
+    /// @notice Cancels multiple orders in one call
+    /// @dev Only the maker may cancel each order. Repeated `tokenA` refunds are aggregated into
+    ///      a single ERC20 transfer per unique token. ETH refunds are summed into one send.
+    /// @param orderIds Identifiers of the orders to cancel
+    function cancelOrders(
+        uint256[] calldata orderIds
     ) external;
 
     /// @notice Canonical placeholder address representing native ETH
