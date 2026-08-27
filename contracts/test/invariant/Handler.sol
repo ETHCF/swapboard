@@ -44,6 +44,7 @@ contract SwapboardHandler is Test {
     uint256 private _callsCreateOrderAllowPartial;
     uint256 private _callsCreateOrders;
     uint256 private _callsFillOrder;
+    uint256 private _callsFillOrders;
     uint256 private _callsCancelOrder;
     uint256 private _callsCancelOrders;
 
@@ -153,6 +154,10 @@ contract SwapboardHandler is Test {
 
     function getCallsFillOrder() external view returns (uint256) {
         return _callsFillOrder;
+    }
+
+    function getCallsFillOrders() external view returns (uint256) {
+        return _callsFillOrders;
     }
 
     function getCallsCancelOrder() external view returns (uint256) {
@@ -390,6 +395,88 @@ contract SwapboardHandler is Test {
         _recordFillGhosts(order, orderId, fillA);
     }
 
+    /// @notice Fills two same-tokenB ERC20 orders in one aggregated pull
+    function fillOrders(
+        uint256 actorSeed,
+        uint256 orderIdSeed1,
+        uint256 orderIdSeed2
+    ) external useActor(actorSeed) {
+        uint256 nextId = _board.getNextOrderId();
+        if (nextId < 2) {
+            return;
+        }
+
+        uint256 id1 = bound(orderIdSeed1, 0, nextId - 1);
+        uint256 id2 = bound(orderIdSeed2, 0, nextId - 1);
+        if (id1 == id2) {
+            return;
+        }
+
+        ISwapboard.Order memory order1 = _board.getOrder(id1);
+        ISwapboard.Order memory order2 = _board.getOrder(id2);
+        if (!order1.active || !order2.active) {
+            return;
+        }
+        if (order1.tokenB != order2.tokenB || order1.tokenB == _ETH) {
+            return;
+        }
+
+        uint256 amountBIn1 = order1.availableB;
+        uint256 amountBIn2 = order2.availableB;
+        uint256 totalBIn = amountBIn1 + amountBIn2;
+        if (!_actorCanPayTokenB(order1.tokenB, totalBIn)) {
+            return;
+        }
+
+        ++_callsFillOrders;
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
+        fills[0] = ISwapboard.FillOrderParams({orderId: id1, amountA: order1.availableA});
+        fills[1] = ISwapboard.FillOrderParams({orderId: id2, amountA: order2.availableA});
+        _board.fillOrders(fills, 0);
+
+        _recordFillGhosts(order1, id1, order1.availableA);
+        _recordFillGhosts(order2, id2, order2.availableA);
+    }
+
+    /// @notice Fills one partial-fill order with two sequential legs in one batch
+    function fillOrdersPartialSameOrder(
+        uint256 actorSeed,
+        uint256 orderIdSeed
+    ) external useActor(actorSeed) {
+        uint256 nextId = _board.getNextOrderId();
+        if (nextId == 0) {
+            return;
+        }
+
+        uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        if (!order.active || !order.partialFillAllowed || order.availableA < 2) {
+            return;
+        }
+        if (order.tokenB == _ETH) {
+            return;
+        }
+
+        uint128 fillA1 = uint128(order.availableA / 2);
+        uint128 fillA2 = uint128(order.availableA - fillA1);
+        uint256 amountBIn1 =
+            (uint256(fillA1) * uint256(order.availableB) + uint256(order.availableA) - 1) / uint256(order.availableA);
+        uint256 remA = order.availableA - fillA1;
+        uint256 remB = order.availableB - amountBIn1;
+        uint256 amountBIn2 = remA == 0 ? remB : (uint256(fillA2) * remB + remA - 1) / remA;
+        if (amountBIn1 == 0 || amountBIn2 == 0 || !_actorCanPayTokenB(order.tokenB, amountBIn1 + amountBIn2)) {
+            return;
+        }
+
+        ++_callsFillOrders;
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
+        fills[0] = ISwapboard.FillOrderParams({orderId: orderId, amountA: fillA1});
+        fills[1] = ISwapboard.FillOrderParams({orderId: orderId, amountA: fillA2});
+        _board.fillOrders(fills, 0);
+
+        _recordFillGhosts(order, orderId, uint256(fillA1) + uint256(fillA2));
+    }
+
     /// @notice Returns whether the current actor can pay `amount` of `tokenB`
     function _actorCanPayTokenB(
         address tokenB,
@@ -523,17 +610,17 @@ contract SwapboardHandler is Test {
                 continue;
             }
 
-            assertEq(order.amountA, _ghostOriginalAmountA[i], "amountA mutated");
-            assertEq(order.amountB, _ghostOriginalAmountB[i], "amountB mutated");
-            assertTrue(order.amountA > 0 && order.amountB > 0, "zero original amt");
+            assertEq(order.amountA, _ghostOriginalAmountA[i]);
+            assertEq(order.amountB, _ghostOriginalAmountB[i]);
+            assertTrue(order.amountA > 0 && order.amountB > 0);
 
-            assertTrue(!(order.availableA > order.amountA), "availableA > amountA");
-            assertTrue(!(order.availableB > order.amountB), "availableB > amountB");
+            assertTrue(!(order.availableA > order.amountA));
+            assertTrue(!(order.availableB > order.amountB));
 
             if (order.active) {
-                assertTrue(order.availableA > 0 && order.availableB > 0, "active zero avail");
+                assertTrue(order.availableA > 0 && order.availableB > 0);
             } else {
-                assertTrue(order.availableA == 0 || order.availableB == 0, "inactive still avail");
+                assertTrue(order.availableA == 0 || order.availableB == 0);
             }
         }
     }

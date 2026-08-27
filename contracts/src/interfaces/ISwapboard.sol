@@ -49,6 +49,14 @@ interface ISwapboard is ISemver {
         bool partialFillAllowed;
     }
 
+    /// @notice Arguments for filling a single OTC order
+    /// @param orderId Unique identifier of the order to fill
+    /// @param amountA Amount of tokenA to receive from the order
+    struct FillOrderParams {
+        uint256 orderId;
+        uint128 amountA;
+    }
+
     // solhint-disable gas-indexed-events
 
     /// @notice Emitted when a new order is created
@@ -96,7 +104,7 @@ interface ISwapboard is ISemver {
     error NotAContract(address token);
 
     /// @notice Thrown when the received token amount differs from expected
-    /// @dev Used to detect fee-on-transfer tokens
+    /// @dev Used to detect fee-on-transfer / mid-transfer rebase tokens
     /// @param expected The amount that was expected to be received
     /// @param received The amount that was actually received
     error BalanceMismatch(uint256 expected, uint256 received);
@@ -138,7 +146,8 @@ interface ISwapboard is ISemver {
     error DuplicateOrderId(uint256 orderId);
 
     /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
-    /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer tokens.
+    /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer / mid-transfer
+    ///      rebase tokens.
     ///      For ETH tokenA (`getEth()`), requires `msg.value == amountA`.
     ///      Amounts use `uint128`, which is sufficient for practical order sizes.
     /// @param order Order creation arguments
@@ -170,6 +179,19 @@ interface ISwapboard is ISemver {
     function fillOrder(
         uint256 orderId,
         uint128 amountA,
+        uint256 deadline
+    ) external payable;
+
+    /// @notice Fills multiple orders in one call
+    /// @dev The same `orderId` may appear more than once when the order allows partial fills and
+    ///      still has remaining liquidity; otherwise later legs revert (`FillAmountTooHigh` /
+    ///      `OrderNotActive` / `PartialFillNotAllowed`). Repeated tokenB payments are aggregated
+    ///      into a single ERC20 pull per unique token (and one `msg.value` check for ETH). tokenA
+    ///      payouts to the taker and tokenB payouts to makers are similarly aggregated.
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    function fillOrders(
+        FillOrderParams[] calldata fills,
         uint256 deadline
     ) external payable;
 
