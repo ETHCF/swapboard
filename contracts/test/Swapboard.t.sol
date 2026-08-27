@@ -1633,8 +1633,12 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         // Order.availableB is struct field depth 8 (maker=0 … availableA=7, availableB=8).
-        _stdstore.enable_packed_slots().target(address(_board)).sig(_board.getOrder.selector).with_key(orderId)
-            .depth(8).checked_write(uint256(0));
+        _stdstore.enable_packed_slots()
+            .target(address(_board))
+            .sig(_board.getOrder.selector)
+            .with_key(orderId)
+            .depth(8)
+            .checked_write(uint256(0));
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.availableB, 0);
@@ -1887,18 +1891,19 @@ contract SwapboardTest is Test {
         uint128 tokenAmount = 400e6;
         uint128 ethAmount = 4 ether;
         uint128 fillA = 100e6;
-        uint256 expectedEthIn = (uint256(fillA) * uint256(ethAmount) + uint256(tokenAmount) - 1) / uint256(tokenAmount);
 
         vm.startPrank(_maker);
         _tokenB.approve(address(_board), tokenAmount);
         uint256 orderId = _board.createOrder(_orderPartial(address(_tokenB), tokenAmount, _eth, ethAmount));
         vm.stopPrank();
 
+        uint128 expectedEthIn = FillTestLib.quoteAmountB(_board.getOrder(orderId), fillA);
+
         uint256 makerEthBefore = _maker.balance;
         uint256 takerTokenBefore = _tokenB.balanceOf(_taker);
 
         vm.prank(_taker);
-        _fillOrderPayEth(orderId, fillA, uint128(expectedEthIn));
+        _fillOrderPayEth(orderId, fillA, expectedEthIn);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertTrue(order.active);
@@ -1933,18 +1938,19 @@ contract SwapboardTest is Test {
         uint128 tokenAmount = 400e6;
         uint128 ethAmount = 4 ether;
         uint128 fillA = 100e6;
-        uint256 expectedEthIn = (uint256(fillA) * uint256(ethAmount) + uint256(tokenAmount) - 1) / uint256(tokenAmount);
 
         vm.startPrank(_maker);
         _tokenB.approve(address(_board), tokenAmount);
         uint256 orderId = _board.createOrder(_orderPartial(address(_tokenB), tokenAmount, _eth, ethAmount));
         vm.stopPrank();
 
+        uint128 expectedEthIn = FillTestLib.quoteAmountB(_board.getOrder(orderId), fillA);
+
         vm.prank(_taker);
         vm.expectRevert(
             abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, expectedEthIn, expectedEthIn - 1)
         );
-        _board.fillOrder{value: expectedEthIn - 1}(orderId, fillA, uint128(expectedEthIn), 0);
+        _board.fillOrder{value: expectedEthIn - 1}(orderId, fillA, expectedEthIn, 0);
     }
 
     /// @notice Tests FillAmountTooHigh uses remaining availableA after a prior partial fill

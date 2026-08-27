@@ -370,30 +370,29 @@ contract SwapboardHandler is Test {
             return; // Order not active
         }
 
-        uint256 fillA = order.availableA;
+        uint128 fillA128;
         if (order.partialFillAllowed) {
-            fillA = bound(fillAmountSeed, 1, order.availableA);
+            // casting to 'uint128' is safe because fill amount is bounded by order.availableA
+            // forge-lint: disable-next-line(unsafe-typecast)
+            fillA128 = uint128(bound(fillAmountSeed, 1, order.availableA));
+        } else {
+            fillA128 = order.availableA;
         }
 
-        uint256 amountBIn = fillA == order.availableA
-            ? order.availableB
-            : (fillA * order.availableB + order.availableA - 1) / order.availableA;
+        uint128 amountBIn = FillTestLib.quoteAmountB(order, fillA128);
         if (amountBIn == 0 || !_actorCanPayTokenB(order.tokenB, amountBIn)) {
             return;
         }
 
         ++_callsFillOrder;
 
-        // casting to 'uint128' is safe because fillA is at most order.availableA (uint128)
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 fillA128 = uint128(fillA);
         if (order.tokenB == _ETH) {
-            _board.fillOrder{value: amountBIn}(orderId, fillA128, uint128(amountBIn), 0);
+            _board.fillOrder{value: amountBIn}(orderId, fillA128, amountBIn, 0);
         } else {
-            _board.fillOrder(orderId, fillA128, uint128(amountBIn), 0);
+            _board.fillOrder(orderId, fillA128, amountBIn, 0);
         }
 
-        _recordFillGhosts(order, orderId, fillA);
+        _recordFillGhosts(order, orderId, fillA128);
     }
 
     /// @notice Fills two same-tokenB ERC20 orders in one aggregated pull
