@@ -51,8 +51,21 @@
   </head>
   <body>
     <header>
-      <h1><span class="header-box">Welcome to SWAPBOARD v1</span></h1>
+      <h1><span class="header-box" id="app-title">Welcome to SWAPBOARD</span></h1>
       <div class="header-right">
+        <!--
+          Protocol version switcher. v1 is deployed and live; v2 runs against
+          stubbed contracts until its own are. app.js sets aria-pressed and
+          fills in the titles, and switching reloads the page.
+        -->
+        <span id="version-switch" role="group" aria-label="Protocol version">
+          <button type="button" class="version-option" data-version="1" aria-pressed="false">
+            v1
+          </button>
+          <button type="button" class="version-option" data-version="2" aria-pressed="false">
+            v2
+          </button>
+        </span>
         <a href="#" id="theme-btn" title="Toggle dark mode">
           <svg
             id="theme-icon-sun"
@@ -130,8 +143,9 @@
     </p>
 
     <p class="version-note">
-      V1: no partial fills.
-      Feedback and suggestions for V2 via
+      <!-- Filled by app.js to match the active version. -->
+      <span id="version-note-text"></span>
+      Feedback and suggestions via
       <a href="https://github.com/ETHCF/swapboard/discussions" target="_blank" rel="noopener noreferrer"
         >GitHub Discussions</a
       >.
@@ -185,10 +199,23 @@
       </span>
     </div>
 
+    <div id="selection-bar" class="hidden">
+      <span class="selection-left">
+        <a href="#" id="select-all-orders" class="hidden">[Select All]</a>
+        <span id="selection-count">0 selected</span>
+      </span>
+      <span class="selection-right">
+        <a href="#" id="batch-fill-btn" class="hidden buy-btn">[Fill All]</a>
+        <a href="#" id="batch-cancel-btn" class="hidden cancel-btn">[Cancel All]</a>
+        <a href="#" id="selection-clear">[Clear]</a>
+      </span>
+    </div>
+
     <section id="orders">
       <table>
         <thead>
           <tr>
+            <th class="select-col"></th>
             <th></th>
             <th class="sortable" data-sort="orderId">
               Trade ID<span class="sort-indicator"> &#9660;</span>
@@ -215,7 +242,7 @@
         </thead>
         <tbody id="order-table">
           <tr>
-            <td colspan="9">Loading orders...</td>
+            <td colspan="10">Loading orders...</td>
           </tr>
         </tbody>
       </table>
@@ -232,31 +259,10 @@
       <div class="modal-content sell-modal-content">
         <h3>Sell Tokens</h3>
         <p class="warning">Verify token addresses. Fake tokens can steal funds.</p>
-        <div class="form-row">
-          <label>
-            Offered Token:
-            <input type="text" id="create-tokenA" placeholder="Search or paste address" />
-            <span id="tokenA-info"></span>
-            <span id="tokenA-balance" class="token-balance"></span>
-          </label>
-          <label>
-            Amount:
-            <input type="text" id="create-amountA" placeholder="0.0" />
-            <span class="quick-amounts" id="quick-amounts-A"></span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label>
-            Wanted Token:
-            <input type="text" id="create-tokenB" placeholder="Search or paste address" />
-            <span id="tokenB-info"></span>
-            <span id="tokenB-balance" class="token-balance"></span>
-          </label>
-          <label>
-            Amount:
-            <input type="text" id="create-amountB" placeholder="0.0" />
-            <span id="price-info" class="price-info"></span>
-          </label>
+        <div id="create-rows"></div>
+        <div class="create-add-row">
+          <button id="add-sell-btn" type="button">[Add Sell]</button>
+          <span id="create-limit-note" class="create-limit-note"></span>
         </div>
         <div class="modal-actions">
           <button id="create-btn">Create Order</button>
@@ -264,6 +270,65 @@
         </div>
       </div>
     </div>
+
+    <!--
+      One order in the Sell Tokens form. Cloned per row by app.js, which wires
+      fields up by [data-field] scoped to the row rather than by global id, so
+      several orders can be created in a single batch transaction.
+    -->
+    <template id="create-row-template">
+      <div class="create-row">
+        <div class="create-row-header">
+          <button type="button" class="create-row-remove" title="Remove this order">
+            [x]
+          </button>
+          <span class="create-row-label"></span>
+        </div>
+        <div class="form-row">
+          <label>
+            Offered Token:
+            <span class="token-input-group">
+              <input type="text" data-field="tokenA" placeholder="Search or paste address" />
+              <button type="button" class="native-eth-btn" data-eth-for="tokenA">
+                [ETH]
+              </button>
+            </span>
+            <span data-field="tokenA-info"></span>
+            <span data-field="tokenA-balance" class="token-balance"></span>
+          </label>
+          <label>
+            Amount:
+            <input type="text" data-field="amountA" placeholder="0.0" />
+            <span class="quick-amounts" data-field="quick-amounts-A"></span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label>
+            Wanted Token:
+            <span class="token-input-group">
+              <input type="text" data-field="tokenB" placeholder="Search or paste address" />
+              <button type="button" class="native-eth-btn" data-eth-for="tokenB">
+                [ETH]
+              </button>
+            </span>
+            <span data-field="tokenB-info"></span>
+            <span data-field="tokenB-balance" class="token-balance"></span>
+          </label>
+          <label>
+            Amount:
+            <input type="text" data-field="amountB" placeholder="0.0" />
+            <span data-field="price-info" class="price-info"></span>
+          </label>
+        </div>
+        <label class="partial-optout">
+          <input type="checkbox" data-field="no-partial" />
+          No partial fills
+          <span class="partial-optout-hint"
+            >&mdash; require this order to be filled in full</span
+          >
+        </label>
+      </div>
+    </template>
 
     <div id="modal" class="modal hidden">
       <div class="modal-content">
