@@ -13,7 +13,7 @@
     "build": "graph codegen && graph build",
     "test": "graph codegen && graph test -d",
     "test:local": "graph codegen && graph test",
-    "deploy": "graph deploy --studio swapboard-v2",
+    "deploy": "pnpm build && goldsky subgraph deploy swapboard-v2/2.0.0 --path .",
     "create-local": "graph create --node http://localhost:8020/ swapboard-v2",
     "remove-local": "graph remove --node http://localhost:8020/ swapboard-v2",
     "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 swapboard-v2"

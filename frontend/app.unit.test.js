@@ -4717,8 +4717,10 @@ describe("coverage of remaining branches", () => {
     jest.resetModules();
     document.body.innerHTML = BODY_HTML;
     const lib = require("./lib");
-    const realAddress = lib.CONFIG.CONTRACT_ADDRESS;
-    lib.CONFIG.CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000";
+    // v1 is the default version and the only live one, so it is the slot the
+    // guard actually reads.
+    const realAddress = lib.VERSION_CAPS[1].contractAddress;
+    lib.VERSION_CAPS[1].contractAddress = "0x0000000000000000000000000000000000000000";
     window.SwapboardLib = lib;
     const mod = require("./app");
 
@@ -4730,8 +4732,24 @@ describe("coverage of remaining branches", () => {
       expect(error).toHaveBeenCalled();
       expect(document.body.textContent).toMatch(/Configuration error/);
     } finally {
-      lib.CONFIG.CONTRACT_ADDRESS = realAddress;
+      lib.VERSION_CAPS[1].contractAddress = realAddress;
       error.mockRestore();
+      restore();
+    }
+  });
+
+  test("validateConfig lets a preview version keep its placeholder deployment", () => {
+    // v2 ships a zero address and a YOUR_ID subgraph URL on purpose: nothing is
+    // deployed yet. Failing on that would take the whole preview offline, so the
+    // guard is gated on CAPS.live rather than on the values themselves.
+    const v2 = loadApp({ search: "?v=2" });
+    const restore = stubLocation();
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(() => v2.validateConfig()).not.toThrow();
+      expect(warn).toHaveBeenCalledWith("Preview version v2: skipping deployment validation");
+    } finally {
+      warn.mockRestore();
       restore();
     }
   });

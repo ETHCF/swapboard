@@ -66,6 +66,7 @@ const {
   parseVersion,
   resolveVersion,
   capsFor,
+  deploymentFor,
   orderQueryFields,
   normalizeOrder,
   offersEthDirectly,
@@ -2614,6 +2615,44 @@ describe("capsFor", () => {
   test("falls back to the default version's capabilities", () => {
     expect(capsFor(99)).toBe(VERSION_CAPS[DEFAULT_VERSION]);
     expect(capsFor(undefined)).toBe(VERSION_CAPS[DEFAULT_VERSION]);
+  });
+});
+
+describe("deploymentFor", () => {
+  // MUTATION: Return the same contract address for both versions
+  // BREAKS: one version signs transactions against the other's contract
+  test("each version resolves its own deployment", () => {
+    const v1 = deploymentFor(1);
+    const v2 = deploymentFor(2);
+    expect(v1.CONTRACT_ADDRESS).toBe(VERSION_CAPS[1].contractAddress);
+    expect(v1.SUBGRAPH_URL).toBe(VERSION_CAPS[1].subgraphUrl);
+    expect(v2.CONTRACT_ADDRESS).toBe(VERSION_CAPS[2].contractAddress);
+    expect(v2.SUBGRAPH_URL).toBe(VERSION_CAPS[2].subgraphUrl);
+  });
+
+  // MUTATION: Let the two versions share a contract address or subgraph URL
+  // BREAKS: this is the whole point of the split — deploy.sh patches one slot
+  //         per release, and a shared value means shipping v2 repoints v1
+  test("the versions never share a deployment", () => {
+    expect(deploymentFor(1).CONTRACT_ADDRESS).not.toBe(deploymentFor(2).CONTRACT_ADDRESS);
+    expect(deploymentFor(1).SUBGRAPH_URL).not.toBe(deploymentFor(2).SUBGRAPH_URL);
+  });
+
+  // MUTATION: Drop the deploy: markers, or reflow them onto their own line
+  // BREAKS: deploy.sh anchors its rewrite on them and refuses to write without
+  //         them, so a release fails rather than silently patching nothing
+  test("v1 is the live deployment and v2 is still a placeholder", () => {
+    expect(deploymentFor(1).CONTRACT_ADDRESS).toMatch(/^0x[a-fA-F0-9]{40}$/);
+    expect(deploymentFor(1).CONTRACT_ADDRESS).not.toBe(
+      "0x0000000000000000000000000000000000000000"
+    );
+    expect(deploymentFor(2).CONTRACT_ADDRESS).toBe("0x0000000000000000000000000000000000000000");
+  });
+
+  // MUTATION: Return undefined for an unknown version
+  // BREAKS: destructuring CONTRACT_ADDRESS off it throws at startup
+  test("falls back to the default version's deployment", () => {
+    expect(deploymentFor(99)).toEqual(deploymentFor(DEFAULT_VERSION));
   });
 });
 

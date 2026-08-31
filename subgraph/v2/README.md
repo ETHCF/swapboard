@@ -114,3 +114,21 @@ jq '.abi' ../../contracts/out/Swapboard.sol/Swapboard.json > abis/Swapboard.json
 
 `subgraph.yaml` ships a placeholder address and `startBlock: 0`; `deploy.sh` rewrites both
 after the contract is deployed.
+
+## Deployment
+
+Hosted on [Goldsky](https://app.goldsky.com/), same as v1 (which lives at
+`Swapboard/1.0.0`). v2 publishes under its own name so the two index side by side:
+
+```bash
+pnpm add -g @goldskycom/cli
+export GOLDSKY_API_KEY=...        # Goldsky dashboard -> Settings -> API Keys
+pnpm deploy                       # -> goldsky subgraph deploy swapboard-v2/2.0.0
+```
+
+`../../deploy.sh` does this as part of a full release, and additionally patches the
+resulting query URL into `frontend/lib.js`. The frontend keeps one contract address and
+one subgraph URL **per protocol version**, on `VERSION_CAPS`; each is tagged with a
+`// deploy:v2:contract` / `// deploy:v2:subgraph` marker that `deploy.sh` anchors on, so
+deploying v2 never disturbs the live v1 configuration. Renaming or reflowing those marker
+comments will break the deploy — it fails loudly rather than silently writing nothing.

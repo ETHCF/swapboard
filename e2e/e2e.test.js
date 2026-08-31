@@ -401,16 +401,24 @@ async function runTests() {
   const libJsPath = join(frontendDir, "lib.js");
   const libJsOriginal = readFileSync(libJsPath, "utf-8");
 
-  // Inject test config
-  const libJsTest = libJsOriginal
-    .replace(
-      /CONTRACT_ADDRESS:\s*"[^"]*"/,
-      `CONTRACT_ADDRESS: "${CONFIG.CONTRACT_ADDR}"`
-    )
-    .replace(
-      /SUBGRAPH_URL:\s*"[^"]*"/,
-      `SUBGRAPH_URL: "${CONFIG.SUBGRAPH_URL}"`
-    );
+  // Inject test config.
+  //
+  // lib.js holds a contract address and subgraph URL per protocol version, on
+  // VERSION_CAPS, each tagged with a `// deploy:<ver>:<key>` marker that deploy.sh
+  // also anchors on. This stack exercises v1 (see setup.sh), so it patches the v1
+  // slots. A regex that quietly matches nothing would leave the page pointed at
+  // mainnet and every assertion below would fail for the wrong reason, so a miss
+  // is a hard error.
+  const patchLib = (source, marker, value) => {
+    const pattern = new RegExp(`"[^"]*"(,? *// ${marker})`);
+    if (!pattern.test(source)) {
+      throw new Error(`Marker '// ${marker}' not found in ${libJsPath}`);
+    }
+    return source.replace(pattern, `"${value}"$1`);
+  };
+
+  let libJsTest = patchLib(libJsOriginal, "deploy:v1:contract", CONFIG.CONTRACT_ADDR);
+  libJsTest = patchLib(libJsTest, "deploy:v1:subgraph", CONFIG.SUBGRAPH_URL);
   writeFileSync(libJsPath, libJsTest);
 
   try {

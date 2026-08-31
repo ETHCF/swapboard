@@ -10,10 +10,10 @@
 // Configuration
 // ============================================================================
 
+// Deployment coordinates are per-version and live on VERSION_CAPS below, not
+// here: v1 and v2 are served side by side, so a single CONTRACT_ADDRESS /
+// SUBGRAPH_URL would have to be wrong for one of them.
 const CONFIG = {
-  CONTRACT_ADDRESS: "0x000000fF3D7A2d373615141d7489Ca66683DbecF",
-  SUBGRAPH_URL:
-    "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn",
   PAGE_SIZE: 200,
   REQUEST_TIMEOUT: 30000,
   DEBOUNCE_DELAY: 500,
@@ -988,6 +988,16 @@ const VERSION_CAPS = {
   1: {
     version: 1,
     label: "v1",
+    /**
+     * Deployed Swapboard v1, and the subgraph that indexes it.
+     *
+     * The trailing `deploy:` markers are load-bearing: deploy.sh anchors its
+     * rewrite on them so it patches the slot for the version it just shipped
+     * and leaves the other version alone.
+     */
+    contractAddress: "0x000000fF3D7A2d373615141d7489Ca66683DbecF", // deploy:v1:contract
+    subgraphUrl:
+      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn", // deploy:v1:subgraph
     /** Orders are all-or-nothing; no fill-amount controls. */
     partialFill: false,
     /** No multicall entry points; one order per transaction. */
@@ -1008,6 +1018,15 @@ const VERSION_CAPS = {
   2: {
     version: 2,
     label: "v2",
+    /**
+     * Placeholders until v2 ships: there is no deployed contract and no
+     * subgraph indexing one. `live: false` below is what keeps these from
+     * being reached, and validateConfig only enforces them once a version
+     * goes live. deploy.sh fills both in.
+     */
+    contractAddress: "0x0000000000000000000000000000000000000000", // deploy:v2:contract
+    subgraphUrl:
+      "https://api.goldsky.com/api/public/project_YOUR_ID/subgraphs/swapboard-v2/2.0.0/gn", // deploy:v2:subgraph
     partialFill: true,
     batch: true,
     nativeEth: true,
@@ -1075,6 +1094,20 @@ function resolveVersion(sources) {
  */
 function capsFor(version) {
   return VERSION_CAPS[version] || VERSION_CAPS[DEFAULT_VERSION];
+}
+
+/**
+ * Deployment coordinates for a version, in the shape validateConfig expects.
+ *
+ * Read through this rather than off a module-level constant: which contract
+ * and which subgraph are correct depends entirely on the active version.
+ *
+ * @param {number} version - Protocol version
+ * @returns {{CONTRACT_ADDRESS: string, SUBGRAPH_URL: string}} Deployment coordinates
+ */
+function deploymentFor(version) {
+  const caps = capsFor(version);
+  return { CONTRACT_ADDRESS: caps.contractAddress, SUBGRAPH_URL: caps.subgraphUrl };
 }
 
 /**
@@ -1438,6 +1471,7 @@ if (typeof window !== "undefined") {
     parseVersion,
     resolveVersion,
     capsFor,
+    deploymentFor,
     orderQueryFields,
     normalizeOrder,
     offersEthDirectly,
@@ -1540,6 +1574,7 @@ if (typeof module !== "undefined" && module.exports) {
     parseVersion,
     resolveVersion,
     capsFor,
+    deploymentFor,
     orderQueryFields,
     normalizeOrder,
     offersEthDirectly,
