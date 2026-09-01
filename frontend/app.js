@@ -49,8 +49,12 @@
     resolveVersion,
     capsFor,
     deploymentFor,
-    orderQueryFields,
+    orderQuerySelection,
+    statusFilterCondition,
     normalizeOrder,
+    statsQuerySelection,
+    normalizeStats,
+    popularPairsQuery,
     offersEthDirectly,
     // V2 helpers
     NATIVE_ETH,
@@ -60,6 +64,7 @@
     canSelectOrder,
     getShiftRangeIds,
     computeFillFromReceive,
+    allowsPartialFill,
     summarizeFillBatch,
   } = Lib;
 
@@ -1328,14 +1333,13 @@
     statusEl.textContent = "";
     const statusSpan = document.createElement("span");
     statusSpan.className = "order-modal-status";
+    const statusText = orderStatus(order);
+    statusSpan.textContent = statusText;
     if (order.active) {
-      statusSpan.textContent = "Open";
       statusSpan.classList.add("status-open");
-    } else if (order.taker) {
-      statusSpan.textContent = "Filled";
+    } else if (statusText === "Filled") {
       statusSpan.classList.add("status-filled");
     } else {
-      statusSpan.textContent = "Cancelled";
       statusSpan.classList.add("status-cancelled");
     }
     statusEl.appendChild(statusSpan);
@@ -1365,14 +1369,14 @@
     // Offered
     const offeredEl = $("#order-modal-offered");
     const tokenADecimals = order.tokenA.decimals || 18;
-    const amountA = BigInt(order.amountA);
-    fillOrderModalAmount(offeredEl, order.tokenA, amountA, order.originalAmountA);
+    const amountA = BigInt(order.availableA);
+    fillOrderModalAmount(offeredEl, order.tokenA, amountA, order.amountA);
 
     // Wanted
     const wantedEl = $("#order-modal-wanted");
     const tokenBDecimals = order.tokenB.decimals || 18;
-    const amountB = BigInt(order.amountB);
-    fillOrderModalAmount(wantedEl, order.tokenB, amountB, order.originalAmountB);
+    const amountB = BigInt(order.availableB);
+    fillOrderModalAmount(wantedEl, order.tokenB, amountB, order.amountB);
 
     // USD Value
     const usdEl = $("#order-modal-usd");
@@ -1602,6 +1606,24 @@
   // ============================================================================
 
   /**
+   * Re-indents a multi-line GraphQL selection to sit correctly inside a query.
+   *
+   * The selection sets come from lib.js unindented, since the depth they land
+   * at depends on the query embedding them.
+   *
+   * @param {string} block - Newline-separated selection set
+   * @param {number} spaces - Leading spaces to apply to every line
+   * @returns {string} Indented block
+   */
+  function indent(block, spaces) {
+    const pad = " ".repeat(spaces);
+    return block
+      .split("\n")
+      .map((line) => pad + line)
+      .join("\n");
+  }
+
+  /**
    * Executes a GraphQL query against The Graph subgraph.
    * @param {string} query - GraphQL query string
    * @param {Object} variables - Query variables
@@ -1683,10 +1705,7 @@
       querySubgraph(`
         query {
           globalStats(id: "global") {
-            totalOrders
-            activeOrders
-            filledOrders
-            cancelledOrders
+            ${statsQuerySelection(ACTIVE_VERSION)}
           }
         }
       `),
@@ -1701,12 +1720,14 @@
       `),
     ]);
 
-    if (statsData && statsData.globalStats) {
-      const s = statsData.globalStats;
-      $("#stat-total").textContent = formatNumber(s.totalOrders || "0");
-      $("#stat-active").textContent = formatNumber(s.activeOrders || "0");
-      $("#stat-filled").textContent = formatNumber(s.filledOrders || "0");
-      $("#stat-cancelled").textContent = formatNumber(s.cancelledOrders || "0");
+    // v2 renamed two of these counters and splits partially filled orders out;
+    // normalizeStats folds both shapes onto the four tiles the header shows.
+    const stats = normalizeStats(statsData && statsData.globalStats, ACTIVE_VERSION);
+    if (stats) {
+      $("#stat-total").textContent = formatNumber(stats.total);
+      $("#stat-active").textContent = formatNumber(stats.open);
+      $("#stat-filled").textContent = formatNumber(stats.filled);
+      $("#stat-cancelled").textContent = formatNumber(stats.cancelled);
     }
 
     if (tokenData && tokenData.tokens && tokenData.tokens.length > 0) {
@@ -1735,9 +1756,12 @@
   }
 
   async function loadPopularPairs() {
+    // v1 indexes PairStats ranked by tradeCount; v2 renamed both the entity and
+    // the counter, since one order can now produce several fills.
+    const { root, orderBy } = popularPairsQuery(ACTIVE_VERSION);
     const data = await querySubgraph(`
       query {
-        pairStats_collection(first: 10, orderBy: tradeCount, orderDirection: desc) {
+        ${root}(first: 10, orderBy: ${orderBy}, orderDirection: desc) {
           tokenA {
             address
             symbol
@@ -1751,9 +1775,10 @@
     `);
 
     const pairsList = $("#pairs-list");
-    if (data && data.pairStats_collection && data.pairStats_collection.length > 0) {
+    const pairs = data ? data[root] : null;
+    if (pairs && pairs.length > 0) {
       pairsList.textContent = "";
-      data.pairStats_collection.forEach((p, i) => {
+      pairs.forEach((p, i) => {
         if (i > 0) pairsList.appendChild(document.createTextNode(" "));
         const link = document.createElement("a");
         link.href = "#";
@@ -1840,14 +1865,12 @@
     const skip = (currentPage - 1) * CONFIG.PAGE_SIZE;
     const conditions = [];
 
-    if (currentFilters.status === "open") {
-      conditions.push("active: true");
-    } else if (currentFilters.status === "filled") {
-      conditions.push("active: false, taker_not: null");
-    } else if (currentFilters.status === "cancelled") {
-      conditions.push("active: false, taker: null");
+    // v1 infers the state from active + taker; v2 indexes a status enum and is
+    // asked directly. "watched" and "all" add nothing and are handled client-side.
+    const statusCondition = statusFilterCondition(ACTIVE_VERSION, currentFilters.status);
+    if (statusCondition) {
+      conditions.push(statusCondition);
     }
-    // "watched" and "all" have no status condition - handled client-side
 
     if (currentFilters.selling && isValidAddress(currentFilters.selling)) {
       conditions.push(`tokenA_: { address: "${currentFilters.selling.toLowerCase()}" }`);
@@ -1861,25 +1884,15 @@
 
     const where = conditions.length > 0 ? `where: { ${conditions.join(", ")} }` : "";
 
-    // The v1 subgraph has no partialFill/originalAmount fields, and GraphQL
-    // rejects the whole query on a single unknown field — asking for the v2
-    // shape in v1 mode returns nothing at all, not a partial result.
-    const orderFields = orderQueryFields(ACTIVE_VERSION).join("\n          ");
+    // The two subgraphs share almost no field names, and graph-node rejects the
+    // whole query on a single unknown field — asking either version for the
+    // other's shape returns nothing at all, not a partial result.
+    const orderFields = indent(orderQuerySelection(ACTIVE_VERSION), 10);
 
     const data = await querySubgraph(`
       query {
         orders(first: ${CONFIG.PAGE_SIZE}, skip: ${skip}, orderBy: orderId, orderDirection: desc, ${where}) {
-          ${orderFields}
-          tokenA {
-            address
-            symbol
-            decimals
-          }
-          tokenB {
-            address
-            symbol
-            decimals
-          }
+${orderFields}
         }
       }
     `);
@@ -1894,12 +1907,16 @@
       ordersQueryFailed = false;
       cachedOrders = data.orders;
       for (const o of cachedOrders) {
-        // Display WETH as ETH. Native-ETH orders already carry the ETH symbol;
-        // they keep no address, which is how the two stay distinguishable.
-        if (isWeth(o.tokenA.address)) o.tokenA.symbol = "ETH";
-        if (isWeth(o.tokenB.address)) o.tokenB.symbol = "ETH";
-        // Backfills the fields the v1 subgraph never returns, so rendering and
-        // fill math stay on one code path in both versions.
+        // v1 only: display WETH as ETH, because wrapping is the only way a v1
+        // order can involve ETH at all. v2 escrows native ETH under its own
+        // sentinel and treats WETH as an ordinary ERC20, so relabelling there
+        // would merge two genuinely different assets into one row.
+        if (!CAPS.nativeEth) {
+          if (isWeth(o.tokenA.address)) o.tokenA.symbol = "ETH";
+          if (isWeth(o.tokenB.address)) o.tokenB.symbol = "ETH";
+        }
+        // Folds either subgraph's shape onto one internal model, so rendering
+        // and fill math stay on a single code path.
         normalizeOrder(o, ACTIVE_VERSION);
       }
     }
@@ -2208,8 +2225,9 @@
 
       const tokenADecimals = order.tokenA.decimals;
       const tokenBDecimals = order.tokenB.decimals;
-      const amountA = BigInt(order.amountA);
-      const amountB = BigInt(order.amountB);
+      // The row quotes what is still fillable, so price and USD value do too.
+      const amountA = BigInt(order.availableA);
+      const amountB = BigInt(order.availableB);
 
       // Price: calculate both directions for toggle.
       // priceNormal is the side shown by default; priceInverted is shown after click.
@@ -2315,7 +2333,8 @@
         }
       } else {
         const statusSpan = document.createElement("span");
-        if (order.taker) {
+        const closedAsFilled = orderStatus(order) === "Filled";
+        if (closedAsFilled) {
           statusSpan.textContent = "[FILLED]";
           statusSpan.classList.add("status-filled-label");
         } else {
@@ -2323,7 +2342,7 @@
           statusSpan.classList.add("status-canceled-label");
         }
         tdAction.appendChild(statusSpan);
-        if (order.taker && order.filledAt) {
+        if (closedAsFilled && order.filledAt) {
           const filledDateSpan = document.createElement("span");
           filledDateSpan.className = "order-age";
           filledDateSpan.textContent = formatTimeAgo(parseInt(order.filledAt));
@@ -2375,7 +2394,7 @@
 
       // Column 5: Offered Size (remaining, for v2 partial fills)
       tr.appendChild(
-        buildAmountCell(order.amountA, order.originalAmountA, tokenADecimals, "Offered Size")
+        buildAmountCell(order.availableA, order.amountA, tokenADecimals, "Offered Size")
       );
 
       // Column 6: Wanted Token (link to CoinGecko + copy; bare text for ETH)
@@ -2383,7 +2402,7 @@
 
       // Column 7: Wanted Size (remaining, for v2 partial fills)
       tr.appendChild(
-        buildAmountCell(order.amountB, order.originalAmountB, tokenBDecimals, "Wanted Size")
+        buildAmountCell(order.availableB, order.amountB, tokenBDecimals, "Wanted Size")
       );
 
       // Column 8: USD Val (nowrap to keep $ and value on same line)
@@ -2458,50 +2477,50 @@
   // V2 CONNECTOR — DUMMY IMPLEMENTATION
   // ============================================================================
   //
-  // !!! NONE OF THIS TALKS TO A CHAIN. !!!
+  // !!! NONE OF THIS TALKS TO A CHAIN, AND IT NO LONGER MATCHES THE ABI. !!!
   //
-  // The Swapboard v2 contracts are not deployed. The v2 interface lives in the
-  // unmerged PR #4 (ETHCF/swapboard, branch `z0r0z:partial`), which adds:
+  // These stubs were written against the v2 interface proposed in PR #4
+  // (ETHCF/swapboard, branch `z0r0z:partial`). That is not the interface that
+  // shipped. contracts/src/interfaces/ISwapboard.sol — and the ABI at
+  // subgraph/v2/abis/Swapboard.json, which is byte-identical to the compiled
+  // artifact — declares six mutating functions:
   //
-  //   struct CreateOrderParams { address tokenA; uint256 amountA;
-  //                              address tokenB; uint256 amountB; bool partialFill; }
+  //   struct CreateOrderParams { address tokenA; uint128 amountA;
+  //                              address tokenB; uint128 amountB;
+  //                              bool partialFillAllowed; }
+  //   struct FillOrderParams   { uint256 orderId; uint128 amountA;
+  //                              uint128 minAmountB; }
   //
-  //   createOrder(tokenA, amountA, tokenB, amountB, partialFill) -> uint256
-  //   createOrders(CreateOrderParams[])                          -> uint256[]
-  //   fillOrder(orderId, deadline, fillAmountB)
-  //   fillOrders(orderIds[], deadline, fillAmountsB[])
-  //   tryFillOrders(orderIds[], deadline, fillAmountsB[])        -> bool[]
-  //   cancelOrders(orderIds[])
-  //   cancelOrdersUnwrap(orderIds[])
+  //   createOrder(CreateOrderParams)                          payable -> uint256
+  //   createOrders(CreateOrderParams[])                       payable -> uint256[]
+  //   fillOrder(orderId, amountA, minAmountB, deadline)       payable
+  //   fillOrders(FillOrderParams[], deadline)                 payable
+  //   cancelOrder(orderId) / cancelOrders(orderId[])
   //
-  // Every method below mirrors one of those signatures exactly, logs the
-  // arguments it *would* submit, waits a beat, and resolves as if it succeeded.
-  // Swapping in real `contract.<method>(...)` calls should therefore require no
-  // changes above this layer.
+  // Every difference below is load-bearing, so none of these stubs can simply
+  // be pointed at `contract.<method>(...)`:
   //
-  // Because the stubs are inert, order rows do NOT change state after a
-  // simulated fill or cancel — loadOrders() re-reads unchanged data.
+  //   * There are no `*WithEth` entry points. Native ETH rides the
+  //     0xEeee…eEeE sentinel through the ordinary payable calls, with an
+  //     EXACT msg.value — the contract refunds nothing and reverts with
+  //     ETHAmountMismatch on a mismatch.
+  //   * There are no `*Unwrap` variants. Those were v1 WETH concepts; to v2,
+  //     WETH is an ordinary ERC20.
+  //   * There is no `tryFillOrders`. `fillOrders` reverts the whole batch, so
+  //     fillSelectedOrders()'s "skip what can no longer fill" promise is not
+  //     backed by anything and has to change.
+  //   * A fill is keyed on `amountA` — the offered token the taker receives —
+  //     plus the quoted `minAmountB`, not on a tokenB amount with 0 meaning
+  //     "the rest". lib.js quoteFill() computes the quote the contract will.
+  //   * createOrder takes a struct, and amounts are uint128.
   //
-  // --- Native ETH ---------------------------------------------------------
+  // Replacing this layer is the next step; the subgraph read path and the mock
+  // are already on the real v2 shapes. Until then every method here logs the
+  // arguments it would submit, waits a beat, and resolves as if it succeeded,
+  // so order rows do NOT change state after a simulated fill or cancel —
+  // loadOrders() re-reads unchanged data.
   //
-  // Native ETH is never routed through the ERC20 path. Anywhere the user
-  // *sends* ETH, msg.value has to carry it, so v2 gets a dedicated payable
-  // entry point and this connector calls it directly:
-  //
-  //   createOrderWithEth(tokenB, amountB, partialFill)            payable
-  //   createOrdersWithEth(CreateOrderParams[])                    payable
-  //   fillOrderWithEth(orderId, deadline)                         payable
-  //   tryFillOrdersWithEth(orderIds[], deadline, fillAmountsB[])  payable -> bool[]
-  //
-  // Anywhere the user only *receives* ETH — filling or cancelling an order
-  // that offers native ETH — no special call is needed: the contract already
-  // escrows ETH and pays it straight out, so the plain method is correct.
-  //
-  // WETH is unrelated to any of this and keeps its own v1 wrap/unwrap
-  // variants (fillOrderUnwrap, cancelOrderUnwrap).
-  //
-  // Two things went away with the v1 call sites and come back with the real
-  // contracts, rather than being faked here:
+  // Two things stay off rather than being faked:
   //   * gas estimates in the confirmation modal — these need a real ABI to
   //     encode against, and an invented number is worse than none.
   //   * waitForOrderUpdate() subgraph polling after a transaction — with inert
@@ -2560,7 +2579,7 @@
       amountA: p.amountA.toString(),
       tokenB: p.tokenB,
       amountB: p.amountB.toString(),
-      partialFill: p.partialFill,
+      partialFillAllowed: p.partialFillAllowed,
     };
   }
 
@@ -2891,7 +2910,7 @@
    * @returns {HTMLElement}
    */
   function buildPartialFillControls(order, onChange) {
-    const remainingA = BigInt(order.amountA);
+    const remainingA = BigInt(order.availableA);
     const wrap = document.createElement("div");
     wrap.className = "partial-fill-controls";
 
@@ -2921,17 +2940,20 @@
      * @param {boolean} writeBack - Whether to rewrite the input box
      */
     function update(receive, writeBack) {
-      const { fillAmountB, actualAmountA } = computeFillFromReceive(order, receive);
+      const { amountA, amountB } = computeFillFromReceive(order, receive);
 
-      input.classList.toggle("input-error", fillAmountB === 0n);
+      input.classList.toggle("input-error", amountB === 0n);
       if (writeBack) {
-        input.value = formatAmount(actualAmountA, order.tokenA.decimals);
+        input.value = formatAmount(amountA, order.tokenA.decimals);
       }
 
       send.textContent =
-        "You send: " + formatAmount(fillAmountB, order.tokenB.decimals) + " " + order.tokenB.symbol;
+        "You send: " + formatAmount(amountB, order.tokenB.decimals) + " " + order.tokenB.symbol;
 
-      onChange(fillAmountB);
+      // Both halves are reported: v2 submits the requested tokenA *and* the
+      // quote it was priced at, and the payment has to be the exact quote
+      // because an ETH-denominated fill pays it as msg.value.
+      onChange(amountA, amountB);
     }
 
     for (const percent of [25, 50, 75, 100]) {
@@ -2985,22 +3007,25 @@
 
     const payWithEth = isNativeEth(order.tokenB.address) || isWeth(order.tokenB.address);
     const unwrapToEth = isWeth(order.tokenA.address);
-    const remainingB = BigInt(order.amountB);
+    const remainingA = BigInt(order.availableA);
+    const remainingB = BigInt(order.availableB);
 
     const body = document.createElement("div");
     const summary = document.createElement("div");
     summary.textContent =
-      `You will send ${formatAmount(order.amountB, order.tokenB.decimals)} ${order.tokenB.symbol} ` +
-      `and receive ${formatAmount(order.amountA, order.tokenA.decimals)} ${order.tokenA.symbol} in return.`;
+      `You will send ${formatAmount(remainingB, order.tokenB.decimals)} ${order.tokenB.symbol} ` +
+      `and receive ${formatAmount(remainingA, order.tokenA.decimals)} ${order.tokenA.symbol} in return.`;
     body.appendChild(summary);
 
     // Orders that opted out of partial fill are all-or-nothing, so there is
     // nothing to choose and the controls stay off. So is every v1 order.
+    let fillAmountA = remainingA;
     let fillAmountB = remainingB;
-    if (CAPS.partialFill && order.partialFill) {
+    if (CAPS.partialFill && allowsPartialFill(order)) {
       body.appendChild(
-        buildPartialFillControls(order, (amount) => {
-          fillAmountB = amount;
+        buildPartialFillControls(order, (amountA, amountB) => {
+          fillAmountA = amountA;
+          fillAmountB = amountB;
         })
       );
     }
@@ -3031,10 +3056,10 @@
           }
 
           const deadline = Math.floor(Date.now() / 1000) + 300;
-          // 0 means "fill the remainder" on-chain; send it when the user hasn't
-          // scaled the order down, so a race that partially fills it first
-          // doesn't turn into a revert.
-          const fillArg = fillAmountB >= remainingB ? 0n : fillAmountB;
+          // Submitted as-is: v2 keys a fill on the tokenA requested and takes
+          // the quoted payment as an exact floor, so neither value can be
+          // rounded off or replaced with a "fill the rest" sentinel.
+          const fillArg = fillAmountB;
 
           let tx;
           if (payWithEth) {
@@ -3057,7 +3082,7 @@
           // A fully filled order goes inactive; a partial fill leaves it active
           // with a smaller remainder, which this poll cannot distinguish, so
           // only wait when the whole order was taken.
-          await SB.syncAfter(order.orderId, fillAmountB < remainingB);
+          await SB.syncAfter(order.orderId, fillAmountA < remainingA);
           loadOrders();
           loadStats();
           showToast("Order filled!", "success");
@@ -3085,7 +3110,8 @@
     }
 
     const unwrap = isWeth(order.tokenA.address);
-    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
+    // What comes back is what is still in escrow, not the order's original size.
+    const amountAStr = formatAmount(order.availableA, order.tokenA.decimals);
 
     let gasEstimate = null;
     if (CAPS.gasEstimate) {
@@ -3245,8 +3271,8 @@
       list.appendChild(
         buildBatchItem(
           order.orderId,
-          `${formatAmount(order.amountB, tokenB.decimals)} ${tokenB.symbol} → ` +
-            `${formatAmount(order.amountA, tokenA.decimals)} ${tokenA.symbol}`
+          `${formatAmount(order.availableB, tokenB.decimals)} ${tokenB.symbol} → ` +
+            `${formatAmount(order.availableA, tokenA.decimals)} ${tokenA.symbol}`
         )
       );
     }
@@ -3302,7 +3328,7 @@
 
           // Paying in ETH: msg.value covers this chunk, and the contract
           // refunds whatever any skipped orders leave unspent.
-          const chunkValue = chunk.reduce((sum, o) => sum + BigInt(o.amountB), 0n);
+          const chunkValue = chunk.reduce((sum, o) => sum + BigInt(o.availableB), 0n);
           return SB.tryFillOrdersWithEth(ids, deadline, amounts, chunkValue);
         });
 
@@ -3343,13 +3369,16 @@
     for (const order of orders) {
       const { symbol, decimals } = order.tokenA;
       list.appendChild(
-        buildBatchItem(order.orderId, `${formatAmount(order.amountA, decimals)} ${symbol} returned`)
+        buildBatchItem(
+          order.orderId,
+          `${formatAmount(order.availableA, decimals)} ${symbol} returned`
+        )
       );
 
       const existing = refunds.get(symbol);
       refunds.set(symbol, {
         decimals,
-        total: (existing ? existing.total : 0n) + BigInt(order.amountA),
+        total: (existing ? existing.total : 0n) + BigInt(order.availableA),
       });
     }
     body.appendChild(list);
@@ -3863,7 +3892,7 @@
         amountB,
         // The checkbox is the opt-out, so partial fills are the default —
         // except on v1, where every order is all-or-nothing regardless.
-        partialFill: CAPS.partialFill && !rowField(row, "no-partial").checked,
+        partialFillAllowed: CAPS.partialFill && !rowField(row, "no-partial").checked,
         tokenAInfo: tokenA,
         tokenBInfo: tokenB,
         amountAStr,
@@ -3911,7 +3940,7 @@
           String(i + 1),
           `Sell ${p.amountAStr} ${p.tokenAInfo.symbol} for ${p.amountBStr} ${p.tokenBInfo.symbol}` +
             // On v1 nothing partially fills, so saying so would be noise.
-            (!CAPS.partialFill || p.partialFill ? "" : " (no partial fills)")
+            (!CAPS.partialFill || p.partialFillAllowed ? "" : " (no partial fills)")
         )
       );
     });
@@ -3975,7 +4004,7 @@
                     chunk[0].amountA,
                     chunk[0].tokenB,
                     chunk[0].amountB,
-                    chunk[0].partialFill
+                    chunk[0].partialFillAllowed
                   )
                 : SB.createOrders(chunk)
           );
@@ -3991,7 +4020,7 @@
                 ? SB.createOrderWithEth(
                     chunk[0].tokenB,
                     chunk[0].amountB,
-                    chunk[0].partialFill,
+                    chunk[0].partialFillAllowed,
                     value
                   )
                 : SB.createOrdersWithEth(chunk, value);
@@ -4163,7 +4192,10 @@
 
       contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
-      if (!cachedWethAddress) {
+      // v1 only. v2 has no getWeth() to ask, and no use for the answer: it
+      // escrows native ETH directly and WETH is just another ERC20 to it, so
+      // caching an address here would make isWeth() relabel real WETH orders.
+      if (!CAPS.nativeEth && !cachedWethAddress) {
         try {
           cachedWethAddress = (await contract.getWeth()).toLowerCase();
         } catch (e) {
@@ -4404,15 +4436,7 @@
         orderDirection: desc
         first: 1000
       ) {
-        orderId
-        maker
-        amountA
-        amountB
-        active
-        taker
-        createdAt
-        tokenA { address symbol decimals }
-        tokenB { address symbol decimals }
+${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
       }
     }`;
     const data = await querySubgraph(query, {}, true);
@@ -4420,6 +4444,9 @@
       showToast("Failed to export orders", "error");
       return;
     }
+    // The CSV is a record of orders as placed, so it reports the original
+    // amounts rather than what is left — a fully filled order has nothing left.
+    for (const o of data.orders) normalizeOrder(o, ACTIVE_VERSION);
     const headers = [
       "Trade ID",
       "Status",
@@ -4937,6 +4964,8 @@
       const rows = cachedOrders.map((order) => {
         const tokenADecimals = parseInt(order.tokenA.decimals) || 18;
         const tokenBDecimals = parseInt(order.tokenB.decimals) || 18;
+        // Original size, not what is left. The export spans closed orders too,
+        // and a filled order has nothing remaining to report.
         const amountA = formatAmount(order.amountA, tokenADecimals);
         const amountB = formatAmount(order.amountB, tokenBDecimals);
         const status = orderStatus(order);
@@ -5023,7 +5052,7 @@
             updateNetworkIndicator(Number(network.chainId));
             contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
-            if (!cachedWethAddress) {
+            if (!CAPS.nativeEth && !cachedWethAddress) {
               try {
                 cachedWethAddress = (await contract.getWeth()).toLowerCase();
               } catch (e) {
