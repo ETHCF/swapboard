@@ -1,13 +1,13 @@
 .PHONY: all build build-contracts test test-contracts test-e2e clean install fmt fmt-check lint coverage coverage-html snapshot snapshot-gas anvil deploy-local slither serve help
 
 # Foundry project lives in contracts/ (repo git root is not the forge root).
+# Run forge from contracts/ — `forge … --root contracts` breaks solar import resolution.
 CONTRACTS := contracts
+FORGE := cd $(CONTRACTS) && forge
 
 # Subgraph version built/tested/deployed by default. Override with SUBGRAPH=v1.
 SUBGRAPH ?= v2
 SUBGRAPH_DIR := subgraph/$(SUBGRAPH)
-# --root must follow the subcommand (e.g. `forge test --root contracts`).
-FORGE_ROOT := --root $(CONTRACTS)
 
 # Host port for local Anvil (e2e Docker maps 18545:8545; avoids clashes with RPC tunnels on 8545)
 ANVIL_RPC_URL ?= http://localhost:18545
@@ -29,16 +29,16 @@ build: lint build-contracts
 
 # Build contracts only
 build-contracts:
-	forge build $(FORGE_ROOT) --sizes
+	$(FORGE) build --sizes
 
 # Run unit/integration tests (no full Docker e2e stack)
 test:
-	forge test $(FORGE_ROOT) -vvv
+	$(FORGE) test -vvv
 	cd $(SUBGRAPH_DIR) && pnpm test
 
 # Run contract tests only
 test-contracts:
-	forge test $(FORGE_ROOT) -vvv
+	$(FORGE) test -vvv
 
 # Full stack e2e (Docker: anvil + graph-node + deploy + tests + teardown)
 test-e2e:
@@ -46,7 +46,7 @@ test-e2e:
 
 # Run contract tests with coverage (src only; mocks/tests excluded from report)
 coverage:
-	forge coverage $(FORGE_ROOT) --report summary --report lcov --exclude-tests --no-match-coverage 'test/'
+	$(FORGE) coverage --report summary --report lcov --exclude-tests --no-match-coverage 'test/' --no-match-contract GasBenchmarks
 
 # Coverage summary + HTML report at contracts/coverage/
 coverage-html: coverage
@@ -54,21 +54,21 @@ coverage-html: coverage
 
 # Format code
 fmt:
-	forge fmt $(FORGE_ROOT)
+	$(FORGE) fmt
 
 # Check formatting
 fmt-check:
-	forge fmt $(FORGE_ROOT) --check
+	$(FORGE) fmt --check
 
 # Lint contracts (fmt check + forge lint + solhint). Non-zero exit on any issues.
 lint:
-	forge fmt $(FORGE_ROOT) --check
-	forge lint $(FORGE_ROOT) --deny warnings
+	$(FORGE) fmt --check
+	cd $(CONTRACTS) && forge lint --deny warnings src script test
 	cd $(CONTRACTS) && npx --yes solhint --max-warnings 0 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 
 # Clean build artifacts
 clean:
-	forge clean $(FORGE_ROOT)
+	$(FORGE) clean
 	rm -rf subgraph/*/build subgraph/*/generated
 	rm -rf e2e/node_modules/.cache
 
@@ -78,18 +78,18 @@ anvil:
 
 # Deploy to local Anvil
 deploy-local:
-	@forge script $(FORGE_ROOT) script/Deploy.s.sol \
+	@$(FORGE) script script/Deploy.s.sol \
 		--rpc-url $(ANVIL_RPC_URL) \
 		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
 		--broadcast
 
 # Gas snapshot (full suite). Use snapshot-gas for the dedicated GasBenchmarks suite only.
 snapshot:
-	forge snapshot $(FORGE_ROOT)
+	$(FORGE) snapshot
 
 # Fast gas snapshot for GasBenchmarks.t.sol only
 snapshot-gas:
-	forge snapshot $(FORGE_ROOT) --match-contract GasBenchmarks
+	$(FORGE) snapshot --match-contract GasBenchmarks
 
 # Slither analysis (requires slither installed)
 slither:

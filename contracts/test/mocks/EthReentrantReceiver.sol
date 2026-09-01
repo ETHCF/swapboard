@@ -9,6 +9,7 @@ import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 
 /// @title EthReentrantReceiver
 /// @notice Receives ETH and attempts to reenter Swapboard (blocked by nonReentrant)
+// forge-lint: disable-next-item(locked-ether)
 contract EthReentrantReceiver {
     enum Attack {
         None,
@@ -42,6 +43,8 @@ contract EthReentrantReceiver {
     }
 
     // solhint-disable no-complex-fallback
+    // forge-lint: disable-next-item(reentrancy-no-eth)
+    // forge-lint: disable-next-item(cyclomatic-complexity)
     receive() external payable {
         if (_attacking || _attack == Attack.None) {
             return;
@@ -50,10 +53,10 @@ contract EthReentrantReceiver {
         _attacking = true;
 
         if (_attack == Attack.Fill) {
-            try _BOARD.fillOrder(_orderId, 1, 0) {} catch {}
+            try _BOARD.fillOrder(_orderId, 1, 1, 0) {} catch {}
         } else if (_attack == Attack.FillOrders) {
             ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
-            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountA: 1});
+            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountA: 1, minAmountB: 1});
             try _BOARD.fillOrders(fills, 0) {} catch {}
         } else if (_attack == Attack.Cancel) {
             try _BOARD.cancelOrder(_orderId) {} catch {}

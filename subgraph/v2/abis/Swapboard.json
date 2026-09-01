@@ -156,6 +156,11 @@
         "internalType": "uint128"
       },
       {
+        "name": "minAmountB",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
         "name": "deadline",
         "type": "uint256",
         "internalType": "uint256"
@@ -180,6 +185,11 @@
           },
           {
             "name": "amountA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "minAmountB",
             "type": "uint128",
             "internalType": "uint128"
           }
@@ -510,6 +520,27 @@
     "type": "error",
     "name": "FailedCall",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FillAmountMismatch",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quoted",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "minimum",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ]
   },
   {
     "type": "error",

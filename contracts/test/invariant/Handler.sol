@@ -7,6 +7,7 @@ import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
 import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {FillTestLib} from "../helpers/FillTestLib.sol";
 
 /// @title SwapboardHandler
 /// @notice Handler contract for invariant testing of Swapboard
@@ -321,23 +322,23 @@ contract SwapboardHandler is Test {
         uint256 amountA1 = amountA / 2;
         uint256 amountA2 = amountA - amountA1;
         // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 amountA1_128 = uint128(amountA1);
+        uint128 amountA1128 = uint128(amountA1);
         // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 amountA2_128 = uint128(amountA2);
+        uint128 amountA2128 = uint128(amountA2);
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 amountB128 = uint128(amountB);
 
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
         orders[0] = ISwapboard.CreateOrderParams({
             tokenA: address(_tokenA),
-            amountA: amountA1_128,
+            amountA: amountA1128,
             tokenB: address(_tokenB),
             amountB: amountB128,
             partialFillAllowed: false
         });
         orders[1] = ISwapboard.CreateOrderParams({
             tokenA: address(_tokenA),
-            amountA: amountA2_128,
+            amountA: amountA2128,
             tokenB: address(_tokenB),
             amountB: amountB128,
             partialFillAllowed: true
@@ -347,8 +348,8 @@ contract SwapboardHandler is Test {
         uint256[] memory ids = _board.createOrders(orders);
 
         _ghostTotalTokenADeposited += amountA;
-        _trackCreatedOrder(ids[0], amountA1_128, amountB128);
-        _trackCreatedOrder(ids[1], amountA2_128, amountB128);
+        _trackCreatedOrder(ids[0], amountA1128, amountB128);
+        _trackCreatedOrder(ids[1], amountA2128, amountB128);
     }
 
     /// @notice Fills an existing order (full or partial when allowed)
@@ -369,30 +370,29 @@ contract SwapboardHandler is Test {
             return; // Order not active
         }
 
-        uint256 fillA = order.availableA;
+        uint128 fillA128;
         if (order.partialFillAllowed) {
-            fillA = bound(fillAmountSeed, 1, order.availableA);
+            // casting to 'uint128' is safe because fill amount is bounded by order.availableA
+            // forge-lint: disable-next-line(unsafe-typecast)
+            fillA128 = uint128(bound(fillAmountSeed, 1, order.availableA));
+        } else {
+            fillA128 = order.availableA;
         }
 
-        uint256 amountBIn = fillA == order.availableA
-            ? order.availableB
-            : (fillA * order.availableB + order.availableA - 1) / order.availableA;
+        uint128 amountBIn = FillTestLib.quoteAmountB(order, fillA128);
         if (amountBIn == 0 || !_actorCanPayTokenB(order.tokenB, amountBIn)) {
             return;
         }
 
         ++_callsFillOrder;
 
-        // casting to 'uint128' is safe because fillA is at most order.availableA (uint128)
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 fillA128 = uint128(fillA);
         if (order.tokenB == _ETH) {
-            _board.fillOrder{value: amountBIn}(orderId, fillA128, 0);
+            _board.fillOrder{value: amountBIn}(orderId, fillA128, amountBIn, 0);
         } else {
-            _board.fillOrder(orderId, fillA128, 0);
+            _board.fillOrder(orderId, fillA128, amountBIn, 0);
         }
 
-        _recordFillGhosts(order, orderId, fillA);
+        _recordFillGhosts(order, orderId, fillA128);
     }
 
     /// @notice Fills two same-tokenB ERC20 orders in one aggregated pull
@@ -430,8 +430,8 @@ contract SwapboardHandler is Test {
 
         ++_callsFillOrders;
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
-        fills[0] = ISwapboard.FillOrderParams({orderId: id1, amountA: order1.availableA});
-        fills[1] = ISwapboard.FillOrderParams({orderId: id2, amountA: order2.availableA});
+        fills[0] = FillTestLib.fillParams(_board.getOrder(id1), id1, order1.availableA);
+        fills[1] = FillTestLib.fillParams(_board.getOrder(id2), id2, order2.availableA);
         _board.fillOrders(fills, 0);
 
         _recordFillGhosts(order1, id1, order1.availableA);
@@ -470,8 +470,8 @@ contract SwapboardHandler is Test {
 
         ++_callsFillOrders;
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
-        fills[0] = ISwapboard.FillOrderParams({orderId: orderId, amountA: fillA1});
-        fills[1] = ISwapboard.FillOrderParams({orderId: orderId, amountA: fillA2});
+        fills[0] = FillTestLib.fillParams(_board.getOrder(orderId), orderId, fillA1);
+        fills[1] = FillTestLib.fillParams(_board.getOrder(orderId), orderId, fillA2);
         _board.fillOrders(fills, 0);
 
         _recordFillGhosts(order, orderId, uint256(fillA1) + uint256(fillA2));

@@ -43,7 +43,7 @@ contract NegativeRebaseToken is MockERC20 {
         _totalShares += shares;
         _shares[to] += shares;
 
-        emit Transfer({from: address(0), to: to, amount: amount});
+        emit Transfer({from: address(0), to: to, value: amount});
     }
 
     function transfer(
@@ -56,10 +56,11 @@ contract NegativeRebaseToken is MockERC20 {
             revert InsufficientShares();
         }
 
+        // forge-lint: disable-next-line(missing-events-access-control)
         _shares[msg.sender] -= sharesToTransfer;
         _shares[to] += sharesToTransfer;
 
-        emit Transfer({from: msg.sender, to: to, amount: amount});
+        emit Transfer({from: msg.sender, to: to, value: amount});
 
         return true;
     }
@@ -88,7 +89,7 @@ contract NegativeRebaseToken is MockERC20 {
         _shares[from] -= sharesToTransfer;
         _shares[to] += sharesToTransfer;
 
-        emit Transfer({from: from, to: to, amount: amount});
+        emit Transfer({from: from, to: to, value: amount});
 
         return true;
     }

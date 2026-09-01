@@ -7,6 +7,8 @@ import {Test} from "forge-std/Test.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {FillTestLib} from "./helpers/FillTestLib.sol";
+import {OrderTestLib} from "./helpers/OrderTestLib.sol";
 
 contract SwapboardIntegrationTest is Test {
     Swapboard internal _board;
@@ -71,8 +73,8 @@ contract SwapboardIntegrationTest is Test {
         uint256 wethPullsBefore = _weth.getTransferFromCalls();
         uint256 wbtcPullsBefore = _wbtc.getTransferFromCalls();
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
-        _board.fillOrder(order0, 10 ether, 0);
-        _board.fillOrder(order3, 1e8, 0);
+        _fillOrder(order0, 10 ether);
+        _fillOrder(order3, 1e8);
         vm.stopPrank();
 
         assertFalse(_board.canFill(order0));
@@ -109,7 +111,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 150_000e6);
-        _board.fillOrder(orderId, _board.getOrder(orderId).availableA, 0);
+        _fillOrder(orderId, _board.getOrder(orderId).availableA);
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(_bob), bobWethBefore + 50 ether);
@@ -163,12 +165,16 @@ contract SwapboardIntegrationTest is Test {
 
         uint256 wethPullsBefore = _weth.getTransferFromCalls();
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
-        vm.prank(_bob);
-        _board.fillOrder(orderId, 10 ether, 0);
+        vm.startPrank(_bob);
+        _fillOrder(orderId, 10 ether);
+        vm.stopPrank();
 
-        vm.prank(_charlie);
+        ISwapboard.Order memory orderBeforeCharlie = _board.getOrder(orderId);
+        uint128 amountBCharlie = FillTestLib.quoteAmountB(orderBeforeCharlie, 10 ether);
+        vm.startPrank(_charlie);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        _board.fillOrder(orderId, 10 ether, 0);
+        _board.fillOrder(orderId, 10 ether, amountBCharlie, 0);
+        vm.stopPrank();
 
         assertFalse(_board.getOrder(orderId).active);
         assertEq(_board.getOrder(orderId).availableA, 0);
@@ -187,13 +193,12 @@ contract SwapboardIntegrationTest is Test {
 
         assertEq(_weth.getTransferFromCalls(), 1);
 
-        vm.prank(_bob);
+        vm.startPrank(_bob);
         _usdc.approve(address(_board), 30_000e6);
-
         uint256 wethPullsBefore = _weth.getTransferFromCalls();
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
-        vm.prank(_bob);
-        _board.fillOrder(orderId, 10 ether, 0);
+        _fillOrder(orderId, 10 ether);
+        vm.stopPrank();
 
         assertFalse(_board.getOrder(orderId).active);
         assertEq(_board.getOrder(orderId).availableA, 0);
@@ -232,11 +237,11 @@ contract SwapboardIntegrationTest is Test {
         _usdc.approve(address(_board), 150_000e6);
         uint256 wethPullsBefore = _weth.getTransferFromCalls();
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
-        _board.fillOrder(orderIds[0], 10 ether, 0);
-        _board.fillOrder(orderIds[2], 10 ether, 0);
-        _board.fillOrder(orderIds[4], 10 ether, 0);
-        _board.fillOrder(orderIds[6], 10 ether, 0);
-        _board.fillOrder(orderIds[8], 10 ether, 0);
+        _fillOrder(orderIds[0], 10 ether);
+        _fillOrder(orderIds[2], 10 ether);
+        _fillOrder(orderIds[4], 10 ether);
+        _fillOrder(orderIds[6], 10 ether);
+        _fillOrder(orderIds[8], 10 ether);
         vm.stopPrank();
 
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
@@ -273,7 +278,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 daiPullsBefore = _dai.getTransferFromCalls();
         vm.startPrank(_bob);
         _dai.approve(address(_board), 95_000 ether);
-        _board.fillOrder(orderId, _board.getOrder(orderId).availableA, 0);
+        _fillOrder(orderId, _board.getOrder(orderId).availableA);
         vm.stopPrank();
 
         assertFalse(_board.getOrder(orderId).active);
@@ -302,7 +307,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 1e6);
-        _board.fillOrder(orderId, _board.getOrder(orderId).availableA, 0);
+        _fillOrder(orderId, _board.getOrder(orderId).availableA);
         vm.stopPrank();
 
         assertFalse(_board.getOrder(orderId).active);
@@ -325,7 +330,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 1);
-        _board.fillOrder(orderId, _board.getOrder(orderId).availableA, 0);
+        _fillOrder(orderId, _board.getOrder(orderId).availableA);
         vm.stopPrank();
 
         assertFalse(_board.getOrder(orderId).active);
@@ -363,7 +368,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
         vm.expectEmit(true, true, false, true);
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _bob, amountA: 10 ether, amountB: 30_000e6});
-        _board.fillOrder(orderId, _board.getOrder(orderId).availableA, 0);
+        _fillOrder(orderId, _board.getOrder(orderId).availableA);
         vm.stopPrank();
 
         assertFalse(_board.getOrder(orderId).active);
@@ -416,7 +421,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 wethPullsBefore = _weth.getTransferFromCalls();
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
         for (uint256 i = 0; i < numOrders; ++i) {
-            _board.fillOrder(i, 1 ether, 0);
+            _fillOrder(i, 1 ether);
         }
         vm.stopPrank();
 
@@ -443,7 +448,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 200_000e6);
-        _board.fillOrder(orderId, 40 ether, 0);
+        _fillOrder(orderId, 40 ether);
         vm.stopPrank();
 
         ISwapboard.Order memory afterBob = _board.getOrder(orderId);
@@ -455,7 +460,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_charlie);
         _usdc.approve(address(_board), 200_000e6);
-        _board.fillOrder(orderId, 60 ether, 0);
+        _fillOrder(orderId, 60 ether);
         vm.stopPrank();
 
         ISwapboard.Order memory done = _board.getOrder(orderId);
@@ -482,7 +487,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 30_000e6);
-        _board.fillOrder(orderId, 7 ether, 0);
+        _fillOrder(orderId, 7 ether);
         vm.stopPrank();
 
         uint128 remainingA = _board.getOrder(orderId).availableA;
@@ -492,8 +497,9 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_charlie);
         _usdc.approve(address(_board), 30_000e6);
+        ISwapboard.Order memory order = _board.getOrder(orderId);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, 4 ether, remainingA));
-        _board.fillOrder(orderId, 4 ether, 0);
+        _board.fillOrder(orderId, 4 ether, FillTestLib.quoteAmountB(order, 4 ether), 0);
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));
@@ -516,7 +522,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 150_000e6);
-        _board.fillOrder(orderId, 20 ether, 0);
+        _fillOrder(orderId, 20 ether);
         vm.stopPrank();
 
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
@@ -549,9 +555,9 @@ contract SwapboardIntegrationTest is Test {
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 150_000e6);
-        _board.fillOrder(orderId, 15 ether, 0);
+        _fillOrder(orderId, 15 ether);
         uint128 remainingA = _board.getOrder(orderId).availableA;
-        _board.fillOrder(orderId, remainingA, 0);
+        _fillOrder(orderId, remainingA);
         vm.stopPrank();
 
         assertFalse(_board.canFill(orderId));
@@ -582,8 +588,8 @@ contract SwapboardIntegrationTest is Test {
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 88_000e6);
-        _board.fillOrder(ids[0], 10 ether, 0);
-        _board.fillOrder(ids[1], 5 ether, 0);
+        _fillOrder(ids[0], 10 ether);
+        _fillOrder(ids[1], 5 ether);
         vm.stopPrank();
 
         assertFalse(_board.canFill(ids[0]));
@@ -608,8 +614,8 @@ contract SwapboardIntegrationTest is Test {
         vm.stopPrank();
 
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
-        fills[0] = ISwapboard.FillOrderParams({orderId: ids[0], amountA: 10 ether});
-        fills[1] = ISwapboard.FillOrderParams({orderId: ids[1], amountA: 20 ether});
+        fills[0] = FillTestLib.fillParams(_board.getOrder(ids[0]), ids[0], 10 ether);
+        fills[1] = FillTestLib.fillParams(_board.getOrder(ids[1]), ids[1], 20 ether);
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 88_000e6);
@@ -657,15 +663,28 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_board.getOrder(ids[1]).availableA, 0);
     }
 
+    function _fillOrder(
+        uint256 orderId,
+        uint128 amountA
+    ) private {
+        FillTestLib.fill(_board, orderId, amountA);
+    }
+
+    function _fillOrderPayEth(
+        uint256 orderId,
+        uint128 amountA,
+        uint128 minAmountB
+    ) private {
+        FillTestLib.fillPayEth(_board, orderId, amountA, minAmountB);
+    }
+
     function _order(
         address tokenA,
         uint128 amountA,
         address tokenB,
         uint128 amountB
     ) private pure returns (ISwapboard.CreateOrderParams memory) {
-        return ISwapboard.CreateOrderParams({
-            tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB, partialFillAllowed: false
-        });
+        return OrderTestLib.order(tokenA, amountA, tokenB, amountB);
     }
 
     function _orderPartial(
@@ -674,8 +693,6 @@ contract SwapboardIntegrationTest is Test {
         address tokenB,
         uint128 amountB
     ) private pure returns (ISwapboard.CreateOrderParams memory) {
-        return ISwapboard.CreateOrderParams({
-            tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB, partialFillAllowed: true
-        });
+        return OrderTestLib.orderPartial(tokenA, amountA, tokenB, amountB);
     }
 }

@@ -45,6 +45,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     address private constant _ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /// @notice One fill leg after validation/quote (internal batch settlement)
+    /// @param maker Address that receives tokenB for this leg
+    /// @param tokenA Address of the token paid out to the taker
+    /// @param amountA Amount of tokenA transferred to the taker
+    /// @param tokenB Address of the token pulled from the taker
+    /// @param amountB Amount of tokenB paid to the maker (ceiled proportion)
     struct FillLeg {
         address maker;
         address tokenA;
@@ -101,6 +106,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function fillOrder(
         uint256 orderId,
         uint128 amountA,
+        uint128 minAmountB,
         uint256 deadline
     ) external payable nonReentrant {
         if (deadline != 0 && block.timestamp > deadline) {
@@ -111,7 +117,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         FillLeg[] memory legs = new FillLeg[](1);
-        legs[0] = _applyOneFillEffect(orderId, amountA);
+        legs[0] = _applyOneFillEffect(orderId, amountA, minAmountB);
         _settleFills(legs);
     }
 
@@ -182,7 +188,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = orderIds.length;
         Order[] memory result = new Order[](length);
 
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             result[i] = _orders[orderIds[i]];
         }
 
@@ -272,7 +278,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         CreateOrderParams[] calldata orders
     ) private view {
         uint256 length = orders.length;
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             CreateOrderParams calldata params = orders[i];
 
             _validateCreateOrder(params.tokenA, params.amountA, params.tokenB, params.amountB);
@@ -289,7 +295,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = orders.length;
         tokens = new address[](length);
         amounts = new uint256[](length);
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             tokens[i] = orders[i].tokenA;
             amounts[i] = orders[i].amountA;
         }
@@ -309,9 +315,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = tokens.length;
         address[] memory stackedTokens = new address[](length);
         uint256[] memory stackedAmounts = new uint256[](length);
-        uint256 uniqueCount;
+        uint256 uniqueCount = 0;
 
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             address token = tokens[i];
             uint256 amount = amounts[i];
             if (token == _ETH) {
@@ -334,7 +340,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uniqueTokens = new address[](uniqueCount);
         uniqueAmounts = new uint256[](uniqueCount);
 
-        for (uint256 j; j < uniqueCount; ++j) {
+        for (uint256 j = 0; j < uniqueCount; ++j) {
             uniqueTokens[j] = stackedTokens[j];
             uniqueAmounts[j] = stackedAmounts[j];
         }
@@ -350,7 +356,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length,
         address token
     ) private pure returns (uint256) {
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             if (tokens[i] == token) {
                 return i;
             }
@@ -367,7 +373,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256[] memory amounts
     ) private {
         uint256 length = tokens.length;
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             _pullExactToken(tokens[i], amounts[i]);
         }
     }
@@ -420,12 +426,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256[] memory orderIds = new uint256[](length);
         uint256 nextId = _nextOrderId;
 
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             CreateOrderParams calldata params = orders[i];
 
             uint256 orderId = nextId + i;
             orderIds[i] = orderId;
 
+            // forge-lint: disable-next-item(costly-loop)
             _orders[orderId] = Order({
                 maker: msg.sender,
                 active: true,
@@ -485,11 +492,14 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         tokenA = order.tokenA;
         tokenB = order.tokenB;
         uint128 availableB = order.availableB;
-        // Product of two uint128 values always fits in uint256; ceil result is <= availableB.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        amountBIn = amountA == availableA
-            ? availableB
-            : uint128((uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA));
+        if (amountA == availableA) {
+            amountBIn = availableB;
+        } else {
+            uint256 quotedB = (uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA);
+            // Product of two uint128 values always fits in uint256; ceil result is <= availableB.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            amountBIn = uint128(quotedB);
+        }
         if (amountBIn == 0) {
             revert ZeroAmount();
         }
@@ -517,13 +527,19 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Validates one fill, updates order storage, emits `OrderFilled`, and returns the leg
     /// @param orderId Order to fill
     /// @param amountA Requested tokenA out
+    /// @param minAmountB Minimum tokenB payment declared by the taker
     /// @return leg Settled fill leg
     function _applyOneFillEffect(
         uint256 orderId,
-        uint128 amountA
+        uint128 amountA,
+        uint128 minAmountB
     ) private returns (FillLeg memory) {
         Order storage order = _requireActiveOrder(orderId);
         (address maker, address tokenA, address tokenB, uint128 amountBIn) = _quoteFill(order, orderId, amountA);
+
+        if (amountBIn < minAmountB) {
+            revert FillAmountMismatch(orderId, amountBIn, minAmountB);
+        }
 
         // Unchecked is safe: _quoteFill ensures amountA <= availableA and
         // amountBIn <= availableB (exact remaining or ceiled proportion).
@@ -550,13 +566,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = fills.length;
         FillLeg[] memory legs = new FillLeg[](length);
 
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             FillOrderParams calldata fill = fills[i];
             if (fill.amountA == 0) {
                 revert ZeroAmount();
             }
 
-            legs[i] = _applyOneFillEffect(fill.orderId, fill.amountA);
+            legs[i] = _applyOneFillEffect(fill.orderId, fill.amountA, fill.minAmountB);
         }
 
         return legs;
@@ -574,7 +590,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address[] memory tokenBs = new address[](length);
         uint256[] memory amountBs = new uint256[](length);
 
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             FillLeg memory leg = legs[i];
             makers[i] = leg.maker;
             tokenAs[i] = leg.tokenA;
@@ -605,7 +621,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) private {
         (address[] memory ethMakers, uint256[] memory ethAmounts, uint256 ethCount) =
             _aggregateEthByRecipient(makers, tokens, amounts);
-        for (uint256 i; i < ethCount; ++i) {
+        for (uint256 i = 0; i < ethCount; ++i) {
             // Forward all gas so maker contracts can execute receive/fallback.
             payable(ethMakers[i]).sendValue(ethAmounts[i]);
         }
@@ -616,7 +632,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             uint256[] memory uniqueAmounts,
             uint256 uniqueCount
         ) = _aggregateRecipientTokenAmounts(makers, tokens, amounts);
-        for (uint256 j; j < uniqueCount; ++j) {
+        for (uint256 j = 0; j < uniqueCount; ++j) {
             IERC20(uniqueTokens[j]).safeTransfer(recipients[j], uniqueAmounts[j]);
         }
     }
@@ -650,7 +666,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         uint256 length = tokens.length;
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             IERC20(tokens[i]).safeTransfer(recipient, amounts[i]);
         }
     }
@@ -670,8 +686,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = recipients.length;
         ethRecipients = new address[](length);
         ethAmounts = new uint256[](length);
+        ethCount = 0;
 
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             if (tokens[i] != _ETH) {
                 continue;
             }
@@ -714,8 +731,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uniqueRecipients = new address[](length);
         uniqueTokens = new address[](length);
         uniqueAmounts = new uint256[](length);
+        uniqueCount = 0;
 
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             address token = tokens[i];
             if (token == _ETH) {
                 continue;
@@ -749,7 +767,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address recipient,
         address token
     ) private pure returns (uint256) {
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             if (recipients[i] == recipient && tokens[i] == token) {
                 return i;
             }
@@ -784,7 +802,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256[] calldata orderIds
     ) private view {
         uint256 length = orderIds.length;
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             uint256 orderId = orderIds[i];
             for (uint256 j = i + 1; j < length; ++j) {
                 if (orderIds[j] == orderId) {
@@ -810,7 +828,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = orderIds.length;
         tokens = new address[](length);
         amounts = new uint256[](length);
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             Order storage order = _orders[orderIds[i]];
             tokens[i] = order.tokenA;
             amounts[i] = order.availableA;
@@ -823,15 +841,17 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256[] calldata orderIds
     ) private {
         uint256 length = orderIds.length;
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i = 0; i < length; ++i) {
             uint256 orderId = orderIds[i];
+            // forge-lint: disable-next-line(costly-loop)
             delete _orders[orderId];
 
             emit OrderCanceled({orderId: orderId});
         }
     }
 
-    /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer rebase
+    /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer
+    ///         rebase / phantom transfers
     /// @param token ERC20 token to pull from the caller
     /// @param amount Expected amount received
     function _pullExactToken(
@@ -842,7 +862,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         uint256 balanceAfter = IERC20(token).balanceOf(address(this));
 
-        // Detect fee-on-transfer / mid-transfer rebase by comparing received amount to expected
+        // Detect fee-on-transfer / mid-transfer rebase / phantom by comparing received to expected
         // Using unchecked is safe: balanceAfter >= balanceBefore after successful transfer
         unchecked {
             uint256 received = balanceAfter - balanceBefore;

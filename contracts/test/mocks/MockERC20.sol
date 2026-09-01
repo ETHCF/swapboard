@@ -3,9 +3,11 @@ pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 /// @title MockERC20
 /// @notice Shared ERC20 mock base used by test tokens
-contract MockERC20 {
+contract MockERC20 is IERC20 {
     string private _name;
     string private _symbol;
     uint8 private _decimals;
@@ -14,12 +16,6 @@ contract MockERC20 {
     mapping(address account => uint256 balance) internal _balanceOf;
     mapping(address owner => mapping(address spender => uint256 allowance)) internal _allowance;
     uint256 private _transferFromCalls;
-
-    // solhint-disable-next-line gas-indexed-events
-    event Transfer(address indexed from, address indexed to, uint256 amount);
-
-    // solhint-disable-next-line gas-indexed-events
-    event Approval(address indexed owner, address indexed spender, uint256 amount);
 
     constructor(
         string memory initName,
@@ -115,7 +111,7 @@ contract MockERC20 {
         _totalSupply += amount;
         _balanceOf[to] += amount;
 
-        emit Transfer({from: address(0), to: to, amount: amount});
+        emit Transfer({from: address(0), to: to, value: amount});
     }
 
     function _burn(
@@ -125,7 +121,7 @@ contract MockERC20 {
         _balanceOf[from] -= amount;
         _totalSupply -= amount;
 
-        emit Transfer({from: from, to: address(0), amount: amount});
+        emit Transfer({from: from, to: address(0), value: amount});
     }
 
     function _approve(
@@ -135,7 +131,7 @@ contract MockERC20 {
     ) internal virtual {
         _allowance[owner][spender] = amount;
 
-        emit Approval({owner: owner, spender: spender, amount: amount});
+        emit Approval({owner: owner, spender: spender, value: amount});
     }
 
     function _spendAllowance(
@@ -157,6 +153,6 @@ contract MockERC20 {
         _balanceOf[from] -= amount;
         _balanceOf[to] += amount;
 
-        emit Transfer({from: from, to: to, amount: amount});
+        emit Transfer({from: from, to: to, value: amount});
     }
 }

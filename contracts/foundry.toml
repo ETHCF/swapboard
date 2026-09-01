@@ -2,7 +2,6 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-dotenv = "../.env"
 solc = "0.8.36"
 optimizer = true
 optimizer_runs = 10000
@@ -35,7 +34,17 @@ quote_style = "double"
 number_underscore = "thousands"
 
 [lint]
-exclude_lints = ["block-timestamp"]
+ignore = ["lib/**"]
+exclude_lints = [
+    "literal-instead-of-constant",
+    "block-timestamp",
+    "arbitrary-send-eth",
+    "unused-return",
+    "calls-loop",
+    "require-revert-in-loop",
+    "reentrancy-events",
+    "pragma-inconsistent",
+]
 
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"

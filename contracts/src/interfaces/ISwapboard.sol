@@ -52,9 +52,11 @@ interface ISwapboard is ISemver {
     /// @notice Arguments for filling a single OTC order
     /// @param orderId Unique identifier of the order to fill
     /// @param amountA Amount of tokenA to receive from the order
+    /// @param minAmountB Minimum amount of tokenB the taker is willing to pay (quoted payment may be higher)
     struct FillOrderParams {
         uint256 orderId;
         uint128 amountA;
+        uint128 minAmountB;
     }
 
     // solhint-disable gas-indexed-events
@@ -104,7 +106,7 @@ interface ISwapboard is ISemver {
     error NotAContract(address token);
 
     /// @notice Thrown when the received token amount differs from expected
-    /// @dev Used to detect fee-on-transfer / mid-transfer rebase tokens
+    /// @dev Used to detect fee-on-transfer / mid-transfer rebase / phantom tokens
     /// @param expected The amount that was expected to be received
     /// @param received The amount that was actually received
     error BalanceMismatch(uint256 expected, uint256 received);
@@ -141,6 +143,12 @@ interface ISwapboard is ISemver {
     /// @param remaining The available amountA on the order
     error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining);
 
+    /// @notice Thrown when the quoted fill payment is below the taker's minimum
+    /// @param orderId The order ID
+    /// @param quoted The quoted payment amount for this fill
+    /// @param minimum The minimum payment amount declared by the taker
+    error FillAmountMismatch(uint256 orderId, uint128 quoted, uint128 minimum);
+
     /// @notice Thrown when the same order ID appears more than once in a cancel batch
     /// @param orderId The duplicated order ID
     error DuplicateOrderId(uint256 orderId);
@@ -171,14 +179,18 @@ interface ISwapboard is ISemver {
     ///      taker never underpays. Residual tokenA dust is not refunded (not worth the gas); it
     ///      can be picked up by any user that rounds favorably on another order where the dust
     ///      token is tokenB.
+    ///      `minAmountB` is the minimum tokenB payment the taker accepts; the quoted ceiled payment may
+    ///      exceed it (e.g. rounding). Reverts with `FillAmountMismatch` when the quote is lower.
     ///      If tokenB is ETH, requires `msg.value` equal to the ceiled tokenB amount.
     ///      If tokenA is ETH, pays the taker in ETH.
     /// @param orderId The unique identifier of the order to fill
     /// @param amountA Amount of tokenA to receive from the order
+    /// @param minAmountB Minimum amount of tokenB the taker is willing to pay
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrder(
         uint256 orderId,
         uint128 amountA,
+        uint128 minAmountB,
         uint256 deadline
     ) external payable;
 
