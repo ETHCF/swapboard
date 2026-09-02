@@ -10,6 +10,8 @@ import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 /// @title ReentrantAttacker
 /// @notice Mock ERC20 that attempts reentrancy on transfer
 contract ReentrantAttacker is MockERC20 {
+    error ZeroAddress();
+
     Swapboard private immutable _BOARD;
     string private _attackType;
     uint256 private _orderId;
@@ -54,12 +56,18 @@ contract ReentrantAttacker is MockERC20 {
     function setAttacker(
         address attacker
     ) external {
+        if (attacker == address(0)) {
+            revert ZeroAddress();
+        }
         _attacker = attacker;
     }
 
     function setTokenB(
         address tokenB
     ) external {
+        if (tokenB == address(0)) {
+            revert ZeroAddress();
+        }
         _tokenB = tokenB;
     }
 
@@ -86,6 +94,8 @@ contract ReentrantAttacker is MockERC20 {
         return true;
     }
 
+    // forge-lint: disable-next-item(reentrancy-no-eth)
+    // forge-lint: disable-next-item(cyclomatic-complexity)
     function _attemptReentrancy() internal {
         if (_attacking) {
             // Prevent infinite loop
@@ -96,10 +106,10 @@ contract ReentrantAttacker is MockERC20 {
 
         if (keccak256(bytes(_attackType)) == keccak256(bytes("fill"))) {
             // Try to fill the same order again
-            try _BOARD.fillOrder(_orderId, 1, 0) {} catch {}
+            try _BOARD.fillOrder(_orderId, 1, 1, 0) {} catch {}
         } else if (keccak256(bytes(_attackType)) == keccak256(bytes("fillOrders"))) {
             ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
-            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountA: 1});
+            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountA: 1, minAmountB: 1});
             try _BOARD.fillOrders(fills, 0) {} catch {}
         } else if (keccak256(bytes(_attackType)) == keccak256(bytes("cancel"))) {
             // Try to cancel the same order again

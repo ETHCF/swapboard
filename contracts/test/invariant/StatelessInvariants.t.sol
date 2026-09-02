@@ -5,6 +5,7 @@ pragma solidity 0.8.36;
 // solhint-disable gas-small-strings
 
 import {Test} from "forge-std/Test.sol";
+import {FillTestLib} from "../helpers/FillTestLib.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
 import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
@@ -16,8 +17,11 @@ contract SwapboardStatelessInvariantTest is Test {
     MockERC20 internal _tokenA;
     MockERC20 internal _tokenB;
 
+    // forge-lint: disable-start(function-init-state)
     address internal _maker = makeAddr("maker");
     address internal _taker = makeAddr("taker");
+
+    // forge-lint: disable-end(function-init-state)
 
     /// @notice Deploys fixtures for each test
     function setUp() public {
@@ -92,8 +96,9 @@ contract SwapboardStatelessInvariantTest is Test {
             })
         );
 
-        vm.prank(_taker);
-        _board.fillOrder(orderId, fillA, 0);
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, fillA);
+        vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.amountA, amountA);
@@ -126,8 +131,9 @@ contract SwapboardStatelessInvariantTest is Test {
             })
         );
 
-        vm.prank(_taker);
-        _board.fillOrder(orderId, amountA, 0);
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, amountA);
+        vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertFalse(order.active);
@@ -165,8 +171,9 @@ contract SwapboardStatelessInvariantTest is Test {
             })
         );
 
-        vm.prank(_taker);
-        _board.fillOrder(orderId, fillA, 0);
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, fillA);
+        vm.stopPrank();
 
         uint256 makerBefore = _tokenA.balanceOf(_maker);
         uint128 remainingA = _board.getOrder(orderId).availableA;
@@ -212,8 +219,9 @@ contract SwapboardStatelessInvariantTest is Test {
             })
         );
 
-        vm.prank(_taker);
-        _board.fillOrder(orderId, fillA1, 0);
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, fillA1);
+        vm.stopPrank();
 
         ISwapboard.Order memory afterFirst = _board.getOrder(orderId);
         uint256 filledA1 = uint256(afterFirst.amountA) - uint256(afterFirst.availableA);
@@ -226,8 +234,9 @@ contract SwapboardStatelessInvariantTest is Test {
         uint128 fillA2 = afterFirst.availableA;
         vm.assume(fillA2 > 0 && afterFirst.availableB > 0);
 
-        vm.prank(_taker);
-        _board.fillOrder(orderId, fillA2, 0);
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, fillA2);
+        vm.stopPrank();
 
         ISwapboard.Order memory afterSecond = _board.getOrder(orderId);
         assertEq(afterSecond.amountA, amountA);
@@ -319,8 +328,9 @@ contract SwapboardStatelessInvariantTest is Test {
 
         uint256 takerBalanceBefore = _tokenA.balanceOf(_taker);
 
-        vm.prank(_taker);
-        _board.fillOrder(orderId, amountA, 0);
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, amountA);
+        vm.stopPrank();
 
         uint256 takerBalanceAfter = _tokenA.balanceOf(_taker);
         assertEq(takerBalanceAfter - takerBalanceBefore, amountA);
@@ -350,8 +360,9 @@ contract SwapboardStatelessInvariantTest is Test {
 
         uint256 makerBalanceBefore = _tokenB.balanceOf(_maker);
 
-        vm.prank(_taker);
-        _board.fillOrder(orderId, amountA, 0);
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, amountA);
+        vm.stopPrank();
 
         uint256 makerBalanceAfter = _tokenB.balanceOf(_maker);
         assertEq(makerBalanceAfter - makerBalanceBefore, amountB);
@@ -412,8 +423,9 @@ contract SwapboardStatelessInvariantTest is Test {
 
         assertTrue(_board.canFill(orderId));
 
-        vm.prank(_taker);
-        _board.fillOrder(orderId, amountA, 0);
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, amountA);
+        vm.stopPrank();
 
         assertFalse(_board.canFill(orderId));
 

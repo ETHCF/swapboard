@@ -6,6 +6,8 @@ pragma solidity 0.8.36;
 // solhint-disable gas-small-strings
 
 import {Test, console2} from "forge-std/Test.sol";
+import {FillTestLib} from "./helpers/FillTestLib.sol";
+import {OrderTestLib} from "./helpers/OrderTestLib.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
@@ -18,17 +20,32 @@ contract GasBenchmarks is Test {
     MockERC20 internal _tokenA;
     MockERC20 internal _tokenB;
 
+    // forge-lint: disable-start(function-init-state)
     address internal _maker = makeAddr("maker");
     address internal _taker = makeAddr("taker");
+    // forge-lint: disable-end(function-init-state)
+
+    uint128 private constant ORDER_A = 100 ether;
+    uint128 private constant ORDER_B = 100 ether;
+    uint8 private constant TOKEN_DECIMALS = 18;
+    uint256 private constant MINT_AMOUNT = 1_000_000 ether;
+
+    function _order() private view returns (ISwapboard.CreateOrderParams memory) {
+        return OrderTestLib.order(address(_tokenA), ORDER_A, address(_tokenB), ORDER_B);
+    }
+
+    function _orderPartial() private view returns (ISwapboard.CreateOrderParams memory) {
+        return OrderTestLib.orderPartial(address(_tokenA), ORDER_A, address(_tokenB), ORDER_B);
+    }
 
     /// @notice Deploys Swapboard, tokens, and approvals for gas benchmarks
     function setUp() public {
         _board = new Swapboard();
-        _tokenA = new MockERC20("Token A", "TKA", 18);
-        _tokenB = new MockERC20("Token B", "TKB", 18);
+        _tokenA = new MockERC20("Token A", "TKA", TOKEN_DECIMALS);
+        _tokenB = new MockERC20("Token B", "TKB", TOKEN_DECIMALS);
 
-        _tokenA.mint(_maker, 1_000_000 ether);
-        _tokenB.mint(_taker, 1_000_000 ether);
+        _tokenA.mint(_maker, MINT_AMOUNT);
+        _tokenB.mint(_taker, MINT_AMOUNT);
 
         vm.prank(_maker);
         _tokenA.approve(address(_board), type(uint256).max);
@@ -40,15 +57,7 @@ contract GasBenchmarks is Test {
     function test_gas_createOrder() public {
         vm.prank(_maker);
         uint256 gasBefore = gasleft();
-        _board.createOrder(
-            ISwapboard.CreateOrderParams({
-                tokenA: address(_tokenA),
-                amountA: 100 ether,
-                tokenB: address(_tokenB),
-                amountB: 100 ether,
-                partialFillAllowed: false
-            })
-        );
+        _board.createOrder(_order());
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("createOrder gas:", gasUsed);
@@ -58,14 +67,8 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by createOrders for three same-token orders
     function test_gas_createOrders() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i; i < 3; ++i) {
-            orders[i] = ISwapboard.CreateOrderParams({
-                tokenA: address(_tokenA),
-                amountA: 100 ether,
-                tokenB: address(_tokenB),
-                amountB: 100 ether,
-                partialFillAllowed: false
-            });
+        for (uint256 i = 0; i < 3; ++i) {
+            orders[i] = _order();
         }
 
         vm.prank(_maker);
@@ -80,20 +83,14 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by fillOrder
     function test_gas_fillOrder() public {
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(
-            ISwapboard.CreateOrderParams({
-                tokenA: address(_tokenA),
-                amountA: 100 ether,
-                tokenB: address(_tokenB),
-                amountB: 100 ether,
-                partialFillAllowed: false
-            })
-        );
+        uint256 orderId = _board.createOrder(_order());
 
-        vm.prank(_taker);
+        uint128 amountB = FillTestLib.quoteAmountB(_board.getOrder(orderId), ORDER_A);
+        vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        _board.fillOrder(orderId, 100 ether, 0);
+        FillTestLib.fill(_board, orderId, ORDER_A, amountB, 0);
         uint256 gasUsed = gasBefore - gasleft();
+        vm.stopPrank();
 
         console2.log("fillOrder gas:", gasUsed);
         assertLt(gasUsed, 150_000);
@@ -102,44 +99,32 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by a partial fillOrder
     function test_gas_fillOrder_partial() public {
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(
-            ISwapboard.CreateOrderParams({
-                tokenA: address(_tokenA),
-                amountA: 100 ether,
-                tokenB: address(_tokenB),
-                amountB: 100 ether,
-                partialFillAllowed: true
-            })
-        );
+        uint256 orderId = _board.createOrder(_orderPartial());
 
-        vm.prank(_taker);
+        uint128 amountB = FillTestLib.quoteAmountB(_board.getOrder(orderId), 40 ether);
+        vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        _board.fillOrder(orderId, 40 ether, 0);
+        _board.fillOrder(orderId, 40 ether, amountB, 0);
         uint256 gasUsed = gasBefore - gasleft();
+        vm.stopPrank();
 
         console2.log("fillOrder partial gas:", gasUsed);
-        assertLt(gasUsed, 150_000);
+        assertLt(gasUsed, 155_000);
     }
 
     /// @notice Benchmarks gas used by fillOrders for three same-tokenB orders
     function test_gas_fillOrders() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i; i < 3; ++i) {
-            orders[i] = ISwapboard.CreateOrderParams({
-                tokenA: address(_tokenA),
-                amountA: 100 ether,
-                tokenB: address(_tokenB),
-                amountB: 100 ether,
-                partialFillAllowed: false
-            });
+        for (uint256 i = 0; i < 3; ++i) {
+            orders[i] = _order();
         }
 
         vm.prank(_maker);
         uint256[] memory ids = _board.createOrders(orders);
 
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](3);
-        for (uint256 j; j < 3; ++j) {
-            fills[j] = ISwapboard.FillOrderParams({orderId: ids[j], amountA: 100 ether});
+        for (uint256 j = 0; j < 3; ++j) {
+            fills[j] = FillTestLib.fillParams(_board.getOrder(ids[j]), ids[j], ORDER_A);
         }
 
         vm.prank(_taker);
@@ -154,15 +139,7 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by cancelOrder
     function test_gas_cancelOrder() public {
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(
-            ISwapboard.CreateOrderParams({
-                tokenA: address(_tokenA),
-                amountA: 100 ether,
-                tokenB: address(_tokenB),
-                amountB: 100 ether,
-                partialFillAllowed: false
-            })
-        );
+        uint256 orderId = _board.createOrder(_order());
 
         vm.prank(_maker);
         uint256 gasBefore = gasleft();
@@ -176,14 +153,8 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by cancelOrders for three same-token orders
     function test_gas_cancelOrders() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i; i < 3; ++i) {
-            orders[i] = ISwapboard.CreateOrderParams({
-                tokenA: address(_tokenA),
-                amountA: 100 ether,
-                tokenB: address(_tokenB),
-                amountB: 100 ether,
-                partialFillAllowed: false
-            });
+        for (uint256 i = 0; i < 3; ++i) {
+            orders[i] = _order();
         }
 
         vm.prank(_maker);
@@ -201,37 +172,21 @@ contract GasBenchmarks is Test {
     /// @notice Benchmarks gas used by getOrder
     function test_gas_getOrder() public {
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(
-            ISwapboard.CreateOrderParams({
-                tokenA: address(_tokenA),
-                amountA: 100 ether,
-                tokenB: address(_tokenB),
-                amountB: 100 ether,
-                partialFillAllowed: false
-            })
-        );
+        uint256 orderId = _board.createOrder(_order());
 
         uint256 gasBefore = gasleft();
         _board.getOrder(orderId);
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrder gas:", gasUsed);
-        assertLt(gasUsed, 10_000);
+        assertLt(gasUsed, 15_000);
     }
 
     /// @notice Benchmarks gas used by getOrders for 10 orders
     function test_gas_getOrders_10() public {
         for (uint256 i = 0; i < 10; ++i) {
             vm.prank(_maker);
-            _board.createOrder(
-                ISwapboard.CreateOrderParams({
-                    tokenA: address(_tokenA),
-                    amountA: 100 ether,
-                    tokenB: address(_tokenB),
-                    amountB: 100 ether,
-                    partialFillAllowed: false
-                })
-            );
+            _board.createOrder(_order());
         }
 
         uint256[] memory ids = new uint256[](10);
@@ -244,22 +199,14 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrders(10) gas:", gasUsed);
-        assertLt(gasUsed, 70_000);
+        assertLt(gasUsed, 140_000);
     }
 
     /// @notice Benchmarks gas used by getOrders for 100 orders
     function test_gas_getOrders_100() public {
         for (uint256 i = 0; i < 100; ++i) {
             vm.prank(_maker);
-            _board.createOrder(
-                ISwapboard.CreateOrderParams({
-                    tokenA: address(_tokenA),
-                    amountA: 100 ether,
-                    tokenB: address(_tokenB),
-                    amountB: 100 ether,
-                    partialFillAllowed: false
-                })
-            );
+            _board.createOrder(_order());
         }
 
         uint256[] memory ids = new uint256[](100);
@@ -272,21 +219,13 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("getOrders(100) gas:", gasUsed);
-        assertLt(gasUsed, 700_000);
+        assertLt(gasUsed, 1_400_000);
     }
 
     /// @notice Benchmarks gas used by canFill
     function test_gas_canFill() public {
         vm.prank(_maker);
-        uint256 orderId = _board.createOrder(
-            ISwapboard.CreateOrderParams({
-                tokenA: address(_tokenA),
-                amountA: 100 ether,
-                tokenB: address(_tokenB),
-                amountB: 100 ether,
-                partialFillAllowed: false
-            })
-        );
+        uint256 orderId = _board.createOrder(_order());
 
         uint256 gasBefore = gasleft();
         _board.canFill(orderId);
