@@ -4433,6 +4433,43 @@ contract SwapboardTest is Test {
         assertTrue(_board.getOrder(orderId).partialFillAllowed);
     }
 
+    /// @notice Tests setPartialFillAllowed reverts for a non-existent order
+    function test_setPartialFillAllowed_reverts_orderNotFound() public {
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
+        _board.setPartialFillAllowed(999, true);
+    }
+
+    /// @notice Tests setPartialFillAllowed reverts after a full fill (order is inactive)
+    function test_setPartialFillAllowed_reverts_orderNotActive_afterFill() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(orderId, AMOUNT_A);
+        vm.stopPrank();
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        _board.setPartialFillAllowed(orderId, true);
+    }
+
+    /// @notice Tests setPartialFillAllowed reverts after cancel (order is deleted)
+    function test_setPartialFillAllowed_reverts_orderNotFound_afterCancel() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        _board.cancelOrder(orderId);
+        vm.stopPrank();
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
+        _board.setPartialFillAllowed(orderId, true);
+    }
+
     /// @notice Tests modifyOrder reverts for a non-existent order
     function test_modifyOrder_reverts_orderNotFound() public {
         ISwapboard.OrderAmounts memory previous =
@@ -4830,6 +4867,84 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests modifyOrder reverts when previousAmounts.amountB is stale
+    function test_modifyOrder_reverts_stateMismatch_wrongAmountB() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
+        previous.amountB = snapshot.amountB - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.OrderStateMismatch.selector,
+                orderId,
+                previous.amountA,
+                previous.amountB,
+                previous.availableA,
+                previous.availableB,
+                snapshot.amountA,
+                snapshot.amountB,
+                snapshot.availableA,
+                snapshot.availableB
+            )
+        );
+        _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrder reverts when previousAmounts.availableA is stale
+    function test_modifyOrder_reverts_stateMismatch_wrongAvailableA() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
+        previous.availableA = snapshot.availableA - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.OrderStateMismatch.selector,
+                orderId,
+                previous.amountA,
+                previous.amountB,
+                previous.availableA,
+                previous.availableB,
+                snapshot.amountA,
+                snapshot.amountB,
+                snapshot.availableA,
+                snapshot.availableB
+            )
+        );
+        _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrder reverts when previousAmounts.availableB is stale
+    function test_modifyOrder_reverts_stateMismatch_wrongAvailableB() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
+        previous.availableB = snapshot.availableB - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.OrderStateMismatch.selector,
+                orderId,
+                previous.amountA,
+                previous.amountB,
+                previous.availableA,
+                previous.availableB,
+                snapshot.amountA,
+                snapshot.amountB,
+                snapshot.availableA,
+                snapshot.availableB
+            )
+        );
+        _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
+        vm.stopPrank();
+    }
+
     /// @notice Tests modifyOrder top-up reverts when allowance is insufficient
     function test_modifyOrder_revert_insufficientAllowance() public {
         vm.startPrank(_maker);
@@ -4895,6 +5010,9 @@ contract SwapboardTest is Test {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
         uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        vm.expectEmit(true, false, false, true, address(_board));
+        emit ISwapboard.OrderPartialFillUpdated(orderId, false);
         _board.setPartialFillAllowed(orderId, false);
         vm.stopPrank();
 

@@ -700,6 +700,35 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_weth.balanceOf(address(_board)), 0);
     }
 
+    /// @notice Tests enabling partial fills mid-life then filling in parts
+    function test_setPartialFillAllowed_thenPartialFill() public {
+        vm.startPrank(_alice);
+        _weth.approve(address(_board), 10 ether);
+        uint256 orderId = _board.createOrder(_order(address(_weth), 10 ether, address(_usdc), 30_000e6));
+        assertFalse(_board.getOrder(orderId).partialFillAllowed);
+
+        vm.expectEmit(true, false, false, true, address(_board));
+        emit ISwapboard.OrderPartialFillUpdated(orderId, true);
+        _board.setPartialFillAllowed(orderId, true);
+        vm.stopPrank();
+
+        assertTrue(_board.getOrder(orderId).partialFillAllowed);
+        assertEq(_board.getOrder(orderId).availableA, 10 ether);
+        assertEq(_board.getOrder(orderId).availableB, 30_000e6);
+
+        vm.startPrank(_charlie);
+        _usdc.approve(address(_board), 30_000e6);
+        _fillOrder(orderId, 4 ether);
+        vm.stopPrank();
+
+        ISwapboard.Order memory afterPartial = _board.getOrder(orderId);
+        assertTrue(afterPartial.active);
+        assertTrue(afterPartial.partialFillAllowed);
+        assertEq(afterPartial.availableA, 6 ether);
+        assertEq(_weth.balanceOf(_charlie), 4 ether);
+        assertEq(_weth.balanceOf(address(_board)), 6 ether);
+    }
+
     function _fillOrder(
         uint256 orderId,
         uint128 amountA
