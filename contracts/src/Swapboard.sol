@@ -166,6 +166,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @dev Reverts if `previousAmounts` does not match on-chain amounts to prevent concurrent-modify races.
     ///      Token addresses and maker are immutable. Callers set desired remaining amounts; totals are
     ///      reset to those remainings. TokenA escrow is refunded or topped-up for the availableA delta.
+    ///      `ZeroAmount` blocks remaining 0 — cancel instead of modifying to empty liquidity.
     /// @param orderId The unique identifier of the order to modify
     /// @param previousAmounts Expected current amounts from the caller's snapshot (race protection)
     /// @param updatedOrder Desired remaining amounts and fill settings

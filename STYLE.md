@@ -25,8 +25,8 @@ Enforce formatting with Foundry (`make fmt`) and lint with `make lint` (`forge l
 
 | Kind | Convention | Examples |
 | --- | --- | --- |
-| Contracts, libraries, interfaces, structs, events, enums, errors | CapWords | `Swapboard`, `Order`, `OrderCreated`, `ZeroAddress` |
-| Functions, modifiers, arguments, locals | mixedCase | `createOrder`, `tokenA`, `amountB` |
+| Contracts, libraries, interfaces, structs, events, enums, errors | CapWords | `Swapboard`, `Order`, `OrderCreated`, `OrderModified`, `ZeroAddress` |
+| Functions, modifiers, arguments, locals | mixedCase | `createOrder`, `modifyOrder`, `tokenA`, `amountB` |
 | Private / internal state and helpers | leading `_` + mixedCase | `_nextOrderId`, `_orders`, `_pullExactToken` |
 | Immutable / constant state | leading `_` + `UPPER_CASE` | `_ETH`, `_MAJOR` |
 | Explicit getters | `get` + CapWords | `getEth`, `getNextOrderId`, `getOrder` |
@@ -73,9 +73,18 @@ emit OrderCreated({
 });
 
 emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB: amountBIn});
+
+emit OrderModified({
+    orderId: orderId,
+    availableA: newAvailableA,
+    availableB: newAvailableB,
+    partialFillAllowed: updatedOrder.partialFillAllowed
+});
 ```
 
 Prefer the same style for any other named-argument call sites where Solidity supports them (e.g. nested struct construction).
+
+For `modifyOrder`, build `OrderAmounts` / `ModifyOrderParams` the same way (`{key: value}`), and never use positional struct literals.
 
 ### Errors and events
 
@@ -124,6 +133,15 @@ if (msg.value != requiredEth) {
     revert ETHAmountMismatch(requiredEth, msg.value);
 }
 ```
+
+The same rule applies to `modifyOrder`: `msg.value` must equal the ETH tokenA top-up delta (and must be `0` for ERC20 tokenA, no-change, or refund paths). ETH refunds run **after** storage updates (CEI), via `sendValue`.
+
+### Modifying vs cancelling
+
+- `modifyOrder` updates *remaining* liquidity (`availableA` / `availableB`) and may flip `partialFillAllowed`. Maker and token pair are immutable.
+- Totals (`amountA` / `amountB`) are **reset** to the new remainings; on-chain fill % becomes 0 after a successful modify (historical fill progress lives in events).
+- **`ZeroAmount` blocks setting either remaining to 0** — closing an order and reclaiming escrow requires `cancelOrder` / `cancelOrders`, not a zeroed modify.
+- Race protection compares only the four amount fields in `OrderAmounts` (`OrderStateMismatch`); do not invent a full-struct equality check for that path.
 
 ### Imports and inheritance
 

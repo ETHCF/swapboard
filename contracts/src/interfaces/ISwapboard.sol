@@ -130,6 +130,8 @@ interface ISwapboard is ISemver {
     error ZeroAddress();
 
     /// @notice Thrown when a zero amount is provided
+    /// @dev On `modifyOrder`, also thrown when either remaining (`availableA` / `availableB`) is
+    ///      set to 0 — closing an order requires `cancelOrder` / `cancelOrders` instead.
     error ZeroAmount();
 
     /// @notice Thrown when tokenA and tokenB are the same address
@@ -286,6 +288,8 @@ interface ISwapboard is ISemver {
     ///      Reverts if `previousAmounts` does not match on-chain amounts (race protection).
     ///      Callers set desired remaining `availableA` / `availableB`; totals are reset to those
     ///      remainings (filled history is not preserved in `amountA` / `amountB`).
+    ///      `ZeroAmount` blocks setting either remaining to 0 — use `cancelOrder` / `cancelOrders`
+    ///      to close and reclaim escrow instead.
     ///      Token addresses and maker are immutable. Escrow is refunded or topped-up for tokenA.
     /// @param orderId The order ID
     /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
