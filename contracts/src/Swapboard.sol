@@ -133,14 +133,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function cancelOrder(
         uint256 orderId
     ) external nonReentrant {
-        Order storage order = _requireActiveOrder(orderId);
-        address maker = order.maker;
-        if (msg.sender != maker) {
-            revert NotMaker(orderId, msg.sender, maker);
+        Order memory cached = _requireActiveOrder(orderId);
+        if (msg.sender != cached.maker) {
+            revert NotMaker(orderId, msg.sender, cached.maker);
         }
 
-        address tokenA = order.tokenA;
-        uint256 amountA = order.availableA;
+        address tokenA = cached.tokenA;
+        uint256 amountA = cached.availableA;
 
         delete _orders[orderId];
         emit OrderCanceled({orderId: orderId});
@@ -161,6 +160,109 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256[] calldata orderIds
     ) external nonReentrant {
         _cancelOrders(orderIds);
+    }
+
+    /// @notice Modifies an existing order's remaining liquidity and fill settings
+    /// @dev Reverts if `previousAmounts` does not match on-chain amounts to prevent concurrent-modify races.
+    ///      Token addresses and maker are immutable. Callers set desired remaining amounts; totals are
+    ///      reset to those remainings. TokenA escrow is refunded or topped-up for the availableA delta.
+    /// @param orderId The unique identifier of the order to modify
+    /// @param previousAmounts Expected current amounts from the caller's snapshot (race protection)
+    /// @param updatedOrder Desired remaining amounts and fill settings
+    function modifyOrder(
+        uint256 orderId,
+        OrderAmounts calldata previousAmounts,
+        ModifyOrderParams calldata updatedOrder
+    ) external payable nonReentrant {
+        Order storage order = _requireActiveOrder(orderId);
+        Order memory cached = order;
+
+        if (msg.sender != cached.maker) {
+            revert NotMaker(orderId, msg.sender, cached.maker);
+        }
+
+        if (
+            previousAmounts.amountA != cached.amountA || previousAmounts.amountB != cached.amountB
+                || previousAmounts.availableA != cached.availableA || previousAmounts.availableB != cached.availableB
+        ) {
+            revert OrderStateMismatch(
+                orderId,
+                previousAmounts.amountA,
+                previousAmounts.amountB,
+                previousAmounts.availableA,
+                previousAmounts.availableB,
+                cached.amountA,
+                cached.amountB,
+                cached.availableA,
+                cached.availableB
+            );
+        }
+
+        uint128 newAvailableA = updatedOrder.availableA;
+        uint128 newAvailableB = updatedOrder.availableB;
+        if (newAvailableA == 0 || newAvailableB == 0) {
+            revert ZeroAmount();
+        }
+
+        (uint256 ethTopUp, uint256 ethRefund) =
+            _adjustTokenAEscrow(cached.tokenA, cached.availableA, newAvailableA, cached.maker);
+
+        if (msg.value != ethTopUp) {
+            revert ETHAmountMismatch(ethTopUp, msg.value);
+        }
+
+        // Reset totals to the new remainings (filled history is not preserved in amount fields).
+        order.partialFillAllowed = updatedOrder.partialFillAllowed;
+        order.amountA = newAvailableA;
+        order.amountB = newAvailableB;
+        order.availableA = newAvailableA;
+        order.availableB = newAvailableB;
+
+        emit OrderModified(orderId, newAvailableA, newAvailableB, updatedOrder.partialFillAllowed);
+
+        if (ethRefund > 0) {
+            // Forward all gas so maker contracts can execute receive/fallback.
+            payable(cached.maker).sendValue(ethRefund);
+        }
+    }
+
+    /// @notice Adjusts tokenA escrow when `availableA` changes due to an order modification
+    /// @dev ETH refund is returned instead of sent immediately so storage can be updated first (CEI).
+    /// @param tokenA The tokenA held in escrow (token addresses are immutable for the order's lifetime)
+    /// @param oldAvailableA Previous remaining `availableA`
+    /// @param newAvailableA Updated remaining `availableA`
+    /// @param maker Maker receiving any tokenA refund
+    /// @return ethTopUp ETH top-up amount required (0 when tokenA is ERC20 or no top-up needed)
+    /// @return ethRefund ETH refund amount owed to maker (0 when tokenA is ERC20 or no refund needed)
+    function _adjustTokenAEscrow(
+        address tokenA,
+        uint128 oldAvailableA,
+        uint128 newAvailableA,
+        address maker
+    ) private returns (uint256 ethTopUp, uint256 ethRefund) {
+        if (newAvailableA > oldAvailableA) {
+            // Unchecked is safe: branch proves newAvailableA > oldAvailableA.
+            uint256 delta;
+            unchecked {
+                delta = uint256(newAvailableA - oldAvailableA);
+            }
+            if (tokenA == _ETH) {
+                ethTopUp = delta;
+            } else {
+                _pullExactToken(tokenA, delta);
+            }
+        } else if (newAvailableA < oldAvailableA) {
+            // Unchecked is safe: branch proves oldAvailableA > newAvailableA.
+            uint256 refund;
+            unchecked {
+                refund = uint256(oldAvailableA - newAvailableA);
+            }
+            if (tokenA == _ETH) {
+                ethRefund = refund;
+            } else {
+                IERC20(tokenA).safeTransfer(maker, refund);
+            }
+        }
     }
 
     /// @inheritdoc ISwapboard
@@ -429,7 +531,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         for (uint256 i = 0; i < length; ++i) {
             CreateOrderParams calldata params = orders[i];
 
-            uint256 orderId = nextId + i;
+            // Unchecked is safe: wrapping `_nextOrderId` would require 2^256 orders;
+            // `i < length` and `_nextOrderId = nextId + length` below share that bound.
+            uint256 orderId;
+            unchecked {
+                orderId = nextId + i;
+            }
             orderIds[i] = orderId;
 
             // forge-lint: disable-next-item(costly-loop)
@@ -495,8 +602,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         if (amountA == availableA) {
             amountBIn = availableB;
         } else {
-            uint256 quotedB = (uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA);
-            // Product of two uint128 values always fits in uint256; ceil result is <= availableB.
+            // Unchecked is safe: else branch implies amountA < availableA so availableA >= 1;
+            // product of two uint128 values always fits in uint256; ceil result is <= availableB.
+            uint256 quotedB;
+            unchecked {
+                quotedB = (uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA);
+            }
             // forge-lint: disable-next-line(unsafe-typecast)
             amountBIn = uint128(quotedB);
         }
@@ -535,7 +646,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 minAmountB
     ) private returns (FillLeg memory) {
         Order storage order = _requireActiveOrder(orderId);
-        (address maker, address tokenA, address tokenB, uint128 amountBIn) = _quoteFill(order, orderId, amountA);
+        Order memory cached = order;
+        (address maker, address tokenA, address tokenB, uint128 amountBIn) = _quoteFill(cached, orderId, amountA);
 
         if (amountBIn < minAmountB) {
             revert FillAmountMismatch(orderId, amountBIn, minAmountB);
@@ -543,11 +655,15 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         // Unchecked is safe: _quoteFill ensures amountA <= availableA and
         // amountBIn <= availableB (exact remaining or ceiled proportion).
+        uint128 remainingA;
+        uint128 remainingB;
         unchecked {
-            order.availableA -= amountA;
-            order.availableB -= amountBIn;
+            remainingA = cached.availableA - amountA;
+            remainingB = cached.availableB - amountBIn;
         }
-        if (order.availableA == 0 || order.availableB == 0) {
+        order.availableA = remainingA;
+        order.availableB = remainingB;
+        if (remainingA == 0 || remainingB == 0) {
             order.active = false;
         }
 
