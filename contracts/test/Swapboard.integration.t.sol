@@ -680,7 +680,7 @@ contract SwapboardIntegrationTest is Test {
                 availableA: snapshot.availableA,
                 availableB: snapshot.availableB
             }),
-            ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6, partialFillAllowed: false})
+            ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6})
         );
         vm.stopPrank();
 

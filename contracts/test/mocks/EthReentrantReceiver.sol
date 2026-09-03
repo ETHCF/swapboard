@@ -80,8 +80,7 @@ contract EthReentrantReceiver {
                 availableA: order.availableA,
                 availableB: order.availableB
             });
-            ISwapboard.ModifyOrderParams memory updated =
-                ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1, partialFillAllowed: false});
+            ISwapboard.ModifyOrderParams memory updated = ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1});
             try _BOARD.modifyOrder(_orderId, previous, updated) {} catch {}
         }
 

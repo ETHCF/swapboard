@@ -150,7 +150,7 @@ contract GasBenchmarks is Test {
         assertLt(gasUsed, 100_000);
     }
 
-    /// @notice Benchmarks gas used by modifyOrder with unchanged remaining amounts
+    /// @notice Benchmarks gas used by modifyOrder when remaining amounts change
     function test_gas_modifyOrder() public {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_order());
@@ -162,7 +162,7 @@ contract GasBenchmarks is Test {
             availableB: snapshot.availableB
         });
         ISwapboard.ModifyOrderParams memory updated =
-            ISwapboard.ModifyOrderParams({availableA: ORDER_A, availableB: ORDER_B, partialFillAllowed: false});
+            ISwapboard.ModifyOrderParams({availableA: ORDER_A, availableB: ORDER_B / 2});
 
         vm.prank(_maker);
         uint256 gasBefore = gasleft();
@@ -171,6 +171,20 @@ contract GasBenchmarks is Test {
 
         console2.log("modifyOrder gas:", gasUsed);
         assertLt(gasUsed, 100_000);
+    }
+
+    /// @notice Benchmarks gas used by setPartialFillAllowed
+    function test_gas_setPartialFillAllowed() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(_order());
+
+        vm.prank(_maker);
+        uint256 gasBefore = gasleft();
+        _board.setPartialFillAllowed(orderId, true);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        console2.log("setPartialFillAllowed gas:", gasUsed);
+        assertLt(gasUsed, 50_000);
     }
 
     /// @notice Benchmarks gas used by cancelOrders for three same-token orders

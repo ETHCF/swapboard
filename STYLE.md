@@ -25,8 +25,8 @@ Enforce formatting with Foundry (`make fmt`) and lint with `make lint` (`forge l
 
 | Kind | Convention | Examples |
 | --- | --- | --- |
-| Contracts, libraries, interfaces, structs, events, enums, errors | CapWords | `Swapboard`, `Order`, `OrderCreated`, `OrderModified`, `ZeroAddress` |
-| Functions, modifiers, arguments, locals | mixedCase | `createOrder`, `modifyOrder`, `tokenA`, `amountB` |
+| Contracts, libraries, interfaces, structs, events, enums, errors | CapWords | `Swapboard`, `Order`, `OrderCreated`, `OrderModified`, `OrderPartialFillUpdated`, `NoChange`, `ZeroAddress` |
+| Functions, modifiers, arguments, locals | mixedCase | `createOrder`, `modifyOrder`, `setPartialFillAllowed`, `tokenA`, `amountB` |
 | Private / internal state and helpers | leading `_` + mixedCase | `_nextOrderId`, `_orders`, `_pullExactToken` |
 | Immutable / constant state | leading `_` + `UPPER_CASE` | `_ETH`, `_MAJOR` |
 | Explicit getters | `get` + CapWords | `getEth`, `getNextOrderId`, `getOrder` |
@@ -77,9 +77,10 @@ emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB
 emit OrderModified({
     orderId: orderId,
     availableA: newAvailableA,
-    availableB: newAvailableB,
-    partialFillAllowed: updatedOrder.partialFillAllowed
+    availableB: newAvailableB
 });
+
+emit OrderPartialFillUpdated({orderId: orderId, partialFillAllowed: partialFillAllowed});
 ```
 
 Prefer the same style for any other named-argument call sites where Solidity supports them (e.g. nested struct construction).
@@ -138,10 +139,12 @@ The same rule applies to `modifyOrder`: `msg.value` must equal the ETH tokenA to
 
 ### Modifying vs cancelling
 
-- `modifyOrder` updates *remaining* liquidity (`availableA` / `availableB`) and may flip `partialFillAllowed`. Maker and token pair are immutable.
+- `modifyOrder` updates *remaining* liquidity only (`availableA` / `availableB`). Maker, token pair, and `partialFillAllowed` are immutable on that path.
 - Totals (`amountA` / `amountB`) are **reset** to the new remainings; on-chain fill % becomes 0 after a successful modify (historical fill progress lives in events).
 - **`ZeroAmount` blocks setting either remaining to 0** — closing an order and reclaiming escrow requires `cancelOrder` / `cancelOrders`, not a zeroed modify.
+- **`NoChange`** when a modify would leave remainings unchanged, or when `setPartialFillAllowed` sets the flag to its current value.
 - Race protection compares only the four amount fields in `OrderAmounts` (`OrderStateMismatch`); do not invent a full-struct equality check for that path.
+- `setPartialFillAllowed` flips only the partial-fill flag and emits `OrderPartialFillUpdated`. It must not touch amounts or escrow.
 
 ### Imports and inheritance
 

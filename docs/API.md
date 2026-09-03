@@ -316,8 +316,12 @@ async function monitorOrders(provider) {
     console.log(`Order ${orderId} canceled`);
   });
 
-  contract.on("OrderModified", (orderId, availableA, availableB, partialFillAllowed) => {
-    console.log(`Order ${orderId} modified: remaining ${availableA}/${availableB}, partial=${partialFillAllowed}`);
+  contract.on("OrderModified", (orderId, availableA, availableB) => {
+    console.log(`Order ${orderId} modified: remaining ${availableA}/${availableB}`);
+  });
+
+  contract.on("OrderPartialFillUpdated", (orderId, partialFillAllowed) => {
+    console.log(`Order ${orderId} partialFillAllowed=${partialFillAllowed}`);
   });
 }
 ```
@@ -412,6 +416,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 |-------|----------|-------------|
 | `ZeroAddress()` | `0xd92e233d` | Token address is zero |
 | `ZeroAmount()` | `0x1f2a2005` | Amount is zero. On `modifyOrder`, also thrown when either remaining (`availableA` / `availableB`) is set to 0 — use `cancelOrder` / `cancelOrders` instead |
+| `NoChange()` | `0xa88ee577` | Modification would leave the order unchanged |
 | `SameToken()` | `0x201b580a` | tokenA and tokenB are identical |
 | `NotAContract(address)` | `0x8a8b41ec` | Address has no code |
 | `BalanceMismatch(uint256,uint256)` | `0x6e65ed84` | Inbound transfer mismatch (fee-on-transfer, mid-transfer rebase, or phantom token) |
@@ -425,7 +430,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 
 ### `modifyOrder`
 
-Maker-only. Updates an active order's **remaining** liquidity and `partialFillAllowed`.
+Maker-only. Updates an active order's **remaining** liquidity only (not `partialFillAllowed`).
 
 ```solidity
 struct OrderAmounts {
@@ -438,7 +443,6 @@ struct OrderAmounts {
 struct ModifyOrderParams {
     uint128 availableA;       // desired remaining tokenA in escrow
     uint128 availableB;       // desired remaining tokenB required
-    bool partialFillAllowed;
 }
 
 function modifyOrder(
@@ -452,15 +456,27 @@ Behavior:
 
 - Pass `previousAmounts` from a recent `getOrder` snapshot. If any of the four amount fields differs on-chain, the call reverts with `OrderStateMismatch`.
 - Callers set **remainings**, not totals. On success, `amountA` / `amountB` are reset to those remainings (on-chain fill % goes to 0; historical fills live in events).
-- Maker and token pair are immutable.
+- Maker, token pair, and `partialFillAllowed` are immutable on this path.
 - TokenA escrow is refunded when remaining A decreases, or pulled / `msg.value`-topped-up when it increases. For ETH tokenA, `msg.value` must equal the top-up (and must be `0` on refund / no-change / ERC20 tokenA).
-- Emits `OrderModified(orderId, availableA, availableB, partialFillAllowed)`.
+- Emits `OrderModified(orderId, availableA, availableB)`.
 - **`ZeroAmount` blocks setting remaining to 0** — closing the order and reclaiming escrow requires `cancelOrder` / `cancelOrders`, not a zeroed modify.
+- **`NoChange`** when both remainings already match on-chain.
+
+### `setPartialFillAllowed`
+
+Maker-only. Sets whether an active order may be filled in parts. Does not change amounts or escrow.
+
+```solidity
+function setPartialFillAllowed(uint256 orderId, bool partialFillAllowed) external;
+```
+
+Emits `OrderPartialFillUpdated(orderId, partialFillAllowed)`.
+Reverts with `NoChange` when the flag already equals the requested value.
 
 ### JavaScript: Modify Order
 
 ```javascript
-async function modifyOrder(signer, orderId, availableA, availableB, partialFillAllowed) {
+async function modifyOrder(signer, orderId, availableA, availableB) {
   const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
   const order = await contract.getOrder(orderId);
 
@@ -470,7 +486,7 @@ async function modifyOrder(signer, orderId, availableA, availableB, partialFillA
     availableA: order.availableA,
     availableB: order.availableB
   };
-  const updatedOrder = { availableA, availableB, partialFillAllowed };
+  const updatedOrder = { availableA, availableB };
 
   const eth = await contract.getEth();
   let value = 0n;
@@ -483,13 +499,23 @@ async function modifyOrder(signer, orderId, availableA, availableB, partialFillA
 }
 ```
 
+### JavaScript: Set Partial Fill Allowed
+
+```javascript
+async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
+  const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+  const tx = await contract.setPartialFillAllowed(orderId, partialFillAllowed);
+  await tx.wait();
+}
+```
+
 ## Notes
 
 - All amounts are in base units (wei-style). Multiply by 10^decimals.
 - Orders can be front-run. Consider using Flashbots for fills.
 - Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and tokenB pulls (`BalanceMismatch`).
 - Outbound fee-on-transfer / mid-transfer rebase on maker payout remains possible after an exact tokenB pull.
-- Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `modifyOrder`).
+- Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
 - Self-fills are allowed (maker can fill own order).
 - No expiry. Orders remain active until filled or canceled.
 - To close an order or reclaim all escrow, call `cancelOrder` / `cancelOrders`. `modifyOrder` cannot set remaining to 0 (`ZeroAmount`).

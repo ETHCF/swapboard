@@ -75,14 +75,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function createOrder(
         CreateOrderParams calldata order
     ) external payable nonReentrant returns (uint256) {
-        _validateCreateOrder(order.tokenA, order.amountA, order.tokenB, order.amountB);
+        address tokenA = order.tokenA;
+        uint128 amountA = order.amountA;
+        _validateCreateOrder(tokenA, amountA, order.tokenB, order.amountB);
 
-        uint256 ethAmount = order.tokenA == _ETH ? uint256(order.amountA) : 0;
+        uint256 ethAmount = tokenA == _ETH ? uint256(amountA) : 0;
         if (msg.value != ethAmount) {
             revert ETHAmountMismatch(ethAmount, msg.value);
         }
-        if (order.tokenA != _ETH) {
-            _pullExactToken(order.tokenA, order.amountA);
+        if (tokenA != _ETH) {
+            _pullExactToken(tokenA, amountA);
         }
 
         return _storeOrder(order);
@@ -162,14 +164,15 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _cancelOrders(orderIds);
     }
 
-    /// @notice Modifies an existing order's remaining liquidity and fill settings
+    /// @notice Modifies an existing order's remaining liquidity
     /// @dev Reverts if `previousAmounts` does not match on-chain amounts to prevent concurrent-modify races.
-    ///      Token addresses and maker are immutable. Callers set desired remaining amounts; totals are
-    ///      reset to those remainings. TokenA escrow is refunded or topped-up for the availableA delta.
-    ///      `ZeroAmount` blocks remaining 0 — cancel instead of modifying to empty liquidity.
+    ///      Token addresses, maker, and `partialFillAllowed` are immutable here. Callers set desired
+    ///      remaining amounts; totals are reset to those remainings. TokenA escrow is refunded or
+    ///      topped-up for the availableA delta. `ZeroAmount` blocks remaining 0 — cancel instead.
+    ///      `NoChange` when both remainings already match on-chain.
     /// @param orderId The unique identifier of the order to modify
     /// @param previousAmounts Expected current amounts from the caller's snapshot (race protection)
-    /// @param updatedOrder Desired remaining amounts and fill settings
+    /// @param updatedOrder Desired remaining amounts
     function modifyOrder(
         uint256 orderId,
         OrderAmounts calldata previousAmounts,
@@ -204,6 +207,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         if (newAvailableA == 0 || newAvailableB == 0) {
             revert ZeroAmount();
         }
+        if (newAvailableA == cached.availableA && newAvailableB == cached.availableB) {
+            revert NoChange();
+        }
 
         (uint256 ethTopUp, uint256 ethRefund) =
             _adjustTokenAEscrow(cached.tokenA, cached.availableA, newAvailableA, cached.maker);
@@ -213,18 +219,38 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         // Reset totals to the new remainings (filled history is not preserved in amount fields).
-        order.partialFillAllowed = updatedOrder.partialFillAllowed;
         order.amountA = newAvailableA;
         order.amountB = newAvailableB;
         order.availableA = newAvailableA;
         order.availableB = newAvailableB;
 
-        emit OrderModified(orderId, newAvailableA, newAvailableB, updatedOrder.partialFillAllowed);
+        emit OrderModified(orderId, newAvailableA, newAvailableB);
 
         if (ethRefund > 0) {
             // Forward all gas so maker contracts can execute receive/fallback.
             payable(cached.maker).sendValue(ethRefund);
         }
+    }
+
+    /// @inheritdoc ISwapboard
+    function setPartialFillAllowed(
+        uint256 orderId,
+        bool partialFillAllowed
+    ) external nonReentrant {
+        Order storage order = _requireActiveOrder(orderId);
+        address maker = order.maker;
+        bool currentPartialFillAllowed = order.partialFillAllowed;
+
+        if (msg.sender != maker) {
+            revert NotMaker(orderId, msg.sender, maker);
+        }
+        if (partialFillAllowed == currentPartialFillAllowed) {
+            revert NoChange();
+        }
+
+        order.partialFillAllowed = partialFillAllowed;
+
+        emit OrderPartialFillUpdated(orderId, partialFillAllowed);
     }
 
     /// @notice Adjusts tokenA escrow when `availableA` changes due to an order modification
@@ -312,10 +338,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId
     ) private view returns (Order storage) {
         Order storage order = _orders[orderId];
-        if (order.maker == address(0)) {
+        (address maker, bool active) = (order.maker, order.active);
+        if (maker == address(0)) {
             revert OrderNotFound(orderId);
         }
-        if (!order.active) {
+        if (!active) {
             revert OrderNotActive(orderId);
         }
 
@@ -399,8 +426,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         tokens = new address[](length);
         amounts = new uint256[](length);
         for (uint256 i = 0; i < length; ++i) {
-            tokens[i] = orders[i].tokenA;
-            amounts[i] = orders[i].amountA;
+            CreateOrderParams calldata params = orders[i];
+            tokens[i] = params.tokenA;
+            amounts[i] = params.amountA;
         }
     }
 
@@ -494,26 +522,32 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             _nextOrderId = orderId + 1;
         }
 
+        bool partialFillAllowed = params.partialFillAllowed;
+        address tokenA = params.tokenA;
+        address tokenB = params.tokenB;
+        uint128 amountA = params.amountA;
+        uint128 amountB = params.amountB;
+
         _orders[orderId] = Order({
             maker: msg.sender,
             active: true,
-            partialFillAllowed: params.partialFillAllowed,
-            tokenA: params.tokenA,
-            tokenB: params.tokenB,
-            amountA: params.amountA,
-            amountB: params.amountB,
-            availableA: params.amountA,
-            availableB: params.amountB
+            partialFillAllowed: partialFillAllowed,
+            tokenA: tokenA,
+            tokenB: tokenB,
+            amountA: amountA,
+            amountB: amountB,
+            availableA: amountA,
+            availableB: amountB
         });
 
         emit OrderCreated({
             orderId: orderId,
             maker: msg.sender,
-            tokenA: params.tokenA,
-            amountA: params.amountA,
-            tokenB: params.tokenB,
-            amountB: params.amountB,
-            partialFillAllowed: params.partialFillAllowed
+            tokenA: tokenA,
+            amountA: amountA,
+            tokenB: tokenB,
+            amountB: amountB,
+            partialFillAllowed: partialFillAllowed
         });
 
         return orderId;
@@ -541,26 +575,32 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             orderIds[i] = orderId;
 
             // forge-lint: disable-next-item(costly-loop)
+            bool partialFillAllowed = params.partialFillAllowed;
+            address tokenA = params.tokenA;
+            address tokenB = params.tokenB;
+            uint128 amountA = params.amountA;
+            uint128 amountB = params.amountB;
+
             _orders[orderId] = Order({
                 maker: msg.sender,
                 active: true,
-                partialFillAllowed: params.partialFillAllowed,
-                tokenA: params.tokenA,
-                tokenB: params.tokenB,
-                amountA: params.amountA,
-                amountB: params.amountB,
-                availableA: params.amountA,
-                availableB: params.amountB
+                partialFillAllowed: partialFillAllowed,
+                tokenA: tokenA,
+                tokenB: tokenB,
+                amountA: amountA,
+                amountB: amountB,
+                availableA: amountA,
+                availableB: amountB
             });
 
             emit OrderCreated({
                 orderId: orderId,
                 maker: msg.sender,
-                tokenA: params.tokenA,
-                amountA: params.amountA,
-                tokenB: params.tokenB,
-                amountB: params.amountB,
-                partialFillAllowed: params.partialFillAllowed
+                tokenA: tokenA,
+                amountA: amountA,
+                tokenB: tokenB,
+                amountB: amountB,
+                partialFillAllowed: partialFillAllowed
             });
         }
 
@@ -588,18 +628,19 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountA
     ) private pure returns (address maker, address tokenA, address tokenB, uint128 amountBIn) {
         maker = order.maker;
-
+        tokenA = order.tokenA;
+        tokenB = order.tokenB;
+        bool partialFillAllowed = order.partialFillAllowed;
         uint128 availableA = order.availableA;
+        uint128 availableB = order.availableB;
+
         if (amountA > availableA) {
             revert FillAmountTooHigh(orderId, amountA, availableA);
         }
-        if (!order.partialFillAllowed && amountA != availableA) {
+        if (!partialFillAllowed && amountA != availableA) {
             revert PartialFillNotAllowed(orderId);
         }
 
-        tokenA = order.tokenA;
-        tokenB = order.tokenB;
-        uint128 availableB = order.availableB;
         if (amountA == availableA) {
             amountBIn = availableB;
         } else {
@@ -947,8 +988,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         amounts = new uint256[](length);
         for (uint256 i = 0; i < length; ++i) {
             Order storage order = _orders[orderIds[i]];
-            tokens[i] = order.tokenA;
-            amounts[i] = order.availableA;
+            (address tokenA, uint128 availableA) = (order.tokenA, order.availableA);
+            tokens[i] = tokenA;
+            amounts[i] = availableA;
         }
     }
 
