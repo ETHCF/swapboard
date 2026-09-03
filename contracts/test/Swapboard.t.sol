@@ -5030,7 +5030,7 @@ contract SwapboardTest is Test {
         assertEq(after_.availableB, newB);
         assertTrue(after_.active);
 
-        if (newA >= AMOUNT_A) {
+        if (newA > AMOUNT_A) {
             assertEq(makerBefore - _tokenA.balanceOf(_maker), newA - AMOUNT_A);
             assertEq(_tokenA.balanceOf(address(_board)) - boardBefore, newA - AMOUNT_A);
         } else {
@@ -5062,7 +5062,7 @@ contract SwapboardTest is Test {
         assertEq(after_.availableA, newA);
         assertEq(after_.amountA, newA);
         assertEq(address(_board).balance, newA);
-        if (newA >= ETH_AMOUNT) {
+        if (newA > ETH_AMOUNT) {
             assertEq(makerBefore - _maker.balance, newA - ETH_AMOUNT);
             assertEq(address(_board).balance - boardBefore, newA - ETH_AMOUNT);
         } else {

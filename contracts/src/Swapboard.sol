@@ -574,13 +574,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             }
             orderIds[i] = orderId;
 
-            // forge-lint: disable-next-item(costly-loop)
             bool partialFillAllowed = params.partialFillAllowed;
             address tokenA = params.tokenA;
             address tokenB = params.tokenB;
             uint128 amountA = params.amountA;
             uint128 amountB = params.amountB;
 
+            // forge-lint: disable-next-item(costly-loop)
             _orders[orderId] = Order({
                 maker: msg.sender,
                 active: true,

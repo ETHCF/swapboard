@@ -621,17 +621,9 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        uint256 value = 0;
-        if (newA > order.availableA) {
-            uint256 delta = uint256(newA) - uint256(order.availableA);
-            if (order.tokenA == _ETH) {
-                value = delta;
-                if (_currentActor.balance < value) {
-                    return;
-                }
-            } else if (_tokenA.balanceOf(_currentActor) < delta) {
-                return;
-            }
+        (bool funded, uint256 value) = _modifyOrderTopUp(order, newA);
+        if (!funded) {
+            return;
         }
 
         ++_callsModifyOrder;
@@ -643,7 +635,39 @@ contract SwapboardHandler is Test {
             ISwapboard.ModifyOrderParams({availableA: newA, availableB: newB});
 
         _board.modifyOrder{value: value}(orderId, previous, updated);
+        _trackModifyOrderGhosts(order, orderId, newA, newB);
+    }
 
+    /// @notice Computes ETH top-up value for a modify, or reports insufficient funds
+    function _modifyOrderTopUp(
+        ISwapboard.Order memory order,
+        uint128 newA
+    ) private view returns (bool funded, uint256 value) {
+        if (newA > order.availableA) {
+            uint256 delta = uint256(newA) - uint256(order.availableA);
+            if (order.tokenA == _ETH) {
+                if (_currentActor.balance < delta) {
+                    return (funded, value);
+                }
+                funded = true;
+                value = delta;
+                return (funded, value);
+            }
+            if (_tokenA.balanceOf(_currentActor) < delta) {
+                return (funded, value);
+            }
+        }
+        funded = true;
+        return (funded, value);
+    }
+
+    /// @notice Updates ghost accounting after a successful modifyOrder
+    function _trackModifyOrderGhosts(
+        ISwapboard.Order memory order,
+        uint256 orderId,
+        uint128 newA,
+        uint128 newB
+    ) private {
         if (order.tokenA == _ETH) {
             if (newA > order.availableA) {
                 _ghostTotalEthDeposited += uint256(newA) - uint256(order.availableA);
