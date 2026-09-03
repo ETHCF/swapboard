@@ -17,7 +17,8 @@ contract EthReentrantReceiver {
         FillOrders,
         Cancel,
         CancelOrders,
-        Create
+        Create,
+        Modify
     }
 
     Swapboard private immutable _BOARD;
@@ -71,6 +72,17 @@ contract EthReentrantReceiver {
                 })
             ) {}
                 catch {}
+        } else if (_attack == Attack.Modify) {
+            ISwapboard.Order memory order = _BOARD.getOrder(_orderId);
+            ISwapboard.OrderAmounts memory previous = ISwapboard.OrderAmounts({
+                amountA: order.amountA,
+                amountB: order.amountB,
+                availableA: order.availableA,
+                availableB: order.availableB
+            });
+            ISwapboard.ModifyOrderParams memory updated =
+                ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1, partialFillAllowed: false});
+            try _BOARD.modifyOrder(_orderId, previous, updated) {} catch {}
         }
 
         _attacking = false;

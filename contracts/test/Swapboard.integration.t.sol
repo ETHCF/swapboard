@@ -663,6 +663,43 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_board.getOrder(ids[1]).availableA, 0);
     }
 
+    /// @notice Tests a maker can resize an order then a taker fills at the new price
+    function test_modifyOrder_thenFill() public {
+        uint256 aliceWethBefore = _weth.balanceOf(_alice);
+        uint256 charlieUsdcBefore = _usdc.balanceOf(_charlie);
+
+        vm.startPrank(_alice);
+        _weth.approve(address(_board), 10 ether);
+        uint256 orderId = _board.createOrder(_order(address(_weth), 10 ether, address(_usdc), 30_000e6));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        _board.modifyOrder(
+            orderId,
+            ISwapboard.OrderAmounts({
+                amountA: snapshot.amountA,
+                amountB: snapshot.amountB,
+                availableA: snapshot.availableA,
+                availableB: snapshot.availableB
+            }),
+            ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6, partialFillAllowed: false})
+        );
+        vm.stopPrank();
+
+        assertEq(_weth.balanceOf(_alice), aliceWethBefore - 4 ether);
+        assertEq(_weth.balanceOf(address(_board)), 4 ether);
+
+        vm.startPrank(_charlie);
+        _usdc.approve(address(_board), 12_000e6);
+        _fillOrder(orderId, 4 ether);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(orderId));
+        assertEq(_weth.balanceOf(_alice), aliceWethBefore - 4 ether);
+        assertEq(_weth.balanceOf(_charlie), 4 ether);
+        assertEq(_usdc.balanceOf(_alice), 10_000_000e6 + 12_000e6);
+        assertEq(_usdc.balanceOf(_charlie), charlieUsdcBefore - 12_000e6);
+        assertEq(_weth.balanceOf(address(_board)), 0);
+    }
+
     function _fillOrder(
         uint256 orderId,
         uint128 amountA

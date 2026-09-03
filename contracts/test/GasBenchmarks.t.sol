@@ -150,6 +150,29 @@ contract GasBenchmarks is Test {
         assertLt(gasUsed, 100_000);
     }
 
+    /// @notice Benchmarks gas used by modifyOrder with unchanged remaining amounts
+    function test_gas_modifyOrder() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(_order());
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        ISwapboard.OrderAmounts memory previous = ISwapboard.OrderAmounts({
+            amountA: snapshot.amountA,
+            amountB: snapshot.amountB,
+            availableA: snapshot.availableA,
+            availableB: snapshot.availableB
+        });
+        ISwapboard.ModifyOrderParams memory updated =
+            ISwapboard.ModifyOrderParams({availableA: ORDER_A, availableB: ORDER_B, partialFillAllowed: false});
+
+        vm.prank(_maker);
+        uint256 gasBefore = gasleft();
+        _board.modifyOrder(orderId, previous, updated);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        console2.log("modifyOrder gas:", gasUsed);
+        assertLt(gasUsed, 100_000);
+    }
+
     /// @notice Benchmarks gas used by cancelOrders for three same-token orders
     function test_gas_cancelOrders() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);

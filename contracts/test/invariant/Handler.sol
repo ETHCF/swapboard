@@ -48,6 +48,7 @@ contract SwapboardHandler is Test {
     uint256 private _callsFillOrders;
     uint256 private _callsCancelOrder;
     uint256 private _callsCancelOrders;
+    uint256 private _callsModifyOrder;
 
     modifier useActor(
         uint256 actorIndexSeed
@@ -167,6 +168,10 @@ contract SwapboardHandler is Test {
 
     function getCallsCancelOrders() external view returns (uint256) {
         return _callsCancelOrders;
+    }
+
+    function getCallsModifyOrder() external view returns (uint256) {
+        return _callsModifyOrder;
     }
 
     /// @notice Creates a new ERC20/ERC20 order with bounded amounts
@@ -583,6 +588,75 @@ contract SwapboardHandler is Test {
         _ghostActiveOrders -= 2;
         _ghostOrderActive[id1] = false;
         _ghostOrderActive[id2] = false;
+    }
+
+    /// @notice Modifies remaining liquidity on an active order owned by the actor
+    function modifyOrder(
+        uint256 actorSeed,
+        uint256 orderIdSeed,
+        uint256 newASeed,
+        uint256 newBSeed
+    ) external useActor(actorSeed) {
+        uint256 nextId = _board.getNextOrderId();
+        if (nextId == 0) {
+            return;
+        }
+
+        uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        if (!order.active || order.maker != _currentActor) {
+            return;
+        }
+
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 newA = uint128(bound(newASeed, 1, 200 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 newB = uint128(bound(newBSeed, 1, 200 ether));
+        if (newA == order.availableA && newB == order.availableB) {
+            return;
+        }
+
+        uint256 value = 0;
+        if (newA > order.availableA) {
+            uint256 delta = uint256(newA) - uint256(order.availableA);
+            if (order.tokenA == _ETH) {
+                value = delta;
+                if (_currentActor.balance < value) {
+                    return;
+                }
+            } else if (_tokenA.balanceOf(_currentActor) < delta) {
+                return;
+            }
+        }
+
+        ++_callsModifyOrder;
+
+        ISwapboard.OrderAmounts memory previous = ISwapboard.OrderAmounts({
+            amountA: order.amountA, amountB: order.amountB, availableA: order.availableA, availableB: order.availableB
+        });
+        ISwapboard.ModifyOrderParams memory updated = ISwapboard.ModifyOrderParams({
+            availableA: newA, availableB: newB, partialFillAllowed: order.partialFillAllowed
+        });
+
+        _board.modifyOrder{value: value}(orderId, previous, updated);
+
+        if (order.tokenA == _ETH) {
+            if (newA > order.availableA) {
+                _ghostTotalEthDeposited += uint256(newA) - uint256(order.availableA);
+            } else if (newA < order.availableA) {
+                _ghostTotalEthWithdrawn += uint256(order.availableA) - uint256(newA);
+            }
+        } else if (order.tokenA == address(_tokenA)) {
+            if (newA > order.availableA) {
+                _ghostTotalTokenADeposited += uint256(newA) - uint256(order.availableA);
+            } else if (newA < order.availableA) {
+                _ghostTotalTokenAWithdrawn += uint256(order.availableA) - uint256(newA);
+            }
+        }
+
+        _ghostOrderAmounts[orderId] = newA;
+        _ghostOriginalAmountA[orderId] = newA;
+        _ghostOriginalAmountB[orderId] = newB;
     }
 
     /// @notice Records ghost state for a newly created order
