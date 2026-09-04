@@ -136,7 +136,7 @@ The Swapboard contract allows:
 
 - **createOrder**: Deposit tokenA, specify tokenB amount wanted
 - **fillOrder**: Pay tokenB, receive tokenA
-- **modifyOrder**: Maker updates remaining liquidity (cannot set remaining to 0 — cancel instead)
+- **modifyOrder** / **modifyOrders**: Maker updates remaining liquidity (cannot set remaining to 0 — cancel instead)
 - **setPartialFillAllowed**: Maker enables or disables partial fills (amounts unchanged)
 - **cancelOrder**: Maker reclaims tokenA
 

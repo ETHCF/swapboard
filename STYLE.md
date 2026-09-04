@@ -26,7 +26,7 @@ Enforce formatting with Foundry (`make fmt`) and lint with `make lint` (`forge l
 | Kind | Convention | Examples |
 | --- | --- | --- |
 | Contracts, libraries, interfaces, structs, events, enums, errors | CapWords | `Swapboard`, `Order`, `OrderCreated`, `OrderModified`, `OrderPartialFillUpdated`, `NoChange`, `ZeroAddress` |
-| Functions, modifiers, arguments, locals | mixedCase | `createOrder`, `modifyOrder`, `setPartialFillAllowed`, `tokenA`, `amountB` |
+| Functions, modifiers, arguments, locals | mixedCase | `createOrder`, `modifyOrder`, `modifyOrders`, `setPartialFillAllowed`, `tokenA`, `amountB` |
 | Private / internal state and helpers | leading `_` + mixedCase | `_nextOrderId`, `_orders`, `_pullExactToken` |
 | Immutable / constant state | leading `_` + `UPPER_CASE` | `_ETH`, `_MAJOR` |
 | Explicit getters | `get` + CapWords | `getEth`, `getNextOrderId`, `getOrder` |
@@ -85,7 +85,7 @@ emit OrderPartialFillUpdated({orderId: orderId, partialFillAllowed: partialFillA
 
 Prefer the same style for any other named-argument call sites where Solidity supports them (e.g. nested struct construction).
 
-For `modifyOrder`, build `OrderAmounts` / `ModifyOrderParams` the same way (`{key: value}`), and never use positional struct literals.
+For `modifyOrder` / `modifyOrders`, build `OrderAmounts` / `ModifyOrderParams` / `ModifyOrdersParams` the same way (`{key: value}`), and never use positional struct literals.
 
 ### Errors and events
 
@@ -135,15 +135,16 @@ if (msg.value != requiredEth) {
 }
 ```
 
-The same rule applies to `modifyOrder`: `msg.value` must equal the ETH tokenA top-up delta (and must be `0` for ERC20 tokenA, no-change, or refund paths). ETH refunds run **after** storage updates (CEI), via `sendValue`.
+The same rule applies to `modifyOrder` / `modifyOrders`: `msg.value` must equal the net ETH tokenA top-up after same-token refunds are subtracted (and must be `0` for ERC20-only, no-change, refund-only, or fully-netted paths). ETH refunds run **after** storage updates (CEI), via `sendValue`.
 
 ### Modifying vs cancelling
 
-- `modifyOrder` updates *remaining* liquidity only (`availableA` / `availableB`). Maker, token pair, and `partialFillAllowed` are immutable on that path.
+- `modifyOrder` / `modifyOrders` update *remaining* liquidity only (`availableA` / `availableB`). Maker, token pair, and `partialFillAllowed` are immutable on that path.
 - Totals (`amountA` / `amountB`) are **reset** to the new remainings; on-chain fill % becomes 0 after a successful modify (historical fill progress lives in events).
-- **`ZeroAmount` blocks setting either remaining to 0** — closing an order and reclaiming escrow requires `cancelOrder` / `cancelOrders`, not a zeroed modify.
-- **`NoChange`** when a modify would leave remainings unchanged, or when `setPartialFillAllowed` sets the flag to its current value.
+- **`ZeroAmount` blocks setting either remaining to 0** — closing an order and reclaiming escrow requires `cancelOrder` / `cancelOrders`, not a zeroed modify. Empty `modifyOrders` also reverts `ZeroAmount`.
+- **`NoChange`** when a modify would leave remainings unchanged (any item in a batch), or when `setPartialFillAllowed` sets the flag to its current value.
 - Race protection compares only the four amount fields in `OrderAmounts` (`OrderStateMismatch`); do not invent a full-struct equality check for that path.
+- `modifyOrders` nets tokenA top-ups against refunds per unique token (and ETH) so opposing flows cancel; only the net pull or send remains. Duplicate `orderId`s revert with `DuplicateOrderId`.
 - `setPartialFillAllowed` flips only the partial-fill flag and emits `OrderPartialFillUpdated`. It must not touch amounts or escrow.
 
 ### Imports and inheritance

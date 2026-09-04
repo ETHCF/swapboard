@@ -58,6 +58,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 amountB;
     }
 
+    /// @notice One modify leg after validation (internal batch settlement)
+    /// @param tokenA Address of the escrowed asset (ETH sentinel or ERC20)
+    /// @param topUp Amount of tokenA to pull from the maker (0 if none)
+    /// @param refund Amount of tokenA to return to the maker (0 if none)
+    struct ModifyLeg {
+        address tokenA;
+        uint256 topUp;
+        uint256 refund;
+    }
+
     /// @notice Counter for generating unique order IDs
     /// @dev Starts at 0, increments by 1 for each new order
     uint256 private _nextOrderId;
@@ -169,7 +179,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ///      Token addresses, maker, and `partialFillAllowed` are immutable here. Callers set desired
     ///      remaining amounts; totals are reset to those remainings. TokenA escrow is refunded or
     ///      topped-up for the availableA delta. `ZeroAmount` blocks remaining 0 — cancel instead.
-    ///      `NoChange` when both remainings already match on-chain.
+    ///      `NoChange` when both remainings already match on-chain. Batch path: `modifyOrders`.
     /// @param orderId The unique identifier of the order to modify
     /// @param previousAmounts Expected current amounts from the caller's snapshot (race protection)
     /// @param updatedOrder Desired remaining amounts
@@ -178,58 +188,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         OrderAmounts calldata previousAmounts,
         ModifyOrderParams calldata updatedOrder
     ) external payable nonReentrant {
-        Order storage order = _requireActiveOrder(orderId);
-        Order memory cached = order;
+        ModifyLeg[] memory legs = new ModifyLeg[](1);
+        legs[0] = _applyOneModifyEffect(orderId, previousAmounts, updatedOrder);
+        _settleModifyLegs(legs);
+    }
 
-        if (msg.sender != cached.maker) {
-            revert NotMaker(orderId, msg.sender, cached.maker);
-        }
-
-        if (
-            previousAmounts.amountA != cached.amountA || previousAmounts.amountB != cached.amountB
-                || previousAmounts.availableA != cached.availableA || previousAmounts.availableB != cached.availableB
-        ) {
-            revert OrderStateMismatch(
-                orderId,
-                previousAmounts.amountA,
-                previousAmounts.amountB,
-                previousAmounts.availableA,
-                previousAmounts.availableB,
-                cached.amountA,
-                cached.amountB,
-                cached.availableA,
-                cached.availableB
-            );
-        }
-
-        uint128 newAvailableA = updatedOrder.availableA;
-        uint128 newAvailableB = updatedOrder.availableB;
-        if (newAvailableA == 0 || newAvailableB == 0) {
-            revert ZeroAmount();
-        }
-        if (newAvailableA == cached.availableA && newAvailableB == cached.availableB) {
-            revert NoChange();
-        }
-
-        (uint256 ethTopUp, uint256 ethRefund) =
-            _adjustTokenAEscrow(cached.tokenA, cached.availableA, newAvailableA, cached.maker);
-
-        if (msg.value != ethTopUp) {
-            revert ETHAmountMismatch(ethTopUp, msg.value);
-        }
-
-        // Reset totals to the new remainings (filled history is not preserved in amount fields).
-        order.amountA = newAvailableA;
-        order.amountB = newAvailableB;
-        order.availableA = newAvailableA;
-        order.availableB = newAvailableB;
-
-        emit OrderModified(orderId, newAvailableA, newAvailableB);
-
-        if (ethRefund > 0) {
-            // Forward all gas so maker contracts can execute receive/fallback.
-            payable(cached.maker).sendValue(ethRefund);
-        }
+    /// @inheritdoc ISwapboard
+    function modifyOrders(
+        ModifyOrdersParams[] calldata mods
+    ) external payable nonReentrant {
+        _modifyOrders(mods);
     }
 
     /// @inheritdoc ISwapboard
@@ -251,45 +219,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         order.partialFillAllowed = partialFillAllowed;
 
         emit OrderPartialFillUpdated(orderId, partialFillAllowed);
-    }
-
-    /// @notice Adjusts tokenA escrow when `availableA` changes due to an order modification
-    /// @dev ETH refund is returned instead of sent immediately so storage can be updated first (CEI).
-    /// @param tokenA The tokenA held in escrow (token addresses are immutable for the order's lifetime)
-    /// @param oldAvailableA Previous remaining `availableA`
-    /// @param newAvailableA Updated remaining `availableA`
-    /// @param maker Maker receiving any tokenA refund
-    /// @return ethTopUp ETH top-up amount required (0 when tokenA is ERC20 or no top-up needed)
-    /// @return ethRefund ETH refund amount owed to maker (0 when tokenA is ERC20 or no refund needed)
-    function _adjustTokenAEscrow(
-        address tokenA,
-        uint128 oldAvailableA,
-        uint128 newAvailableA,
-        address maker
-    ) private returns (uint256 ethTopUp, uint256 ethRefund) {
-        if (newAvailableA > oldAvailableA) {
-            // Unchecked is safe: branch proves newAvailableA > oldAvailableA.
-            uint256 delta;
-            unchecked {
-                delta = uint256(newAvailableA - oldAvailableA);
-            }
-            if (tokenA == _ETH) {
-                ethTopUp = delta;
-            } else {
-                _pullExactToken(tokenA, delta);
-            }
-        } else if (newAvailableA < oldAvailableA) {
-            // Unchecked is safe: branch proves oldAvailableA > newAvailableA.
-            uint256 refund;
-            unchecked {
-                refund = uint256(oldAvailableA - newAvailableA);
-            }
-            if (tokenA == _ETH) {
-                ethRefund = refund;
-            } else {
-                IERC20(tokenA).safeTransfer(maker, refund);
-            }
-        }
     }
 
     /// @inheritdoc ISwapboard
@@ -932,6 +861,226 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         return length;
+    }
+
+    /// @notice Modifies orders after validating duplicates and aggregating escrow deltas
+    /// @param mods Modify arguments in execution order
+    function _modifyOrders(
+        ModifyOrdersParams[] calldata mods
+    ) private {
+        uint256 length = mods.length;
+        if (length == 0) {
+            revert ZeroAmount();
+        }
+
+        _validateModifyOrders(mods);
+
+        ModifyLeg[] memory legs = new ModifyLeg[](length);
+        for (uint256 i = 0; i < length; ++i) {
+            ModifyOrdersParams calldata mod = mods[i];
+            legs[i] = _applyOneModifyEffect(mod.orderId, mod.previousAmounts, mod.updatedOrder);
+        }
+
+        _settleModifyLegs(legs);
+    }
+
+    /// @notice Validates every order in a modify batch for duplicate IDs
+    /// @param mods Modify arguments to check
+    function _validateModifyOrders(
+        ModifyOrdersParams[] calldata mods
+    ) private pure {
+        uint256 length = mods.length;
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 orderId = mods[i].orderId;
+            for (uint256 j = i + 1; j < length; ++j) {
+                if (mods[j].orderId == orderId) {
+                    revert DuplicateOrderId(orderId);
+                }
+            }
+        }
+    }
+
+    /// @notice Validates one modify, updates order storage, emits `OrderModified`, and returns the leg
+    /// @param orderId Order to modify
+    /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
+    /// @param updatedOrder Desired remaining amounts
+    /// @return leg Escrow top-up / refund for settlement
+    function _applyOneModifyEffect(
+        uint256 orderId,
+        OrderAmounts calldata previousAmounts,
+        ModifyOrderParams calldata updatedOrder
+    ) private returns (ModifyLeg memory) {
+        Order storage order = _requireActiveOrder(orderId);
+        Order memory cached = order;
+
+        if (msg.sender != cached.maker) {
+            revert NotMaker(orderId, msg.sender, cached.maker);
+        }
+
+        if (
+            previousAmounts.amountA != cached.amountA || previousAmounts.amountB != cached.amountB
+                || previousAmounts.availableA != cached.availableA || previousAmounts.availableB != cached.availableB
+        ) {
+            revert OrderStateMismatch(
+                orderId,
+                previousAmounts.amountA,
+                previousAmounts.amountB,
+                previousAmounts.availableA,
+                previousAmounts.availableB,
+                cached.amountA,
+                cached.amountB,
+                cached.availableA,
+                cached.availableB
+            );
+        }
+
+        uint128 newAvailableA = updatedOrder.availableA;
+        uint128 newAvailableB = updatedOrder.availableB;
+        if (newAvailableA == 0 || newAvailableB == 0) {
+            revert ZeroAmount();
+        }
+        if (newAvailableA == cached.availableA && newAvailableB == cached.availableB) {
+            revert NoChange();
+        }
+
+        uint256 topUp = 0;
+        uint256 refund = 0;
+        if (newAvailableA > cached.availableA) {
+            // Unchecked is safe: branch proves newAvailableA > cached.availableA.
+            unchecked {
+                topUp = uint256(newAvailableA - cached.availableA);
+            }
+        } else if (newAvailableA < cached.availableA) {
+            // Unchecked is safe: branch proves cached.availableA > newAvailableA.
+            unchecked {
+                refund = uint256(cached.availableA - newAvailableA);
+            }
+        }
+
+        // Reset totals to the new remainings (filled history is not preserved in amount fields).
+        order.amountA = newAvailableA;
+        order.amountB = newAvailableB;
+        order.availableA = newAvailableA;
+        order.availableB = newAvailableB;
+
+        emit OrderModified(orderId, newAvailableA, newAvailableB);
+
+        return ModifyLeg({tokenA: cached.tokenA, topUp: topUp, refund: refund});
+    }
+
+    /// @notice Settles modify legs after netting same-token top-ups against refunds
+    /// @dev Per unique tokenA (and ETH), only the net delta is pulled or sent — equal opposing
+    ///      flows cancel and produce no transfer. `msg.value` must equal the net ETH top-up.
+    /// @param legs Settled modify legs
+    function _settleModifyLegs(
+        ModifyLeg[] memory legs
+    ) private {
+        (
+            address[] memory tokens,
+            uint256[] memory topUps,
+            uint256[] memory refunds,
+            uint256 ethTopUp,
+            uint256 ethRefund
+        ) = _aggregateModifyLegs(legs);
+
+        if (ethTopUp > ethRefund) {
+            // Unchecked is safe: branch proves ethTopUp > ethRefund.
+            unchecked {
+                ethTopUp -= ethRefund;
+            }
+            ethRefund = 0;
+        } else {
+            // Unchecked is safe: ethRefund >= ethTopUp in this branch.
+            unchecked {
+                ethRefund -= ethTopUp;
+            }
+            ethTopUp = 0;
+        }
+
+        if (msg.value != ethTopUp) {
+            revert ETHAmountMismatch(ethTopUp, msg.value);
+        }
+
+        uint256 length = tokens.length;
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 topUp = topUps[i];
+            uint256 refund = refunds[i];
+            if (topUp > refund) {
+                // Unchecked is safe: branch proves topUp > refund.
+                unchecked {
+                    _pullExactToken(tokens[i], topUp - refund);
+                }
+            } else if (refund > topUp) {
+                // Unchecked is safe: branch proves refund > topUp.
+                unchecked {
+                    IERC20(tokens[i]).safeTransfer(msg.sender, refund - topUp);
+                }
+            }
+        }
+
+        if (ethRefund > 0) {
+            // Forward all gas so recipient contracts can execute receive/fallback.
+            payable(msg.sender).sendValue(ethRefund);
+        }
+    }
+
+    /// @notice Aggregates modify-leg top-ups and refunds per unique ERC20 (ETH returned separately)
+    /// @param legs Per-order escrow deltas
+    /// @return tokens Distinct ERC20 tokenA values in first-seen order
+    /// @return topUps Summed top-up per token
+    /// @return refunds Summed refund per token
+    /// @return ethTopUp Summed ETH top-up (not yet netted)
+    /// @return ethRefund Summed ETH refund (not yet netted)
+    function _aggregateModifyLegs(
+        ModifyLeg[] memory legs
+    )
+        private
+        pure
+        returns (
+            address[] memory tokens,
+            uint256[] memory topUps,
+            uint256[] memory refunds,
+            uint256 ethTopUp,
+            uint256 ethRefund
+        )
+    {
+        uint256 length = legs.length;
+        address[] memory stackedTokens = new address[](length);
+        uint256[] memory stackedTopUps = new uint256[](length);
+        uint256[] memory stackedRefunds = new uint256[](length);
+        uint256 uniqueCount = 0;
+
+        for (uint256 i = 0; i < length; ++i) {
+            ModifyLeg memory leg = legs[i];
+            address token = leg.tokenA;
+            if (token == _ETH) {
+                ethTopUp += leg.topUp;
+                ethRefund += leg.refund;
+
+                continue;
+            }
+
+            uint256 existing = _indexOfToken(stackedTokens, uniqueCount, token);
+            if (existing == uniqueCount) {
+                stackedTokens[uniqueCount] = token;
+                stackedTopUps[uniqueCount] = leg.topUp;
+                stackedRefunds[uniqueCount] = leg.refund;
+
+                ++uniqueCount;
+            } else {
+                stackedTopUps[existing] += leg.topUp;
+                stackedRefunds[existing] += leg.refund;
+            }
+        }
+
+        tokens = new address[](uniqueCount);
+        topUps = new uint256[](uniqueCount);
+        refunds = new uint256[](uniqueCount);
+        for (uint256 j = 0; j < uniqueCount; ++j) {
+            tokens[j] = stackedTokens[j];
+            topUps[j] = stackedTopUps[j];
+            refunds[j] = stackedRefunds[j];
+        }
     }
 
     /// @notice Cancels orders after aggregating ERC20 and ETH refunds to the maker

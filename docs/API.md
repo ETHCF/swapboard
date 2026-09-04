@@ -415,8 +415,8 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | Error | Selector | Description |
 |-------|----------|-------------|
 | `ZeroAddress()` | `0xd92e233d` | Token address is zero |
-| `ZeroAmount()` | `0x1f2a2005` | Amount is zero. On `modifyOrder`, also thrown when either remaining (`availableA` / `availableB`) is set to 0 — use `cancelOrder` / `cancelOrders` instead |
-| `NoChange()` | `0xa88ee577` | Modification would leave the order unchanged |
+| `ZeroAmount()` | `0x1f2a2005` | Amount is zero. On `modifyOrder` / `modifyOrders`, also thrown when either remaining (`availableA` / `availableB`) is set to 0 — use `cancelOrder` / `cancelOrders` instead. Empty `modifyOrders` also reverts |
+| `NoChange()` | `0xa88ee577` | Modification would leave the order unchanged (including any item in a `modifyOrders` batch) |
 | `SameToken()` | `0x201b580a` | tokenA and tokenB are identical |
 | `NotAContract(address)` | `0x8a8b41ec` | Address has no code |
 | `BalanceMismatch(uint256,uint256)` | `0x6e65ed84` | Inbound transfer mismatch (fee-on-transfer, mid-transfer rebase, or phantom token) |
@@ -424,7 +424,8 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `OrderNotActive(uint256)` | `0xd2c02610` | Order already filled/cancelled |
 | `NotMaker(uint256,address,address)` | `0x98cd7222` | Caller is not order maker |
 | `ETHAmountMismatch(uint256,uint256)` | `0x8230dc8f` | `msg.value` does not match the required ETH amount |
-| `OrderStateMismatch(uint256,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128)` | `0xe796ec17` | `modifyOrder` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` |
+| `OrderStateMismatch(uint256,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128)` | `0xe796ec17` | `modifyOrder` / `modifyOrders` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` |
+| `DuplicateOrderId(uint256)` | `0x54b9c511` | Same `orderId` appears more than once in a `cancelOrders` or `modifyOrders` batch |
 
 ## Methods
 
@@ -461,6 +462,28 @@ Behavior:
 - Emits `OrderModified(orderId, availableA, availableB)`.
 - **`ZeroAmount` blocks setting remaining to 0** — closing the order and reclaiming escrow requires `cancelOrder` / `cancelOrders`, not a zeroed modify.
 - **`NoChange`** when both remainings already match on-chain.
+
+### `modifyOrders`
+
+Maker-only batch of `modifyOrder`. Each entry carries its own snapshot and desired remainings.
+
+```solidity
+struct ModifyOrdersParams {
+    uint256 orderId;
+    OrderAmounts previousAmounts;
+    ModifyOrderParams updatedOrder;
+}
+
+function modifyOrders(ModifyOrdersParams[] calldata mods) external payable;
+```
+
+Behavior:
+
+- Same per-order rules as `modifyOrder` (race check, remainings-only, reset totals, `ZeroAmount` / `NoChange` / `OrderStateMismatch` / `NotMaker` / `OrderNotActive`).
+- Duplicate `orderId`s revert with `DuplicateOrderId`.
+- Empty `mods` reverts with `ZeroAmount`.
+- Per unique tokenA (and ETH), top-ups are **netted** against refunds: only the net delta is pulled or sent. Equal opposing flows cancel with no transfer. `msg.value` must equal the net ETH top-up (0 when flat or net refund).
+- Emits `OrderModified` once per successfully modified order (before settlement transfers).
 
 ### `setPartialFillAllowed`
 
@@ -499,6 +522,39 @@ async function modifyOrder(signer, orderId, availableA, availableB) {
 }
 ```
 
+### JavaScript: Modify Orders (batch)
+
+```javascript
+async function modifyOrders(signer, updates) {
+  // updates: [{ orderId, availableA, availableB }, ...]
+  const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+  const eth = await contract.getEth();
+
+  let ethNet = 0n;
+  const mods = [];
+  for (const u of updates) {
+    const order = await contract.getOrder(u.orderId);
+    mods.push({
+      orderId: u.orderId,
+      previousAmounts: {
+        amountA: order.amountA,
+        amountB: order.amountB,
+        availableA: order.availableA,
+        availableB: order.availableB
+      },
+      updatedOrder: { availableA: u.availableA, availableB: u.availableB }
+    });
+    if (order.tokenA === eth) {
+      ethNet += BigInt(u.availableA) - BigInt(order.availableA);
+    }
+  }
+
+  const value = ethNet > 0n ? ethNet : 0n;
+  const tx = await contract.modifyOrders(mods, { value });
+  await tx.wait();
+}
+```
+
 ### JavaScript: Set Partial Fill Allowed
 
 ```javascript
@@ -518,5 +574,5 @@ async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
 - Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
 - Self-fills are allowed (maker can fill own order).
 - No expiry. Orders remain active until filled or canceled.
-- To close an order or reclaim all escrow, call `cancelOrder` / `cancelOrders`. `modifyOrder` cannot set remaining to 0 (`ZeroAmount`).
+- To close an order or reclaim all escrow, call `cancelOrder` / `cancelOrders`. `modifyOrder` / `modifyOrders` cannot set remaining to 0 (`ZeroAmount`).
 - Contract has no admin functions. No pause. No upgrades.
