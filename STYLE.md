@@ -123,6 +123,7 @@ Keep separate `if`s when the error encodes different data (e.g. `NotAContract(to
 - Exception: escrow **pulls on create** may run before recording the order so a failed pull never leaves a live order.
 - Document that ETH outflows use `Address.sendValue` (forwards gas) and always run after effects.
 - Use **`unchecked` only with an adjacent justification** (comment or obvious impossibility of overflow): monotonic counters, loop indices bounded by `array.length`, and post-transfer balance deltas.
+- **Never call ERC20 `transfer` / `transferFrom` with amount 0** — some tokens revert. Skip zero amounts in aggregators and transfer helpers (`_pullExactToken`, `_sendAggregated`, maker payouts). `modifyOrders` netting must not transfer when top-up equals refund.
 
 ### Exact ETH accounting
 

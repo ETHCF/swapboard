@@ -388,6 +388,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         for (uint256 i = 0; i < length; ++i) {
             address token = tokens[i];
             uint256 amount = amounts[i];
+            if (amount == 0) {
+                continue;
+            }
             if (token == _ETH) {
                 ethAmount += amount;
 
@@ -717,8 +720,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         (address[] memory ethMakers, uint256[] memory ethAmounts, uint256 ethCount) =
             _aggregateEthByRecipient(makers, tokens, amounts);
         for (uint256 i = 0; i < ethCount; ++i) {
+            uint256 ethAmount = ethAmounts[i];
+            if (ethAmount == 0) {
+                continue;
+            }
             // Forward all gas so maker contracts can execute receive/fallback.
-            payable(ethMakers[i]).sendValue(ethAmounts[i]);
+            payable(ethMakers[i]).sendValue(ethAmount);
         }
 
         (
@@ -728,7 +735,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             uint256 uniqueCount
         ) = _aggregateRecipientTokenAmounts(makers, tokens, amounts);
         for (uint256 j = 0; j < uniqueCount; ++j) {
-            IERC20(uniqueTokens[j]).safeTransfer(recipients[j], uniqueAmounts[j]);
+            uint256 amount = uniqueAmounts[j];
+            if (amount == 0) {
+                continue;
+            }
+            IERC20(uniqueTokens[j]).safeTransfer(recipients[j], amount);
         }
     }
 
@@ -745,6 +756,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Sends aggregated ERC20 and optional ETH to one recipient
+    /// @dev Skips zero ERC20 amounts — some tokens revert on zero-value transfers. ETH already
+    ///      requires `ethAmount > 0`.
     /// @param tokens Unique ERC20 tokens
     /// @param amounts Aggregated amount per token
     /// @param ethAmount Native ETH to send (0 if none)
@@ -762,7 +775,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         uint256 length = tokens.length;
         for (uint256 i = 0; i < length; ++i) {
-            IERC20(tokens[i]).safeTransfer(recipient, amounts[i]);
+            uint256 amount = amounts[i];
+            if (amount == 0) {
+                continue;
+            }
+            IERC20(tokens[i]).safeTransfer(recipient, amount);
         }
     }
 
@@ -787,15 +804,19 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (tokens[i] != _ETH) {
                 continue;
             }
+            uint256 amount = amounts[i];
+            if (amount == 0) {
+                continue;
+            }
 
             uint256 existing = _indexOfToken(ethRecipients, ethCount, recipients[i]);
             if (existing == ethCount) {
                 ethRecipients[ethCount] = recipients[i];
-                ethAmounts[ethCount] = amounts[i];
+                ethAmounts[ethCount] = amount;
 
                 ++ethCount;
             } else {
-                ethAmounts[existing] += amounts[i];
+                ethAmounts[existing] += amount;
             }
         }
     }
@@ -830,7 +851,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         for (uint256 i = 0; i < length; ++i) {
             address token = tokens[i];
-            if (token == _ETH) {
+            uint256 amount = amounts[i];
+            if (token == _ETH || amount == 0) {
                 continue;
             }
 
@@ -839,11 +861,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (existing == uniqueCount) {
                 uniqueRecipients[uniqueCount] = recipients[i];
                 uniqueTokens[uniqueCount] = token;
-                uniqueAmounts[uniqueCount] = amounts[i];
+                uniqueAmounts[uniqueCount] = amount;
 
                 ++uniqueCount;
             } else {
-                uniqueAmounts[existing] += amounts[i];
+                uniqueAmounts[existing] += amount;
             }
         }
     }
@@ -1012,12 +1034,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             uint256 topUp = topUps[i];
             uint256 refund = refunds[i];
             if (topUp > refund) {
-                // Unchecked is safe: branch proves topUp > refund.
+                // Unchecked is safe: branch proves topUp > refund (and thus delta > 0).
                 unchecked {
                     _pullExactToken(tokens[i], topUp - refund);
                 }
             } else if (refund > topUp) {
-                // Unchecked is safe: branch proves refund > topUp.
+                // Unchecked is safe: branch proves refund > topUp (and thus delta > 0).
+                // Equal nets fall through with no transfer — some ERC20s revert on amount 0.
                 unchecked {
                     IERC20(tokens[i]).safeTransfer(msg.sender, refund - topUp);
                 }
@@ -1059,9 +1082,14 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         for (uint256 i = 0; i < length; ++i) {
             ModifyLeg memory leg = legs[i];
             address token = leg.tokenA;
+            uint256 topUp = leg.topUp;
+            uint256 refund = leg.refund;
+            if (topUp == 0 && refund == 0) {
+                continue;
+            }
             if (token == _ETH) {
-                ethTopUp += leg.topUp;
-                ethRefund += leg.refund;
+                ethTopUp += topUp;
+                ethRefund += refund;
 
                 continue;
             }
@@ -1069,13 +1097,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             uint256 existing = _indexOfToken(stackedTokens, uniqueCount, token);
             if (existing == uniqueCount) {
                 stackedTokens[uniqueCount] = token;
-                stackedTopUps[uniqueCount] = leg.topUp;
-                stackedRefunds[uniqueCount] = leg.refund;
+                stackedTopUps[uniqueCount] = topUp;
+                stackedRefunds[uniqueCount] = refund;
 
                 ++uniqueCount;
             } else {
-                stackedTopUps[existing] += leg.topUp;
-                stackedRefunds[existing] += leg.refund;
+                stackedTopUps[existing] += topUp;
+                stackedRefunds[existing] += refund;
             }
         }
 
@@ -1163,12 +1191,17 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer
     ///         rebase / phantom transfers
+    /// @dev Skips the transfer when `amount == 0` — some ERC20s revert on zero-value transfers.
     /// @param token ERC20 token to pull from the caller
     /// @param amount Expected amount received
     function _pullExactToken(
         address token,
         uint256 amount
     ) private {
+        if (amount == 0) {
+            return;
+        }
+
         uint256 balanceBefore = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         uint256 balanceAfter = IERC20(token).balanceOf(address(this));
