@@ -14,6 +14,12 @@ contract MockFOT is MockERC20 {
         return _feePercent;
     }
 
+    function setFeePercent(
+        uint256 feePercent
+    ) external {
+        _feePercent = feePercent;
+    }
+
     function transfer(
         address to,
         uint256 amount

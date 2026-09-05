@@ -75,14 +75,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function createOrder(
         CreateOrderParams calldata order
     ) external payable nonReentrant returns (uint256) {
-        _validateCreateOrder(order.tokenA, order.amountA, order.tokenB, order.amountB);
+        address tokenA = order.tokenA;
+        uint128 amountA = order.amountA;
+        _validateCreateOrder(tokenA, amountA, order.tokenB, order.amountB);
 
-        uint256 ethAmount = order.tokenA == _ETH ? uint256(order.amountA) : 0;
+        uint256 ethAmount = tokenA == _ETH ? uint256(amountA) : 0;
         if (msg.value != ethAmount) {
             revert ETHAmountMismatch(ethAmount, msg.value);
         }
-        if (order.tokenA != _ETH) {
-            _pullExactToken(order.tokenA, order.amountA);
+        if (tokenA != _ETH) {
+            _pullExactToken(tokenA, amountA);
         }
 
         return _storeOrder(order);
@@ -133,14 +135,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function cancelOrder(
         uint256 orderId
     ) external nonReentrant {
-        Order storage order = _requireActiveOrder(orderId);
-        address maker = order.maker;
-        if (msg.sender != maker) {
-            revert NotMaker(orderId, msg.sender, maker);
+        Order memory cached = _requireActiveOrder(orderId);
+        if (msg.sender != cached.maker) {
+            revert NotMaker(orderId, msg.sender, cached.maker);
         }
 
-        address tokenA = order.tokenA;
-        uint256 amountA = order.availableA;
+        address tokenA = cached.tokenA;
+        uint256 amountA = cached.availableA;
 
         delete _orders[orderId];
         emit OrderCanceled({orderId: orderId});
@@ -161,6 +162,134 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256[] calldata orderIds
     ) external nonReentrant {
         _cancelOrders(orderIds);
+    }
+
+    /// @notice Modifies an existing order's remaining liquidity
+    /// @dev Reverts if `previousAmounts` does not match on-chain amounts to prevent concurrent-modify races.
+    ///      Token addresses, maker, and `partialFillAllowed` are immutable here. Callers set desired
+    ///      remaining amounts; totals are reset to those remainings. TokenA escrow is refunded or
+    ///      topped-up for the availableA delta. `ZeroAmount` blocks remaining 0 — cancel instead.
+    ///      `NoChange` when both remainings already match on-chain.
+    /// @param orderId The unique identifier of the order to modify
+    /// @param previousAmounts Expected current amounts from the caller's snapshot (race protection)
+    /// @param updatedOrder Desired remaining amounts
+    function modifyOrder(
+        uint256 orderId,
+        OrderAmounts calldata previousAmounts,
+        ModifyOrderParams calldata updatedOrder
+    ) external payable nonReentrant {
+        Order storage order = _requireActiveOrder(orderId);
+        Order memory cached = order;
+
+        if (msg.sender != cached.maker) {
+            revert NotMaker(orderId, msg.sender, cached.maker);
+        }
+
+        if (
+            previousAmounts.amountA != cached.amountA || previousAmounts.amountB != cached.amountB
+                || previousAmounts.availableA != cached.availableA || previousAmounts.availableB != cached.availableB
+        ) {
+            revert OrderStateMismatch(
+                orderId,
+                previousAmounts.amountA,
+                previousAmounts.amountB,
+                previousAmounts.availableA,
+                previousAmounts.availableB,
+                cached.amountA,
+                cached.amountB,
+                cached.availableA,
+                cached.availableB
+            );
+        }
+
+        uint128 newAvailableA = updatedOrder.availableA;
+        uint128 newAvailableB = updatedOrder.availableB;
+        if (newAvailableA == 0 || newAvailableB == 0) {
+            revert ZeroAmount();
+        }
+        if (newAvailableA == cached.availableA && newAvailableB == cached.availableB) {
+            revert NoChange();
+        }
+
+        (uint256 ethTopUp, uint256 ethRefund) =
+            _adjustTokenAEscrow(cached.tokenA, cached.availableA, newAvailableA, cached.maker);
+
+        if (msg.value != ethTopUp) {
+            revert ETHAmountMismatch(ethTopUp, msg.value);
+        }
+
+        // Reset totals to the new remainings (filled history is not preserved in amount fields).
+        order.amountA = newAvailableA;
+        order.amountB = newAvailableB;
+        order.availableA = newAvailableA;
+        order.availableB = newAvailableB;
+
+        emit OrderModified(orderId, newAvailableA, newAvailableB);
+
+        if (ethRefund > 0) {
+            // Forward all gas so maker contracts can execute receive/fallback.
+            payable(cached.maker).sendValue(ethRefund);
+        }
+    }
+
+    /// @inheritdoc ISwapboard
+    function setPartialFillAllowed(
+        uint256 orderId,
+        bool partialFillAllowed
+    ) external nonReentrant {
+        Order storage order = _requireActiveOrder(orderId);
+        address maker = order.maker;
+        bool currentPartialFillAllowed = order.partialFillAllowed;
+
+        if (msg.sender != maker) {
+            revert NotMaker(orderId, msg.sender, maker);
+        }
+        if (partialFillAllowed == currentPartialFillAllowed) {
+            revert NoChange();
+        }
+
+        order.partialFillAllowed = partialFillAllowed;
+
+        emit OrderPartialFillUpdated(orderId, partialFillAllowed);
+    }
+
+    /// @notice Adjusts tokenA escrow when `availableA` changes due to an order modification
+    /// @dev ETH refund is returned instead of sent immediately so storage can be updated first (CEI).
+    /// @param tokenA The tokenA held in escrow (token addresses are immutable for the order's lifetime)
+    /// @param oldAvailableA Previous remaining `availableA`
+    /// @param newAvailableA Updated remaining `availableA`
+    /// @param maker Maker receiving any tokenA refund
+    /// @return ethTopUp ETH top-up amount required (0 when tokenA is ERC20 or no top-up needed)
+    /// @return ethRefund ETH refund amount owed to maker (0 when tokenA is ERC20 or no refund needed)
+    function _adjustTokenAEscrow(
+        address tokenA,
+        uint128 oldAvailableA,
+        uint128 newAvailableA,
+        address maker
+    ) private returns (uint256 ethTopUp, uint256 ethRefund) {
+        if (newAvailableA > oldAvailableA) {
+            // Unchecked is safe: branch proves newAvailableA > oldAvailableA.
+            uint256 delta;
+            unchecked {
+                delta = uint256(newAvailableA - oldAvailableA);
+            }
+            if (tokenA == _ETH) {
+                ethTopUp = delta;
+            } else {
+                _pullExactToken(tokenA, delta);
+            }
+        } else if (newAvailableA < oldAvailableA) {
+            // Unchecked is safe: branch proves oldAvailableA > newAvailableA.
+            uint256 refund;
+            unchecked {
+                refund = uint256(oldAvailableA - newAvailableA);
+            }
+            if (tokenA == _ETH) {
+                ethRefund = refund;
+            } else {
+                IERC20(tokenA).safeTransfer(maker, refund);
+            }
+        }
     }
 
     /// @inheritdoc ISwapboard
@@ -209,10 +338,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId
     ) private view returns (Order storage) {
         Order storage order = _orders[orderId];
-        if (order.maker == address(0)) {
+        (address maker, bool active) = (order.maker, order.active);
+        if (maker == address(0)) {
             revert OrderNotFound(orderId);
         }
-        if (!order.active) {
+        if (!active) {
             revert OrderNotActive(orderId);
         }
 
@@ -296,8 +426,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         tokens = new address[](length);
         amounts = new uint256[](length);
         for (uint256 i = 0; i < length; ++i) {
-            tokens[i] = orders[i].tokenA;
-            amounts[i] = orders[i].amountA;
+            CreateOrderParams calldata params = orders[i];
+            tokens[i] = params.tokenA;
+            amounts[i] = params.amountA;
         }
     }
 
@@ -391,26 +522,32 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             _nextOrderId = orderId + 1;
         }
 
+        bool partialFillAllowed = params.partialFillAllowed;
+        address tokenA = params.tokenA;
+        address tokenB = params.tokenB;
+        uint128 amountA = params.amountA;
+        uint128 amountB = params.amountB;
+
         _orders[orderId] = Order({
             maker: msg.sender,
             active: true,
-            partialFillAllowed: params.partialFillAllowed,
-            tokenA: params.tokenA,
-            tokenB: params.tokenB,
-            amountA: params.amountA,
-            amountB: params.amountB,
-            availableA: params.amountA,
-            availableB: params.amountB
+            partialFillAllowed: partialFillAllowed,
+            tokenA: tokenA,
+            tokenB: tokenB,
+            amountA: amountA,
+            amountB: amountB,
+            availableA: amountA,
+            availableB: amountB
         });
 
         emit OrderCreated({
             orderId: orderId,
             maker: msg.sender,
-            tokenA: params.tokenA,
-            amountA: params.amountA,
-            tokenB: params.tokenB,
-            amountB: params.amountB,
-            partialFillAllowed: params.partialFillAllowed
+            tokenA: tokenA,
+            amountA: amountA,
+            tokenB: tokenB,
+            amountB: amountB,
+            partialFillAllowed: partialFillAllowed
         });
 
         return orderId;
@@ -429,30 +566,41 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         for (uint256 i = 0; i < length; ++i) {
             CreateOrderParams calldata params = orders[i];
 
-            uint256 orderId = nextId + i;
+            // Unchecked is safe: wrapping `_nextOrderId` would require 2^256 orders;
+            // `i < length` and `_nextOrderId = nextId + length` below share that bound.
+            uint256 orderId;
+            unchecked {
+                orderId = nextId + i;
+            }
             orderIds[i] = orderId;
+
+            bool partialFillAllowed = params.partialFillAllowed;
+            address tokenA = params.tokenA;
+            address tokenB = params.tokenB;
+            uint128 amountA = params.amountA;
+            uint128 amountB = params.amountB;
 
             // forge-lint: disable-next-item(costly-loop)
             _orders[orderId] = Order({
                 maker: msg.sender,
                 active: true,
-                partialFillAllowed: params.partialFillAllowed,
-                tokenA: params.tokenA,
-                tokenB: params.tokenB,
-                amountA: params.amountA,
-                amountB: params.amountB,
-                availableA: params.amountA,
-                availableB: params.amountB
+                partialFillAllowed: partialFillAllowed,
+                tokenA: tokenA,
+                tokenB: tokenB,
+                amountA: amountA,
+                amountB: amountB,
+                availableA: amountA,
+                availableB: amountB
             });
 
             emit OrderCreated({
                 orderId: orderId,
                 maker: msg.sender,
-                tokenA: params.tokenA,
-                amountA: params.amountA,
-                tokenB: params.tokenB,
-                amountB: params.amountB,
-                partialFillAllowed: params.partialFillAllowed
+                tokenA: tokenA,
+                amountA: amountA,
+                tokenB: tokenB,
+                amountB: amountB,
+                partialFillAllowed: partialFillAllowed
             });
         }
 
@@ -480,23 +628,28 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountA
     ) private pure returns (address maker, address tokenA, address tokenB, uint128 amountBIn) {
         maker = order.maker;
-
+        tokenA = order.tokenA;
+        tokenB = order.tokenB;
+        bool partialFillAllowed = order.partialFillAllowed;
         uint128 availableA = order.availableA;
+        uint128 availableB = order.availableB;
+
         if (amountA > availableA) {
             revert FillAmountTooHigh(orderId, amountA, availableA);
         }
-        if (!order.partialFillAllowed && amountA != availableA) {
+        if (!partialFillAllowed && amountA != availableA) {
             revert PartialFillNotAllowed(orderId);
         }
 
-        tokenA = order.tokenA;
-        tokenB = order.tokenB;
-        uint128 availableB = order.availableB;
         if (amountA == availableA) {
             amountBIn = availableB;
         } else {
-            uint256 quotedB = (uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA);
-            // Product of two uint128 values always fits in uint256; ceil result is <= availableB.
+            // Unchecked is safe: else branch implies amountA < availableA so availableA >= 1;
+            // product of two uint128 values always fits in uint256; ceil result is <= availableB.
+            uint256 quotedB;
+            unchecked {
+                quotedB = (uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA);
+            }
             // forge-lint: disable-next-line(unsafe-typecast)
             amountBIn = uint128(quotedB);
         }
@@ -535,7 +688,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 minAmountB
     ) private returns (FillLeg memory) {
         Order storage order = _requireActiveOrder(orderId);
-        (address maker, address tokenA, address tokenB, uint128 amountBIn) = _quoteFill(order, orderId, amountA);
+        Order memory cached = order;
+        (address maker, address tokenA, address tokenB, uint128 amountBIn) = _quoteFill(cached, orderId, amountA);
 
         if (amountBIn < minAmountB) {
             revert FillAmountMismatch(orderId, amountBIn, minAmountB);
@@ -543,11 +697,15 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         // Unchecked is safe: _quoteFill ensures amountA <= availableA and
         // amountBIn <= availableB (exact remaining or ceiled proportion).
+        uint128 remainingA;
+        uint128 remainingB;
         unchecked {
-            order.availableA -= amountA;
-            order.availableB -= amountBIn;
+            remainingA = cached.availableA - amountA;
+            remainingB = cached.availableB - amountBIn;
         }
-        if (order.availableA == 0 || order.availableB == 0) {
+        order.availableA = remainingA;
+        order.availableB = remainingB;
+        if (remainingA == 0 || remainingB == 0) {
             order.active = false;
         }
 
@@ -830,8 +988,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         amounts = new uint256[](length);
         for (uint256 i = 0; i < length; ++i) {
             Order storage order = _orders[orderIds[i]];
-            tokens[i] = order.tokenA;
-            amounts[i] = order.availableA;
+            (address tokenA, uint128 availableA) = (order.tokenA, order.availableA);
+            tokens[i] = tokenA;
+            amounts[i] = availableA;
         }
     }
 

@@ -49,6 +49,30 @@ interface ISwapboard is ISemver {
         bool partialFillAllowed;
     }
 
+    /// @notice Arguments for modifying an existing order's remaining amounts
+    /// @dev Token addresses, maker, and `partialFillAllowed` cannot be changed here (use
+    ///      `setPartialFillAllowed` for the fill flag). Callers set the desired *remaining*
+    ///      liquidity; order totals (`amountA` / `amountB`) are reset to those remainings.
+    /// @param availableA Desired remaining tokenA in escrow
+    /// @param availableB Desired remaining tokenB required to complete the order
+    struct ModifyOrderParams {
+        uint128 availableA;
+        uint128 availableB;
+    }
+
+    /// @notice Expected on-chain amounts used for modify race protection
+    /// @dev Compared against the live order; only these four fields are checked.
+    /// @param amountA Expected `amountA`
+    /// @param amountB Expected `amountB`
+    /// @param availableA Expected `availableA`
+    /// @param availableB Expected `availableB`
+    struct OrderAmounts {
+        uint128 amountA;
+        uint128 amountB;
+        uint128 availableA;
+        uint128 availableB;
+    }
+
     /// @notice Arguments for filling a single OTC order
     /// @param orderId Unique identifier of the order to fill
     /// @param amountA Amount of tokenA to receive from the order
@@ -92,11 +116,31 @@ interface ISwapboard is ISemver {
     /// @param orderId Unique identifier for the cancelled order
     event OrderCanceled(uint256 indexed orderId);
 
+    // solhint-disable gas-indexed-events
+    /// @notice Emitted when an order's remaining amounts are modified by its maker
+    /// @param orderId Unique identifier for the modified order
+    /// @param availableA New remaining tokenA in escrow
+    /// @param availableB New remaining tokenB required
+    event OrderModified(uint256 indexed orderId, uint128 availableA, uint128 availableB);
+
+    /// @notice Emitted when an order's partial-fill setting is changed by its maker
+    /// @param orderId Unique identifier for the order
+    /// @param partialFillAllowed Whether the order may be filled in multiple parts
+    event OrderPartialFillUpdated(uint256 indexed orderId, bool partialFillAllowed);
+    // solhint-enable gas-indexed-events
+
     /// @notice Thrown when a zero address is provided for a token
     error ZeroAddress();
 
     /// @notice Thrown when a zero amount is provided
+    /// @dev On `modifyOrder`, also thrown when either remaining (`availableA` / `availableB`) is
+    ///      set to 0 — closing an order requires `cancelOrder` / `cancelOrders` instead.
     error ZeroAmount();
+
+    /// @notice Thrown when a modification would leave the order unchanged
+    /// @dev `modifyOrder` when both remainings match on-chain; `setPartialFillAllowed` when the flag
+    ///      already equals the requested value.
+    error NoChange();
 
     /// @notice Thrown when tokenA and tokenB are the same address
     error SameToken();
@@ -148,6 +192,30 @@ interface ISwapboard is ISemver {
     /// @param quoted The quoted payment amount for this fill
     /// @param minimum The minimum payment amount declared by the taker
     error FillAmountMismatch(uint256 orderId, uint128 quoted, uint128 minimum);
+
+    /// @notice Thrown when the provided previous amounts do not match the current on-chain order
+    /// @dev Only `amountA`, `amountB`, `availableA`, and `availableB` are compared; immutable fields
+    ///      (maker, tokenA, tokenB) are not checked.
+    /// @param orderId The order ID
+    /// @param expectedAmountA Expected `amountA` from the caller's snapshot
+    /// @param expectedAmountB Expected `amountB` from the caller's snapshot
+    /// @param expectedAvailableA Expected `availableA` from the caller's snapshot
+    /// @param expectedAvailableB Expected `availableB` from the caller's snapshot
+    /// @param actualAmountA Actual `amountA` currently stored on-chain
+    /// @param actualAmountB Actual `amountB` currently stored on-chain
+    /// @param actualAvailableA Actual `availableA` currently stored on-chain
+    /// @param actualAvailableB Actual `availableB` currently stored on-chain
+    error OrderStateMismatch(
+        uint256 orderId,
+        uint128 expectedAmountA,
+        uint128 expectedAmountB,
+        uint128 expectedAvailableA,
+        uint128 expectedAvailableB,
+        uint128 actualAmountA,
+        uint128 actualAmountB,
+        uint128 actualAvailableA,
+        uint128 actualAvailableB
+    );
 
     /// @notice Thrown when the same order ID appears more than once in a cancel batch
     /// @param orderId The duplicated order ID
@@ -221,6 +289,35 @@ interface ISwapboard is ISemver {
     /// @param orderIds Identifiers of the orders to cancel
     function cancelOrders(
         uint256[] calldata orderIds
+    ) external;
+
+    /// @notice Modifies an existing order's remaining liquidity
+    /// @dev Only callable by the order's maker.
+    ///      Reverts if `previousAmounts` does not match on-chain amounts (race protection).
+    ///      Callers set desired remaining `availableA` / `availableB`; totals are reset to those
+    ///      remainings (filled history is not preserved in `amountA` / `amountB`).
+    ///      Does not change `partialFillAllowed` — use `setPartialFillAllowed` for that.
+    ///      `ZeroAmount` blocks setting either remaining to 0 — use `cancelOrder` / `cancelOrders`
+    ///      to close and reclaim escrow instead.
+    ///      `NoChange` when both remainings already match on-chain.
+    ///      Token addresses and maker are immutable. Escrow is refunded or topped-up for tokenA.
+    /// @param orderId The order ID
+    /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
+    /// @param updatedOrder Desired remaining amounts
+    function modifyOrder(
+        uint256 orderId,
+        OrderAmounts calldata previousAmounts,
+        ModifyOrderParams calldata updatedOrder
+    ) external payable;
+
+    /// @notice Sets whether an active order may be filled in multiple parts
+    /// @dev Only callable by the order's maker. Does not change amounts or escrow.
+    ///      Reverts with `NoChange` when the flag already equals `partialFillAllowed`.
+    /// @param orderId The order ID
+    /// @param partialFillAllowed Whether the order may be filled in multiple parts
+    function setPartialFillAllowed(
+        uint256 orderId,
+        bool partialFillAllowed
     ) external;
 
     /// @notice Canonical placeholder address representing native ETH
