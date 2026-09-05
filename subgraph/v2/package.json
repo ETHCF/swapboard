@@ -1,0 +1,29 @@
+{
+  "name": "swapboard-subgraph-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "The Graph subgraph for Swapboard v2 contract indexing",
+  "author": "Zak Cole <zak@numbergroup.xyz> (https://numbergroup.xyz)",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "codegen": "graph codegen",
+    "build": "graph codegen && graph build",
+    "test": "graph codegen && graph test -d",
+    "test:local": "graph codegen && graph test",
+    "deploy": "pnpm build && goldsky subgraph deploy swapboard-v2/2.0.0 --path .",
+    "create-local": "graph create --node http://localhost:8020/ swapboard-v2",
+    "remove-local": "graph remove --node http://localhost:8020/ swapboard-v2",
+    "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 swapboard-v2"
+  },
+  "dependencies": {
+    "@graphprotocol/graph-cli": "0.71.0",
+    "@graphprotocol/graph-ts": "0.32.0"
+  },
+  "devDependencies": {
+    "assemblyscript": "0.19.10",
+    "matchstick-as": "0.6.0"
+  }
+}

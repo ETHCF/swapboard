@@ -1,0 +1,38 @@
+specVersion: 0.0.5
+description: Swapboard v2 — trustless OTC bulletin board for ERC20 and native ETH swaps
+repository: https://github.com/ETHCF/swapboard
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: Swapboard
+    network: mainnet
+    source:
+      # Placeholder: deploy.sh rewrites address and startBlock after deployment.
+      address: "0x0000000000000000000000000000000000000000"
+      abi: Swapboard
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Order
+        - Fill
+        - Token
+        - Pair
+        - Account
+        - GlobalStats
+      abis:
+        - name: Swapboard
+          file: ./abis/Swapboard.json
+        - name: ERC20
+          file: ./abis/ERC20.json
+      eventHandlers:
+        - event: OrderCreated(indexed uint256,indexed address,address,uint128,address,uint128,bool)
+          handler: handleOrderCreated
+        - event: OrderFilled(indexed uint256,indexed address,uint128,uint128)
+          handler: handleOrderFilled
+        - event: OrderCanceled(indexed uint256)
+          handler: handleOrderCanceled
+      file: ./src/mapping.ts

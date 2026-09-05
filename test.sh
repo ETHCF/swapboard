@@ -12,6 +12,9 @@ show_help() {
   echo "  --fast      Run lint + contract + frontend unit tests only (no Docker)"
   echo "  --help      Show this help"
   echo ""
+  echo "Environment:"
+  echo "  SUBGRAPH    Subgraph version to test: v1 or v2 (default: v2)"
+  echo ""
   echo "Default: Lint contracts, then run contract, subgraph, frontend unit, and frontend e2e tests"
 }
 
@@ -30,9 +33,9 @@ run_contract_tests() {
 }
 
 run_subgraph_tests() {
-  echo "2. Subgraph Tests (Matchstick)"
+  echo "2. Subgraph Tests (Matchstick, ${SUBGRAPH:-v2})"
   echo "-----------------------------------------"
-  cd "$ROOT_DIR/subgraph"
+  cd "$ROOT_DIR/subgraph/${SUBGRAPH:-v2}"
   pnpm install --silent
   pnpm build
   if docker info > /dev/null 2>&1; then

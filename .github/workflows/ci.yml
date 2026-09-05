@@ -51,8 +51,12 @@ jobs:
           flags: contracts
 
   subgraph:
-    name: Subgraph Tests
+    name: Subgraph Tests (${{ matrix.version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [v1, v2]
     steps:
       - uses: actions/checkout@v7
 
@@ -74,24 +78,24 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-subgraph-${{ hashFiles('subgraph/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-subgraph-${{ matrix.version }}-${{ hashFiles(format('subgraph/{0}/pnpm-lock.yaml', matrix.version)) }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-subgraph-
+            ${{ runner.os }}-pnpm-subgraph-${{ matrix.version }}-
 
       - name: Install dependencies
-        working-directory: subgraph
+        working-directory: subgraph/${{ matrix.version }}
         run: pnpm install
 
       - name: Generate types
-        working-directory: subgraph
+        working-directory: subgraph/${{ matrix.version }}
         run: pnpm codegen
 
       - name: Build subgraph
-        working-directory: subgraph
+        working-directory: subgraph/${{ matrix.version }}
         run: pnpm build
 
       - name: Run tests
-        working-directory: subgraph
+        working-directory: subgraph/${{ matrix.version }}
         run: pnpm test
 
   frontend:

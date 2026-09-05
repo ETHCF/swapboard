@@ -5,8 +5,10 @@ node_modules/
 # Build outputs
 contracts/out/
 contracts/cache/
-subgraph/build/
-subgraph/generated/
+subgraph/*/build/
+subgraph/*/generated/
+subgraph/*/tests/.bin/
+subgraph/*/subgraph.e2e.yaml
 dist/
 
 # Coverage

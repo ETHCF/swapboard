@@ -5,6 +5,10 @@
 CONTRACTS := contracts
 FORGE := cd $(CONTRACTS) && forge
 
+# Subgraph version built/tested/deployed by default. Override with SUBGRAPH=v1.
+SUBGRAPH ?= v2
+SUBGRAPH_DIR := subgraph/$(SUBGRAPH)
+
 # Host port for local Anvil (e2e Docker maps 18545:8545; avoids clashes with RPC tunnels on 8545)
 ANVIL_RPC_URL ?= http://localhost:18545
 ANVIL_PORT ?= 18545
@@ -14,13 +18,14 @@ all: build test
 # Install dependencies
 install:
 	cd $(CONTRACTS) && forge install
-	cd subgraph && pnpm install
+	cd subgraph/v1 && pnpm install
+	cd subgraph/v2 && pnpm install
 	cd e2e && pnpm install
 	cd frontend && pnpm install
 
 # Build all
 build: lint build-contracts
-	cd subgraph && pnpm build
+	cd $(SUBGRAPH_DIR) && pnpm build
 
 # Build contracts only
 build-contracts:
@@ -29,7 +34,7 @@ build-contracts:
 # Run unit/integration tests (no full Docker e2e stack)
 test:
 	$(FORGE) test -vvv
-	cd subgraph && pnpm test
+	cd $(SUBGRAPH_DIR) && pnpm test
 
 # Run contract tests only
 test-contracts:
@@ -64,7 +69,7 @@ lint:
 # Clean build artifacts
 clean:
 	$(FORGE) clean
-	rm -rf subgraph/build subgraph/generated
+	rm -rf subgraph/*/build subgraph/*/generated
 	rm -rf e2e/node_modules/.cache
 
 # Run local Anvil node (same host port as e2e)
@@ -100,7 +105,7 @@ help:
 	@echo "  install         - Install all dependencies"
 	@echo "  build           - Lint, then build contracts and subgraph"
 	@echo "  build-contracts - Build contracts only"
-	@echo "  test            - Run contract + subgraph tests"
+	@echo "  test            - Run contract + subgraph tests (SUBGRAPH=v1|v2, default v2)"
 	@echo "  test-contracts  - Run contract tests only"
 	@echo "  test-e2e        - Run full Docker e2e stack (setup + test + teardown)"
 	@echo "  coverage        - Run contract tests with coverage"
