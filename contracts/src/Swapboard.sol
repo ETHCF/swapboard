@@ -146,9 +146,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId
     ) external nonReentrant {
         Order memory cached = _requireActiveOrder(orderId);
-        if (msg.sender != cached.maker) {
-            revert NotMaker(orderId, msg.sender, cached.maker);
-        }
+        _requireMaker(orderId, cached.maker);
 
         address tokenA = cached.tokenA;
         uint256 amountA = cached.availableA;
@@ -209,9 +207,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address maker = order.maker;
         bool currentPartialFillAllowed = order.partialFillAllowed;
 
-        if (msg.sender != maker) {
-            revert NotMaker(orderId, msg.sender, maker);
-        }
+        _requireMaker(orderId, maker);
         if (partialFillAllowed == currentPartialFillAllowed) {
             revert NoChange();
         }
@@ -276,6 +272,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         return order;
+    }
+
+    /// @notice Reverts unless `msg.sender` is the order's maker
+    /// @param orderId Order being authorized
+    /// @param maker Expected maker address
+    function _requireMaker(
+        uint256 orderId,
+        address maker
+    ) private view {
+        if (msg.sender != maker) {
+            revert NotMaker(orderId, msg.sender, maker);
+        }
     }
 
     /// @notice Validates createOrder arguments (ETH is checked after deposit aggregation)
@@ -913,9 +921,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         Order storage order = _requireActiveOrder(orderId);
         Order memory cached = order;
 
-        if (msg.sender != cached.maker) {
-            revert NotMaker(orderId, msg.sender, cached.maker);
-        }
+        _requireMaker(orderId, cached.maker);
 
         if (
             previousAmounts.amountA != cached.amountA || previousAmounts.amountB != cached.amountB
@@ -1118,10 +1124,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             }
 
             Order storage order = _requireActiveOrder(orderId);
-            address maker = order.maker;
-            if (msg.sender != maker) {
-                revert NotMaker(orderId, msg.sender, maker);
-            }
+            _requireMaker(orderId, order.maker);
         }
     }
 
