@@ -5338,10 +5338,8 @@ contract SwapboardTest is Test {
     /// @notice Tests ETH top-up and refund net so msg.value is only the surplus
     function test_modifyOrders_netsEth_topUpDominates() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         // +0.75 ETH on id0, -0.25 ETH on id1 => msg.value 0.5, no ETH refund send
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
@@ -5362,10 +5360,8 @@ contract SwapboardTest is Test {
     /// @notice Tests equal ETH top-up and refund cancel with msg.value 0 and no send
     function test_modifyOrders_netsEth_cancelsCompletely() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         // +0.5 ETH on id0, -0.5 ETH on id1 => msg.value 0, no ETH movement
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
@@ -5386,10 +5382,8 @@ contract SwapboardTest is Test {
     /// @notice Tests netted ETH path reverts when msg.value is the gross top-up instead of the net
     function test_modifyOrders_netsEth_revert_msgValueIsGrossTopUp() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.75 ether, AMOUNT_B);
@@ -5684,10 +5678,8 @@ contract SwapboardTest is Test {
     /// @notice Tests ETH refund dominates across two ETH orders
     function test_modifyOrders_netsEth_refundDominates() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: 2 ether}(_order(_eth, 2 ether, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: 2 ether}(_order(_eth, 2 ether, address(_tokenB), AMOUNT_B));
 
         // +0.2 ETH, -1.0 ETH => net refund 0.8, msg.value 0
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
@@ -5708,12 +5700,9 @@ contract SwapboardTest is Test {
     /// @notice Tests three ETH legs net to a single msg.value top-up
     function test_modifyOrders_netsEth_threeOrders_topUpDominates() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id2 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id2 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         // +0.5, +0.3, -0.4 => net pull 0.4
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
@@ -5736,12 +5725,9 @@ contract SwapboardTest is Test {
     /// @notice Tests three ETH legs net to a single ETH refund
     function test_modifyOrders_netsEth_threeOrders_refundDominates() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id2 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id2 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         // +0.1, -0.4, -0.2 => net refund 0.5
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
@@ -5768,10 +5754,8 @@ contract SwapboardTest is Test {
 
         uint256 erc20Small = _board.createOrder(_order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B));
         uint256 erc20Large = _board.createOrder(_order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B));
-        uint256 ethSmall =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 ethLarge =
-            _board.createOrder{value: 2 ether}(_order(_eth, 2 ether, address(_tokenB), AMOUNT_B));
+        uint256 ethSmall = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 ethLarge = _board.createOrder{value: 2 ether}(_order(_eth, 2 ether, address(_tokenB), AMOUNT_B));
 
         // ERC20: +25 / -10 => net pull 15
         // ETH:   +0.25 / -1.0 => net refund 0.75, msg.value 0
@@ -5806,10 +5790,8 @@ contract SwapboardTest is Test {
 
         uint256 erc20Small = _board.createOrder(_order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B));
         uint256 erc20Large = _board.createOrder(_order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B));
-        uint256 eth0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 eth1 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 eth0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 eth1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         // ERC20: +5 / -20 => net refund 15
         // ETH:   +0.6 / -0.1 => net pull 0.5
@@ -5843,36 +5825,27 @@ contract SwapboardTest is Test {
         uint128 new0,
         uint128 new1
     ) public {
+        // casting to 'uint128' is safe because bound upper limits fit in uint128
+        // forge-lint: disable-next-line(unsafe-typecast)
         amount0 = uint128(bound(amount0, 1 ether, 80 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
         amount1 = uint128(bound(amount1, 1 ether, 80 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
         new0 = uint128(bound(new0, 1, 120 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
         new1 = uint128(bound(new1, 1, 120 ether));
         vm.assume(new0 != amount0 && new1 != amount1);
 
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
         orders[0] = _order(address(_tokenA), amount0, address(_tokenB), AMOUNT_B);
         orders[1] = _order(address(_tokenA), amount1, address(_tokenB), AMOUNT_B);
-
-        // Ensure maker can fund any net top-up.
         _tokenA.mint(_maker, uint256(new0) + uint256(new1));
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), type(uint256).max);
         uint256[] memory ids = _board.createOrders(orders);
 
-        uint256 topUp;
-        uint256 refund;
-        if (new0 > amount0) {
-            topUp += uint256(new0) - uint256(amount0);
-        } else {
-            refund += uint256(amount0) - uint256(new0);
-        }
-        if (new1 > amount1) {
-            topUp += uint256(new1) - uint256(amount1);
-        } else {
-            refund += uint256(amount1) - uint256(new1);
-        }
-
+        (uint256 topUp, uint256 refund) = _netAvailableADeltas(amount0, new0, amount1, new1);
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), new0, AMOUNT_B);
         mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), new1, AMOUNT_B);
@@ -5885,7 +5858,75 @@ contract SwapboardTest is Test {
 
         assertEq(_board.getOrder(ids[0]).availableA, new0);
         assertEq(_board.getOrder(ids[1]).availableA, new1);
+        _assertNettedErc20Balances(topUp, refund, pullsBefore, makerBefore, boardBefore);
+    }
 
+    /// @notice Property: two ETH modifies settle only the net availableA delta once
+    function testFuzz_modifyOrders_netsEth(
+        uint128 amount0,
+        uint128 amount1,
+        uint128 new0,
+        uint128 new1
+    ) public {
+        // casting to 'uint128' is safe because bound upper limits fit in uint128
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amount0 = uint128(bound(amount0, 0.1 ether, 5 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amount1 = uint128(bound(amount1, 0.1 ether, 5 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        new0 = uint128(bound(new0, 0.01 ether, 8 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        new1 = uint128(bound(new1, 0.01 ether, 8 ether));
+        vm.assume(new0 != amount0 && new1 != amount1);
+
+        vm.deal(_maker, 50 ether);
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: amount0}(_order(_eth, amount0, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: amount1}(_order(_eth, amount1, address(_tokenB), AMOUNT_B));
+
+        (uint256 topUp, uint256 refund) = _netAvailableADeltas(amount0, new0, amount1, new1);
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), new0, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), new1, AMOUNT_B);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+        uint256 value = topUp > refund ? topUp - refund : 0;
+        _board.modifyOrders{value: value}(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(id0).availableA, new0);
+        assertEq(_board.getOrder(id1).availableA, new1);
+        _assertNettedEthBalances(topUp, refund, makerBefore, boardBefore);
+    }
+
+    /// @notice Computes gross top-up and refund for two availableA changes
+    function _netAvailableADeltas(
+        uint128 amount0,
+        uint128 new0,
+        uint128 amount1,
+        uint128 new1
+    ) private pure returns (uint256 topUp, uint256 refund) {
+        if (new0 > amount0) {
+            topUp += uint256(new0) - uint256(amount0);
+        } else {
+            refund += uint256(amount0) - uint256(new0);
+        }
+        if (new1 > amount1) {
+            topUp += uint256(new1) - uint256(amount1);
+        } else {
+            refund += uint256(amount1) - uint256(new1);
+        }
+    }
+
+    /// @notice Asserts ERC20 maker/board balances match a netted modify settlement
+    function _assertNettedErc20Balances(
+        uint256 topUp,
+        uint256 refund,
+        uint256 pullsBefore,
+        uint256 makerBefore,
+        uint256 boardBefore
+    ) private view {
         if (topUp > refund) {
             uint256 net = topUp - refund;
             assertEq(_tf(_tokenA), pullsBefore + 1);
@@ -5903,50 +5944,13 @@ contract SwapboardTest is Test {
         }
     }
 
-    /// @notice Property: two ETH modifies settle only the net availableA delta once
-    function testFuzz_modifyOrders_netsEth(
-        uint128 amount0,
-        uint128 amount1,
-        uint128 new0,
-        uint128 new1
-    ) public {
-        amount0 = uint128(bound(amount0, 0.1 ether, 5 ether));
-        amount1 = uint128(bound(amount1, 0.1 ether, 5 ether));
-        new0 = uint128(bound(new0, 0.01 ether, 8 ether));
-        new1 = uint128(bound(new1, 0.01 ether, 8 ether));
-        vm.assume(new0 != amount0 && new1 != amount1);
-
-        vm.deal(_maker, 50 ether);
-        vm.startPrank(_maker);
-        uint256 id0 = _board.createOrder{value: amount0}(_order(_eth, amount0, address(_tokenB), AMOUNT_B));
-        uint256 id1 = _board.createOrder{value: amount1}(_order(_eth, amount1, address(_tokenB), AMOUNT_B));
-
-        uint256 topUp;
-        uint256 refund;
-        if (new0 > amount0) {
-            topUp += uint256(new0) - uint256(amount0);
-        } else {
-            refund += uint256(amount0) - uint256(new0);
-        }
-        if (new1 > amount1) {
-            topUp += uint256(new1) - uint256(amount1);
-        } else {
-            refund += uint256(amount1) - uint256(new1);
-        }
-
-        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
-        mods[0] = _modItem(id0, _board.getOrder(id0), new0, AMOUNT_B);
-        mods[1] = _modItem(id1, _board.getOrder(id1), new1, AMOUNT_B);
-
-        uint256 makerBefore = _maker.balance;
-        uint256 boardBefore = address(_board).balance;
-        uint256 value = topUp > refund ? topUp - refund : 0;
-        _board.modifyOrders{value: value}(mods);
-        vm.stopPrank();
-
-        assertEq(_board.getOrder(id0).availableA, new0);
-        assertEq(_board.getOrder(id1).availableA, new1);
-
+    /// @notice Asserts ETH maker/board balances match a netted modify settlement
+    function _assertNettedEthBalances(
+        uint256 topUp,
+        uint256 refund,
+        uint256 makerBefore,
+        uint256 boardBefore
+    ) private view {
         if (topUp > refund) {
             uint256 net = topUp - refund;
             assertEq(makerBefore - _maker.balance, net);
@@ -5966,8 +5970,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), type(uint256).max);
         uint256 erc20Id = _board.createOrder(_order(address(_tokenA), 50 ether, address(_tokenB), AMOUNT_B));
-        uint256 ethId =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 ethId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = _modItem(erc20Id, _board.getOrder(erc20Id), 20 ether, AMOUNT_B);
@@ -5989,10 +5992,8 @@ contract SwapboardTest is Test {
     /// @notice Tests modifyOrders aggregates ETH top-ups into one msg.value check
     function test_modifyOrders_allEth_topsUp() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.25 ether, AMOUNT_B);
@@ -6011,10 +6012,8 @@ contract SwapboardTest is Test {
     /// @notice Tests modifyOrders aggregates ETH refunds into one send
     function test_modifyOrders_allEth_refunds() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = _modItem(id0, _board.getOrder(id0), 0.4 ether, AMOUNT_B);
@@ -6038,10 +6037,8 @@ contract SwapboardTest is Test {
     /// @notice Tests modifyOrders reverts when msg.value is too low for aggregated ETH top-ups
     function test_modifyOrders_revert_ethMismatch_tooLow() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.5 ether, AMOUNT_B);
@@ -6224,10 +6221,8 @@ contract SwapboardTest is Test {
         vm.deal(address(rejecter), 10 ether);
 
         vm.startPrank(address(rejecter));
-        uint256 id0 =
-            _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = _modItem(id0, _board.getOrder(id0), 0.5 ether, AMOUNT_B);
@@ -6518,10 +6513,8 @@ contract SwapboardTest is Test {
     /// @notice Tests fully-netted ETH batch reverts when msg.value is non-zero
     function test_modifyOrders_netsEth_cancelsCompletely_revert_accidentalEth() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.5 ether, AMOUNT_B);
@@ -6538,10 +6531,8 @@ contract SwapboardTest is Test {
     /// @notice Tests ETH refund-dominates path reverts when msg.value is non-zero
     function test_modifyOrders_netsEth_refundDominates_revert_accidentalEth() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: 2 ether}(_order(_eth, 2 ether, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: 2 ether}(_order(_eth, 2 ether, address(_tokenB), AMOUNT_B));
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.2 ether, AMOUNT_B);
@@ -6558,12 +6549,9 @@ contract SwapboardTest is Test {
     /// @notice Tests three ETH legs whose top-ups and refunds cancel exactly
     function test_modifyOrders_netsEth_threeOrders_cancelsCompletely() public {
         vm.startPrank(_maker);
-        uint256 id0 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id1 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 id2 =
-            _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id2 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
         // +0.4, +0.2, -0.6 => cancel
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
@@ -6721,13 +6709,12 @@ contract SwapboardTest is Test {
 
         vm.startPrank(_maker);
         vm.expectRevert(MockRevertOnZeroERC20.ZeroAmountTransfer.selector);
-        token.transfer(_taker, 0);
+        assertTrue(token.transfer(_taker, 0));
 
-        token.approve(address(this), type(uint256).max);
-        vm.stopPrank();
-
+        token.approve(_maker, type(uint256).max);
         vm.expectRevert(MockRevertOnZeroERC20.ZeroAmountTransfer.selector);
-        token.transferFrom(_maker, _taker, 0);
+        assertTrue(token.transferFrom(msg.sender, _taker, 0));
+        vm.stopPrank();
     }
 
     /// @notice Tests exact top-up/refund cancel with a token that reverts on zero transfers

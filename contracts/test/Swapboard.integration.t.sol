@@ -787,7 +787,45 @@ contract SwapboardIntegrationTest is Test {
         uint256 daiSmall = _board.createOrder(_order(address(_dai), 100 ether, address(_usdc), 100e6));
         uint256 daiLarge = _board.createOrder(_order(address(_dai), 400 ether, address(_usdc), 400e6));
 
-        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](4);
+        ISwapboard.ModifyOrdersParams[] memory mods =
+            _independentTokenModifyParams(wethSmall, wethLarge, daiSmall, daiLarge);
+
+        uint256 aliceWethBefore = _weth.balanceOf(_alice);
+        uint256 aliceDaiBefore = _dai.balanceOf(_alice);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(aliceWethBefore - _weth.balanceOf(_alice), 10 ether);
+        assertEq(_dai.balanceOf(_alice) - aliceDaiBefore, 150 ether);
+        assertEq(_weth.balanceOf(address(_board)), 60 ether);
+        assertEq(_dai.balanceOf(address(_board)), 350 ether);
+
+        vm.startPrank(_charlie);
+        _usdc.approve(address(_board), 530_000e6);
+        _fillOrder(wethSmall, 30 ether);
+        _fillOrder(wethLarge, 30 ether);
+        _fillOrder(daiSmall, 150 ether);
+        _fillOrder(daiLarge, 200 ether);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(wethSmall));
+        assertFalse(_board.canFill(wethLarge));
+        assertFalse(_board.canFill(daiSmall));
+        assertFalse(_board.canFill(daiLarge));
+        assertEq(_weth.balanceOf(address(_board)), 0);
+        assertEq(_dai.balanceOf(address(_board)), 0);
+        assertEq(_weth.balanceOf(_charlie), 60 ether);
+        assertEq(_dai.balanceOf(_charlie), 350 ether);
+    }
+
+    /// @notice Builds the WETH/DAI netting batch used by the independent-token integration test
+    function _independentTokenModifyParams(
+        uint256 wethSmall,
+        uint256 wethLarge,
+        uint256 daiSmall,
+        uint256 daiLarge
+    ) private pure returns (ISwapboard.ModifyOrdersParams[] memory mods) {
+        mods = new ISwapboard.ModifyOrdersParams[](4);
         // WETH: +20 / -10 => net pull 10
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: wethSmall,
@@ -818,33 +856,6 @@ contract SwapboardIntegrationTest is Test {
             }),
             updatedOrder: ISwapboard.ModifyOrderParams({availableA: 200 ether, availableB: 200e6})
         });
-
-        uint256 aliceWethBefore = _weth.balanceOf(_alice);
-        uint256 aliceDaiBefore = _dai.balanceOf(_alice);
-        _board.modifyOrders(mods);
-        vm.stopPrank();
-
-        assertEq(aliceWethBefore - _weth.balanceOf(_alice), 10 ether);
-        assertEq(_dai.balanceOf(_alice) - aliceDaiBefore, 150 ether);
-        assertEq(_weth.balanceOf(address(_board)), 60 ether);
-        assertEq(_dai.balanceOf(address(_board)), 350 ether);
-
-        vm.startPrank(_charlie);
-        _usdc.approve(address(_board), 530_000e6);
-        _fillOrder(wethSmall, 30 ether);
-        _fillOrder(wethLarge, 30 ether);
-        _fillOrder(daiSmall, 150 ether);
-        _fillOrder(daiLarge, 200 ether);
-        vm.stopPrank();
-
-        assertFalse(_board.canFill(wethSmall));
-        assertFalse(_board.canFill(wethLarge));
-        assertFalse(_board.canFill(daiSmall));
-        assertFalse(_board.canFill(daiLarge));
-        assertEq(_weth.balanceOf(address(_board)), 0);
-        assertEq(_dai.balanceOf(address(_board)), 0);
-        assertEq(_weth.balanceOf(_charlie), 60 ether);
-        assertEq(_dai.balanceOf(_charlie), 350 ether);
     }
 
     function _fillOrder(

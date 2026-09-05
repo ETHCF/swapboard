@@ -643,6 +643,14 @@ contract SwapboardHandler is Test {
         _trackModifyOrderGhosts(order, orderId, newA, newB);
     }
 
+    struct BoundModifyAmounts {
+        bool ok;
+        uint128 newA1;
+        uint128 newB1;
+        uint128 newA2;
+        uint128 newB2;
+    }
+
     /// @notice Modifies two same-tokenA ERC20 orders owned by the actor in one batch
     function modifyOrders(
         uint256 actorSeed,
@@ -653,94 +661,30 @@ contract SwapboardHandler is Test {
         uint256 newASeed2,
         uint256 newBSeed2
     ) external useActor(actorSeed) {
-        uint256 nextId = _board.getNextOrderId();
-        if (nextId < 2) {
+        (bool ok, uint256 id1, uint256 id2, ISwapboard.Order memory order1, ISwapboard.Order memory order2) =
+            _pickTwoOwnedOrders(orderIdSeed1, orderIdSeed2);
+        if (!ok || order1.tokenA != order2.tokenA || order1.tokenA == _ETH) {
             return;
         }
 
-        uint256 id1 = bound(orderIdSeed1, 0, nextId - 1);
-        uint256 id2 = bound(orderIdSeed2, 0, nextId - 1);
-        if (id1 == id2) {
+        BoundModifyAmounts memory amounts =
+            _boundModifyAmounts(order1, order2, newASeed1, newBSeed1, newASeed2, newBSeed2, 200 ether, 200 ether);
+        if (!amounts.ok) {
             return;
         }
 
-        ISwapboard.Order memory order1 = _board.getOrder(id1);
-        ISwapboard.Order memory order2 = _board.getOrder(id2);
-        if (!order1.active || !order2.active) {
-            return;
-        }
-        if (order1.maker != _currentActor || order2.maker != _currentActor) {
-            return;
-        }
-        if (order1.tokenA != order2.tokenA || order1.tokenA == _ETH) {
-            return;
-        }
-
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 newA1 = uint128(bound(newASeed1, 1, 200 ether));
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 newB1 = uint128(bound(newBSeed1, 1, 200 ether));
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 newA2 = uint128(bound(newASeed2, 1, 200 ether));
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 newB2 = uint128(bound(newBSeed2, 1, 200 ether));
-        if (
-            (newA1 == order1.availableA && newB1 == order1.availableB)
-                || (newA2 == order2.availableA && newB2 == order2.availableB)
-        ) {
-            return;
-        }
-
-        (bool funded1,) = _modifyOrderTopUp(order1, newA1);
-        (bool funded2,) = _modifyOrderTopUp(order2, newA2);
+        (bool funded1,) = _modifyOrderTopUp(order1, amounts.newA1);
+        (bool funded2,) = _modifyOrderTopUp(order2, amounts.newA2);
         if (!funded1 || !funded2) {
             return;
         }
 
-        uint256 totalTopUp = 0;
-        uint256 totalRefund = 0;
-        if (newA1 > order1.availableA) {
-            totalTopUp += uint256(newA1) - uint256(order1.availableA);
-        } else if (newA1 < order1.availableA) {
-            totalRefund += uint256(order1.availableA) - uint256(newA1);
-        }
-        if (newA2 > order2.availableA) {
-            totalTopUp += uint256(newA2) - uint256(order2.availableA);
-        } else if (newA2 < order2.availableA) {
-            totalRefund += uint256(order2.availableA) - uint256(newA2);
-        }
-        uint256 netPull = totalTopUp > totalRefund ? totalTopUp - totalRefund : 0;
+        uint256 netPull = _netModifyPull(order1.availableA, amounts.newA1, order2.availableA, amounts.newA2);
         if (order1.tokenA == address(_tokenA) && _tokenA.balanceOf(_currentActor) < netPull) {
             return;
         }
 
-        ++_callsModifyOrders;
-
-        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
-        mods[0] = ISwapboard.ModifyOrdersParams({
-            orderId: id1,
-            previousAmounts: ISwapboard.OrderAmounts({
-                amountA: order1.amountA,
-                amountB: order1.amountB,
-                availableA: order1.availableA,
-                availableB: order1.availableB
-            }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: newA1, availableB: newB1})
-        });
-        mods[1] = ISwapboard.ModifyOrdersParams({
-            orderId: id2,
-            previousAmounts: ISwapboard.OrderAmounts({
-                amountA: order2.amountA,
-                amountB: order2.amountB,
-                availableA: order2.availableA,
-                availableB: order2.availableB
-            }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: newA2, availableB: newB2})
-        });
-
-        _board.modifyOrders(mods);
-        _trackModifyOrderGhosts(order1, id1, newA1, newB1);
-        _trackModifyOrderGhosts(order2, id2, newA2, newB2);
+        _commitTwoModifies(id1, order1, id2, order2, amounts, 0);
     }
 
     /// @notice Modifies two ETH-sell orders owned by the actor, using netted msg.value
@@ -753,61 +697,35 @@ contract SwapboardHandler is Test {
         uint256 newASeed2,
         uint256 newBSeed2
     ) external useActor(actorSeed) {
-        uint256 nextId = _board.getNextOrderId();
-        if (nextId < 2) {
+        (bool ok, uint256 id1, uint256 id2, ISwapboard.Order memory order1, ISwapboard.Order memory order2) =
+            _pickTwoOwnedOrders(orderIdSeed1, orderIdSeed2);
+        if (!ok || order1.tokenA != _ETH || order2.tokenA != _ETH) {
             return;
         }
 
-        uint256 id1 = bound(orderIdSeed1, 0, nextId - 1);
-        uint256 id2 = bound(orderIdSeed2, 0, nextId - 1);
-        if (id1 == id2) {
+        BoundModifyAmounts memory amounts =
+            _boundModifyAmounts(order1, order2, newASeed1, newBSeed1, newASeed2, newBSeed2, 50 ether, 200 ether);
+        if (!amounts.ok) {
             return;
         }
 
-        ISwapboard.Order memory order1 = _board.getOrder(id1);
-        ISwapboard.Order memory order2 = _board.getOrder(id2);
-        if (!order1.active || !order2.active) {
-            return;
-        }
-        if (order1.maker != _currentActor || order2.maker != _currentActor) {
-            return;
-        }
-        if (order1.tokenA != _ETH || order2.tokenA != _ETH) {
-            return;
-        }
-
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 newA1 = uint128(bound(newASeed1, 1, 50 ether));
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 newB1 = uint128(bound(newBSeed1, 1, 200 ether));
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 newA2 = uint128(bound(newASeed2, 1, 50 ether));
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 newB2 = uint128(bound(newBSeed2, 1, 200 ether));
-        if (
-            (newA1 == order1.availableA && newB1 == order1.availableB)
-                || (newA2 == order2.availableA && newB2 == order2.availableB)
-        ) {
-            return;
-        }
-
-        uint256 totalTopUp = 0;
-        uint256 totalRefund = 0;
-        if (newA1 > order1.availableA) {
-            totalTopUp += uint256(newA1) - uint256(order1.availableA);
-        } else if (newA1 < order1.availableA) {
-            totalRefund += uint256(order1.availableA) - uint256(newA1);
-        }
-        if (newA2 > order2.availableA) {
-            totalTopUp += uint256(newA2) - uint256(order2.availableA);
-        } else if (newA2 < order2.availableA) {
-            totalRefund += uint256(order2.availableA) - uint256(newA2);
-        }
-        uint256 netPull = totalTopUp > totalRefund ? totalTopUp - totalRefund : 0;
+        uint256 netPull = _netModifyPull(order1.availableA, amounts.newA1, order2.availableA, amounts.newA2);
         if (_currentActor.balance < netPull) {
             return;
         }
 
+        _commitTwoModifies(id1, order1, id2, order2, amounts, netPull);
+    }
+
+    /// @notice Calls `modifyOrders` and updates ghosts for a validated pair
+    function _commitTwoModifies(
+        uint256 id1,
+        ISwapboard.Order memory order1,
+        uint256 id2,
+        ISwapboard.Order memory order2,
+        BoundModifyAmounts memory amounts,
+        uint256 ethValue
+    ) private {
         ++_callsModifyOrders;
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
@@ -819,7 +737,7 @@ contract SwapboardHandler is Test {
                 availableA: order1.availableA,
                 availableB: order1.availableB
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: newA1, availableB: newB1})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: amounts.newA1, availableB: amounts.newB1})
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: id2,
@@ -829,12 +747,97 @@ contract SwapboardHandler is Test {
                 availableA: order2.availableA,
                 availableB: order2.availableB
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: newA2, availableB: newB2})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: amounts.newA2, availableB: amounts.newB2})
         });
 
-        _board.modifyOrders{value: netPull}(mods);
-        _trackModifyOrderGhosts(order1, id1, newA1, newB1);
-        _trackModifyOrderGhosts(order2, id2, newA2, newB2);
+        _board.modifyOrders{value: ethValue}(mods);
+        _trackModifyOrderGhosts(order1, id1, amounts.newA1, amounts.newB1);
+        _trackModifyOrderGhosts(order2, id2, amounts.newA2, amounts.newB2);
+    }
+
+    /// @notice Picks two distinct active orders owned by the current actor
+    function _pickTwoOwnedOrders(
+        uint256 orderIdSeed1,
+        uint256 orderIdSeed2
+    )
+        private
+        view
+        returns (bool ok, uint256 id1, uint256 id2, ISwapboard.Order memory order1, ISwapboard.Order memory order2)
+    {
+        uint256 nextId = _board.getNextOrderId();
+        if (nextId < 2) {
+            return (ok, id1, id2, order1, order2);
+        }
+
+        id1 = bound(orderIdSeed1, 0, nextId - 1);
+        id2 = bound(orderIdSeed2, 0, nextId - 1);
+        if (id1 == id2) {
+            return (ok, id1, id2, order1, order2);
+        }
+
+        order1 = _board.getOrder(id1);
+        order2 = _board.getOrder(id2);
+        if (!order1.active || !order2.active) {
+            return (ok, id1, id2, order1, order2);
+        }
+        if (order1.maker != _currentActor || order2.maker != _currentActor) {
+            return (ok, id1, id2, order1, order2);
+        }
+
+        ok = true;
+        return (ok, id1, id2, order1, order2);
+    }
+
+    /// @notice Bounds new remainings for a two-order modify; rejects no-change legs
+    function _boundModifyAmounts(
+        ISwapboard.Order memory order1,
+        ISwapboard.Order memory order2,
+        uint256 newASeed1,
+        uint256 newBSeed1,
+        uint256 newASeed2,
+        uint256 newBSeed2,
+        uint256 maxA,
+        uint256 maxB
+    ) private pure returns (BoundModifyAmounts memory amounts) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amounts.newA1 = uint128(bound(newASeed1, 1, maxA));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amounts.newB1 = uint128(bound(newBSeed1, 1, maxB));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amounts.newA2 = uint128(bound(newASeed2, 1, maxA));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amounts.newB2 = uint128(bound(newBSeed2, 1, maxB));
+        if (
+            (amounts.newA1 == order1.availableA && amounts.newB1 == order1.availableB)
+                || (amounts.newA2 == order2.availableA && amounts.newB2 == order2.availableB)
+        ) {
+            return amounts;
+        }
+
+        amounts.ok = true;
+    }
+
+    /// @notice Nets two availableA deltas into the ERC20/ETH top-up the batch must fund
+    function _netModifyPull(
+        uint128 availableA1,
+        uint128 newA1,
+        uint128 availableA2,
+        uint128 newA2
+    ) private pure returns (uint256 netPull) {
+        uint256 totalTopUp = 0;
+        uint256 totalRefund = 0;
+        if (newA1 > availableA1) {
+            totalTopUp += uint256(newA1) - uint256(availableA1);
+        } else if (newA1 < availableA1) {
+            totalRefund += uint256(availableA1) - uint256(newA1);
+        }
+        if (newA2 > availableA2) {
+            totalTopUp += uint256(newA2) - uint256(availableA2);
+        } else if (newA2 < availableA2) {
+            totalRefund += uint256(availableA2) - uint256(newA2);
+        }
+
+        return totalTopUp > totalRefund ? totalTopUp - totalRefund : 0;
     }
 
     /// @notice Computes ETH top-up value for a modify, or reports insufficient funds
