@@ -146,7 +146,7 @@ All operations are atomic. No partial fills. No admin functions.
 
 - Reentrancy protection via OpenZeppelin
 - Inbound fee-on-transfer / mid-transfer rebase / phantom token detection on deposits and tokenB pulls
-- SafeERC20 for all transfers
+- `Token` helpers for ERC20 and native ETH transfers (zero-amount no-op; ETH via `sendValue`)
 - No proxy, no upgrades, no owner
 
 ## Author

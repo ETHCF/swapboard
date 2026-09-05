@@ -39,6 +39,7 @@ exclude_lints = [
     "literal-instead-of-constant",
     "block-timestamp",
     "arbitrary-send-eth",
+    "arbitrary-send-erc20",
     "unused-return",
     "calls-loop",
     "require-revert-in-loop",

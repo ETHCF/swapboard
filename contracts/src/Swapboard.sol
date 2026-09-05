@@ -2,11 +2,9 @@
 pragma solidity 0.8.36;
 
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {ISwapboard} from "./interfaces/ISwapboard.sol";
 import {Semver} from "./Semver.sol";
+import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 
 /// @title Swapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
@@ -23,6 +21,7 @@ import {Semver} from "./Semver.sol";
 ///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
 ///        remaining amounts are packed separately so fill % is readable on-chain
 ///      - Reentrancy protected via OpenZeppelin ReentrancyGuardTransient (EIP-1153)
+///      - Token/ETH transfers go through `Token` (no-ops on amount 0; ETH via `sendValue`)
 ///
 ///      Security considerations:
 ///      - Front-running is possible on `fillOrder` / `fillOrders` (inherent to on-chain orderbooks)
@@ -38,12 +37,6 @@ import {Semver} from "./Semver.sol";
 ///
 /// @custom:security-contact zak@numbergroup.xyz
 contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
-    using SafeERC20 for IERC20;
-    using Address for address payable;
-
-    /// @notice Canonical placeholder address representing native ETH
-    address private constant _ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
-
     /// @notice One fill leg after validation/quote (internal batch settlement)
     /// @param maker Address that receives tokenB for this leg
     /// @param tokenA Address of the token paid out to the taker
@@ -89,12 +82,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountA = order.amountA;
         _validateCreateOrder(tokenA, amountA, order.tokenB, order.amountB);
 
-        uint256 ethAmount = tokenA == _ETH ? uint256(amountA) : 0;
+        Token token = Token.wrap(tokenA);
+        uint256 ethAmount = token.isNative() ? uint256(amountA) : 0;
         if (msg.value != ethAmount) {
             revert ETHAmountMismatch(ethAmount, msg.value);
         }
-        if (tokenA != _ETH) {
-            _pullExactToken(tokenA, amountA);
+        if (!token.isNative()) {
+            _pullExactToken(token, amountA);
         }
 
         return _storeOrder(order);
@@ -154,15 +148,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         delete _orders[orderId];
         emit OrderCanceled({orderId: orderId});
 
-        if (tokenA == _ETH) {
-            _sendAggregated(new address[](0), new uint256[](0), amountA, msg.sender);
-        } else {
-            address[] memory tokens = new address[](1);
-            uint256[] memory amounts = new uint256[](1);
-            tokens[0] = tokenA;
-            amounts[0] = amountA;
-            _sendAggregated(tokens, amounts, 0, msg.sender);
-        }
+        Token.wrap(tokenA).safeTransfer(msg.sender, amountA);
     }
 
     /// @inheritdoc ISwapboard
@@ -219,7 +205,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @inheritdoc ISwapboard
     function getEth() external pure returns (address) {
-        return _ETH;
+        return NATIVE_TOKEN_ADDRESS;
     }
 
     /// @inheritdoc ISwapboard
@@ -307,10 +293,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert SameToken();
         }
 
-        if (tokenA != _ETH && tokenA.code.length == 0) {
+        if (!Token.wrap(tokenA).isNative() && tokenA.code.length == 0) {
             revert NotAContract(tokenA);
         }
-        if (tokenB != _ETH && tokenB.code.length == 0) {
+        if (!Token.wrap(tokenB).isNative() && tokenB.code.length == 0) {
             revert NotAContract(tokenB);
         }
     }
@@ -371,6 +357,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Aggregates per-token deposit amounts and sums native ETH
     /// @dev ETH sentinel amounts are returned separately and omitted from `uniqueTokens`.
+    ///      Zero amounts are harmless here; `Token.safeTransfer` / `safeTransferFrom` no-op on 0.
     /// @param tokens Deposit token for each order (tokenA)
     /// @param amounts Deposit amount for each order (amountA)
     /// @return uniqueTokens Distinct ERC20 tokens in first-seen order
@@ -388,10 +375,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         for (uint256 i = 0; i < length; ++i) {
             address token = tokens[i];
             uint256 amount = amounts[i];
-            if (amount == 0) {
-                continue;
-            }
-            if (token == _ETH) {
+            if (Token.wrap(token).isNative()) {
                 ethAmount += amount;
 
                 continue;
@@ -445,7 +429,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) private {
         uint256 length = tokens.length;
         for (uint256 i = 0; i < length; ++i) {
-            _pullExactToken(tokens[i], amounts[i]);
+            _pullExactToken(Token.wrap(tokens[i]), amounts[i]);
         }
     }
 
@@ -720,12 +704,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         (address[] memory ethMakers, uint256[] memory ethAmounts, uint256 ethCount) =
             _aggregateEthByRecipient(makers, tokens, amounts);
         for (uint256 i = 0; i < ethCount; ++i) {
-            uint256 ethAmount = ethAmounts[i];
-            if (ethAmount == 0) {
-                continue;
-            }
-            // Forward all gas so maker contracts can execute receive/fallback.
-            payable(ethMakers[i]).sendValue(ethAmount);
+            NATIVE_TOKEN.safeTransfer(ethMakers[i], ethAmounts[i]);
         }
 
         (
@@ -735,11 +714,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             uint256 uniqueCount
         ) = _aggregateRecipientTokenAmounts(makers, tokens, amounts);
         for (uint256 j = 0; j < uniqueCount; ++j) {
-            uint256 amount = uniqueAmounts[j];
-            if (amount == 0) {
-                continue;
-            }
-            IERC20(uniqueTokens[j]).safeTransfer(recipients[j], amount);
+            Token.wrap(uniqueTokens[j]).safeTransfer(recipients[j], uniqueAmounts[j]);
         }
     }
 
@@ -756,8 +731,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Sends aggregated ERC20 and optional ETH to one recipient
-    /// @dev Skips zero ERC20 amounts — some tokens revert on zero-value transfers. ETH already
-    ///      requires `ethAmount > 0`.
+    /// @dev `Token.safeTransfer` no-ops on amount 0 (some ERC20s revert on zero-value transfers).
     /// @param tokens Unique ERC20 tokens
     /// @param amounts Aggregated amount per token
     /// @param ethAmount Native ETH to send (0 if none)
@@ -768,18 +742,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 ethAmount,
         address recipient
     ) private {
-        if (ethAmount > 0) {
-            // Forward all gas so recipient contracts can execute receive/fallback.
-            payable(recipient).sendValue(ethAmount);
-        }
+        NATIVE_TOKEN.safeTransfer(recipient, ethAmount);
 
         uint256 length = tokens.length;
         for (uint256 i = 0; i < length; ++i) {
-            uint256 amount = amounts[i];
-            if (amount == 0) {
-                continue;
-            }
-            IERC20(tokens[i]).safeTransfer(recipient, amount);
+            Token.wrap(tokens[i]).safeTransfer(recipient, amounts[i]);
         }
     }
 
@@ -801,13 +768,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         ethCount = 0;
 
         for (uint256 i = 0; i < length; ++i) {
-            if (tokens[i] != _ETH) {
+            if (!Token.wrap(tokens[i]).isNative()) {
                 continue;
             }
             uint256 amount = amounts[i];
-            if (amount == 0) {
-                continue;
-            }
 
             uint256 existing = _indexOfToken(ethRecipients, ethCount, recipients[i]);
             if (existing == ethCount) {
@@ -852,7 +816,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         for (uint256 i = 0; i < length; ++i) {
             address token = tokens[i];
             uint256 amount = amounts[i];
-            if (token == _ETH || amount == 0) {
+            if (Token.wrap(token).isNative()) {
                 continue;
             }
 
@@ -1033,24 +997,21 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         for (uint256 i = 0; i < length; ++i) {
             uint256 topUp = topUps[i];
             uint256 refund = refunds[i];
+            Token token = Token.wrap(tokens[i]);
             if (topUp > refund) {
                 // Unchecked is safe: branch proves topUp > refund (and thus delta > 0).
                 unchecked {
-                    _pullExactToken(tokens[i], topUp - refund);
+                    _pullExactToken(token, topUp - refund);
                 }
-            } else if (refund > topUp) {
-                // Unchecked is safe: branch proves refund > topUp (and thus delta > 0).
-                // Equal nets fall through with no transfer — some ERC20s revert on amount 0.
+            } else {
+                // Unchecked is safe: refund >= topUp; Token.safeTransfer no-ops when equal (delta 0).
                 unchecked {
-                    IERC20(tokens[i]).safeTransfer(msg.sender, refund - topUp);
+                    token.safeTransfer(msg.sender, refund - topUp);
                 }
             }
         }
 
-        if (ethRefund > 0) {
-            // Forward all gas so recipient contracts can execute receive/fallback.
-            payable(msg.sender).sendValue(ethRefund);
-        }
+        NATIVE_TOKEN.safeTransfer(msg.sender, ethRefund);
     }
 
     /// @notice Aggregates modify-leg top-ups and refunds per unique ERC20 (ETH returned separately)
@@ -1087,7 +1048,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (topUp == 0 && refund == 0) {
                 continue;
             }
-            if (token == _ETH) {
+            if (Token.wrap(token).isNative()) {
                 ethTopUp += topUp;
                 ethRefund += refund;
 
@@ -1191,20 +1152,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer
     ///         rebase / phantom transfers
-    /// @dev Skips the transfer when `amount == 0` — some ERC20s revert on zero-value transfers.
+    /// @dev `Token.safeTransferFrom` no-ops when `amount == 0`. Native token is rejected by callers.
     /// @param token ERC20 token to pull from the caller
     /// @param amount Expected amount received
     function _pullExactToken(
-        address token,
+        Token token,
         uint256 amount
     ) private {
-        if (amount == 0) {
-            return;
-        }
-
-        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        uint256 balanceAfter = IERC20(token).balanceOf(address(this));
+        uint256 balanceBefore = token.balanceOf(address(this));
+        token.safeTransferFrom(msg.sender, address(this), amount);
+        uint256 balanceAfter = token.balanceOf(address(this));
 
         // Detect fee-on-transfer / mid-transfer rebase / phantom by comparing received to expected
         // Using unchecked is safe: balanceAfter >= balanceBefore after successful transfer
