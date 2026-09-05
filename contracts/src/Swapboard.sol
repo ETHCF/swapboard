@@ -2,11 +2,9 @@
 pragma solidity 0.8.36;
 
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {ISwapboard} from "./interfaces/ISwapboard.sol";
 import {Semver} from "./Semver.sol";
+import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 
 /// @title Swapboard
 /// @author Zak Cole (numbergroup.xyz) for Ethereum Community Foundation
@@ -23,6 +21,7 @@ import {Semver} from "./Semver.sol";
 ///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
 ///        remaining amounts are packed separately so fill % is readable on-chain
 ///      - Reentrancy protected via OpenZeppelin ReentrancyGuardTransient (EIP-1153)
+///      - Token/ETH transfers go through `Token` (no-ops on amount 0; ETH via `sendValue`)
 ///
 ///      Security considerations:
 ///      - Front-running is possible on `fillOrder` / `fillOrders` (inherent to on-chain orderbooks)
@@ -38,12 +37,6 @@ import {Semver} from "./Semver.sol";
 ///
 /// @custom:security-contact zak@numbergroup.xyz
 contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
-    using SafeERC20 for IERC20;
-    using Address for address payable;
-
-    /// @notice Canonical placeholder address representing native ETH
-    address private constant _ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
-
     /// @notice One fill leg after validation/quote (internal batch settlement)
     /// @param maker Address that receives tokenB for this leg
     /// @param tokenA Address of the token paid out to the taker
@@ -56,6 +49,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 amountA;
         address tokenB;
         uint256 amountB;
+    }
+
+    /// @notice One modify leg after validation (internal batch settlement)
+    /// @param tokenA Address of the escrowed asset (ETH sentinel or ERC20)
+    /// @param topUp Amount of tokenA to pull from the maker (0 if none)
+    /// @param refund Amount of tokenA to return to the maker (0 if none)
+    struct ModifyLeg {
+        address tokenA;
+        uint256 topUp;
+        uint256 refund;
     }
 
     /// @notice Counter for generating unique order IDs
@@ -79,12 +82,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountA = order.amountA;
         _validateCreateOrder(tokenA, amountA, order.tokenB, order.amountB);
 
-        uint256 ethAmount = tokenA == _ETH ? uint256(amountA) : 0;
+        Token token = Token.wrap(tokenA);
+        uint256 ethAmount = token.isNative() ? uint256(amountA) : 0;
         if (msg.value != ethAmount) {
             revert ETHAmountMismatch(ethAmount, msg.value);
         }
-        if (tokenA != _ETH) {
-            _pullExactToken(tokenA, amountA);
+        if (!token.isNative()) {
+            _pullExactToken(token, amountA);
         }
 
         return _storeOrder(order);
@@ -136,9 +140,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId
     ) external nonReentrant {
         Order memory cached = _requireActiveOrder(orderId);
-        if (msg.sender != cached.maker) {
-            revert NotMaker(orderId, msg.sender, cached.maker);
-        }
+        _requireMaker(orderId, cached.maker);
 
         address tokenA = cached.tokenA;
         uint256 amountA = cached.availableA;
@@ -146,15 +148,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         delete _orders[orderId];
         emit OrderCanceled({orderId: orderId});
 
-        if (tokenA == _ETH) {
-            _sendAggregated(new address[](0), new uint256[](0), amountA, msg.sender);
-        } else {
-            address[] memory tokens = new address[](1);
-            uint256[] memory amounts = new uint256[](1);
-            tokens[0] = tokenA;
-            amounts[0] = amountA;
-            _sendAggregated(tokens, amounts, 0, msg.sender);
-        }
+        Token.wrap(tokenA).safeTransfer(msg.sender, amountA);
     }
 
     /// @inheritdoc ISwapboard
@@ -169,7 +163,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ///      Token addresses, maker, and `partialFillAllowed` are immutable here. Callers set desired
     ///      remaining amounts; totals are reset to those remainings. TokenA escrow is refunded or
     ///      topped-up for the availableA delta. `ZeroAmount` blocks remaining 0 — cancel instead.
-    ///      `NoChange` when both remainings already match on-chain.
+    ///      `NoChange` when both remainings already match on-chain. Batch path: `modifyOrders`.
     /// @param orderId The unique identifier of the order to modify
     /// @param previousAmounts Expected current amounts from the caller's snapshot (race protection)
     /// @param updatedOrder Desired remaining amounts
@@ -178,58 +172,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         OrderAmounts calldata previousAmounts,
         ModifyOrderParams calldata updatedOrder
     ) external payable nonReentrant {
-        Order storage order = _requireActiveOrder(orderId);
-        Order memory cached = order;
+        ModifyLeg[] memory legs = new ModifyLeg[](1);
+        legs[0] = _applyOneModifyEffect(orderId, previousAmounts, updatedOrder);
+        _settleModifyLegs(legs);
+    }
 
-        if (msg.sender != cached.maker) {
-            revert NotMaker(orderId, msg.sender, cached.maker);
-        }
-
-        if (
-            previousAmounts.amountA != cached.amountA || previousAmounts.amountB != cached.amountB
-                || previousAmounts.availableA != cached.availableA || previousAmounts.availableB != cached.availableB
-        ) {
-            revert OrderStateMismatch(
-                orderId,
-                previousAmounts.amountA,
-                previousAmounts.amountB,
-                previousAmounts.availableA,
-                previousAmounts.availableB,
-                cached.amountA,
-                cached.amountB,
-                cached.availableA,
-                cached.availableB
-            );
-        }
-
-        uint128 newAvailableA = updatedOrder.availableA;
-        uint128 newAvailableB = updatedOrder.availableB;
-        if (newAvailableA == 0 || newAvailableB == 0) {
-            revert ZeroAmount();
-        }
-        if (newAvailableA == cached.availableA && newAvailableB == cached.availableB) {
-            revert NoChange();
-        }
-
-        (uint256 ethTopUp, uint256 ethRefund) =
-            _adjustTokenAEscrow(cached.tokenA, cached.availableA, newAvailableA, cached.maker);
-
-        if (msg.value != ethTopUp) {
-            revert ETHAmountMismatch(ethTopUp, msg.value);
-        }
-
-        // Reset totals to the new remainings (filled history is not preserved in amount fields).
-        order.amountA = newAvailableA;
-        order.amountB = newAvailableB;
-        order.availableA = newAvailableA;
-        order.availableB = newAvailableB;
-
-        emit OrderModified(orderId, newAvailableA, newAvailableB);
-
-        if (ethRefund > 0) {
-            // Forward all gas so maker contracts can execute receive/fallback.
-            payable(cached.maker).sendValue(ethRefund);
-        }
+    /// @inheritdoc ISwapboard
+    function modifyOrders(
+        ModifyOrdersParams[] calldata mods
+    ) external payable nonReentrant {
+        _modifyOrders(mods);
     }
 
     /// @inheritdoc ISwapboard
@@ -241,9 +193,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address maker = order.maker;
         bool currentPartialFillAllowed = order.partialFillAllowed;
 
-        if (msg.sender != maker) {
-            revert NotMaker(orderId, msg.sender, maker);
-        }
+        _requireMaker(orderId, maker);
         if (partialFillAllowed == currentPartialFillAllowed) {
             revert NoChange();
         }
@@ -253,48 +203,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         emit OrderPartialFillUpdated(orderId, partialFillAllowed);
     }
 
-    /// @notice Adjusts tokenA escrow when `availableA` changes due to an order modification
-    /// @dev ETH refund is returned instead of sent immediately so storage can be updated first (CEI).
-    /// @param tokenA The tokenA held in escrow (token addresses are immutable for the order's lifetime)
-    /// @param oldAvailableA Previous remaining `availableA`
-    /// @param newAvailableA Updated remaining `availableA`
-    /// @param maker Maker receiving any tokenA refund
-    /// @return ethTopUp ETH top-up amount required (0 when tokenA is ERC20 or no top-up needed)
-    /// @return ethRefund ETH refund amount owed to maker (0 when tokenA is ERC20 or no refund needed)
-    function _adjustTokenAEscrow(
-        address tokenA,
-        uint128 oldAvailableA,
-        uint128 newAvailableA,
-        address maker
-    ) private returns (uint256 ethTopUp, uint256 ethRefund) {
-        if (newAvailableA > oldAvailableA) {
-            // Unchecked is safe: branch proves newAvailableA > oldAvailableA.
-            uint256 delta;
-            unchecked {
-                delta = uint256(newAvailableA - oldAvailableA);
-            }
-            if (tokenA == _ETH) {
-                ethTopUp = delta;
-            } else {
-                _pullExactToken(tokenA, delta);
-            }
-        } else if (newAvailableA < oldAvailableA) {
-            // Unchecked is safe: branch proves oldAvailableA > newAvailableA.
-            uint256 refund;
-            unchecked {
-                refund = uint256(oldAvailableA - newAvailableA);
-            }
-            if (tokenA == _ETH) {
-                ethRefund = refund;
-            } else {
-                IERC20(tokenA).safeTransfer(maker, refund);
-            }
-        }
-    }
-
     /// @inheritdoc ISwapboard
     function getEth() external pure returns (address) {
-        return _ETH;
+        return NATIVE_TOKEN_ADDRESS;
     }
 
     /// @inheritdoc ISwapboard
@@ -349,6 +260,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return order;
     }
 
+    /// @notice Reverts unless `msg.sender` is the order's maker
+    /// @param orderId Order being authorized
+    /// @param maker Expected maker address
+    function _requireMaker(
+        uint256 orderId,
+        address maker
+    ) private view {
+        if (msg.sender != maker) {
+            revert NotMaker(orderId, msg.sender, maker);
+        }
+    }
+
     /// @notice Validates createOrder arguments (ETH is checked after deposit aggregation)
     /// @param tokenA Address of the asset to sell
     /// @param amountA Amount of tokenA to deposit
@@ -370,10 +293,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert SameToken();
         }
 
-        if (tokenA != _ETH && tokenA.code.length == 0) {
+        if (!Token.wrap(tokenA).isNative() && tokenA.code.length == 0) {
             revert NotAContract(tokenA);
         }
-        if (tokenB != _ETH && tokenB.code.length == 0) {
+        if (!Token.wrap(tokenB).isNative() && tokenB.code.length == 0) {
             revert NotAContract(tokenB);
         }
     }
@@ -434,6 +357,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Aggregates per-token deposit amounts and sums native ETH
     /// @dev ETH sentinel amounts are returned separately and omitted from `uniqueTokens`.
+    ///      Zero amounts are harmless here; `Token.safeTransfer` / `safeTransferFrom` no-op on 0.
     /// @param tokens Deposit token for each order (tokenA)
     /// @param amounts Deposit amount for each order (amountA)
     /// @return uniqueTokens Distinct ERC20 tokens in first-seen order
@@ -451,7 +375,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         for (uint256 i = 0; i < length; ++i) {
             address token = tokens[i];
             uint256 amount = amounts[i];
-            if (token == _ETH) {
+            if (Token.wrap(token).isNative()) {
                 ethAmount += amount;
 
                 continue;
@@ -505,7 +429,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) private {
         uint256 length = tokens.length;
         for (uint256 i = 0; i < length; ++i) {
-            _pullExactToken(tokens[i], amounts[i]);
+            _pullExactToken(Token.wrap(tokens[i]), amounts[i]);
         }
     }
 
@@ -780,8 +704,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         (address[] memory ethMakers, uint256[] memory ethAmounts, uint256 ethCount) =
             _aggregateEthByRecipient(makers, tokens, amounts);
         for (uint256 i = 0; i < ethCount; ++i) {
-            // Forward all gas so maker contracts can execute receive/fallback.
-            payable(ethMakers[i]).sendValue(ethAmounts[i]);
+            NATIVE_TOKEN.safeTransfer(ethMakers[i], ethAmounts[i]);
         }
 
         (
@@ -791,7 +714,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             uint256 uniqueCount
         ) = _aggregateRecipientTokenAmounts(makers, tokens, amounts);
         for (uint256 j = 0; j < uniqueCount; ++j) {
-            IERC20(uniqueTokens[j]).safeTransfer(recipients[j], uniqueAmounts[j]);
+            Token.wrap(uniqueTokens[j]).safeTransfer(recipients[j], uniqueAmounts[j]);
         }
     }
 
@@ -808,6 +731,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Sends aggregated ERC20 and optional ETH to one recipient
+    /// @dev `Token.safeTransfer` no-ops on amount 0 (some ERC20s revert on zero-value transfers).
     /// @param tokens Unique ERC20 tokens
     /// @param amounts Aggregated amount per token
     /// @param ethAmount Native ETH to send (0 if none)
@@ -818,14 +742,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 ethAmount,
         address recipient
     ) private {
-        if (ethAmount > 0) {
-            // Forward all gas so recipient contracts can execute receive/fallback.
-            payable(recipient).sendValue(ethAmount);
-        }
+        NATIVE_TOKEN.safeTransfer(recipient, ethAmount);
 
         uint256 length = tokens.length;
         for (uint256 i = 0; i < length; ++i) {
-            IERC20(tokens[i]).safeTransfer(recipient, amounts[i]);
+            Token.wrap(tokens[i]).safeTransfer(recipient, amounts[i]);
         }
     }
 
@@ -847,18 +768,19 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         ethCount = 0;
 
         for (uint256 i = 0; i < length; ++i) {
-            if (tokens[i] != _ETH) {
+            if (!Token.wrap(tokens[i]).isNative()) {
                 continue;
             }
+            uint256 amount = amounts[i];
 
             uint256 existing = _indexOfToken(ethRecipients, ethCount, recipients[i]);
             if (existing == ethCount) {
                 ethRecipients[ethCount] = recipients[i];
-                ethAmounts[ethCount] = amounts[i];
+                ethAmounts[ethCount] = amount;
 
                 ++ethCount;
             } else {
-                ethAmounts[existing] += amounts[i];
+                ethAmounts[existing] += amount;
             }
         }
     }
@@ -893,7 +815,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         for (uint256 i = 0; i < length; ++i) {
             address token = tokens[i];
-            if (token == _ETH) {
+            uint256 amount = amounts[i];
+            if (Token.wrap(token).isNative()) {
                 continue;
             }
 
@@ -902,11 +825,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (existing == uniqueCount) {
                 uniqueRecipients[uniqueCount] = recipients[i];
                 uniqueTokens[uniqueCount] = token;
-                uniqueAmounts[uniqueCount] = amounts[i];
+                uniqueAmounts[uniqueCount] = amount;
 
                 ++uniqueCount;
             } else {
-                uniqueAmounts[existing] += amounts[i];
+                uniqueAmounts[existing] += amount;
             }
         }
     }
@@ -932,6 +855,227 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         return length;
+    }
+
+    /// @notice Modifies orders after validating duplicates and aggregating escrow deltas
+    /// @param mods Modify arguments in execution order
+    function _modifyOrders(
+        ModifyOrdersParams[] calldata mods
+    ) private {
+        uint256 length = mods.length;
+        if (length == 0) {
+            revert ZeroAmount();
+        }
+
+        _validateModifyOrders(mods);
+
+        ModifyLeg[] memory legs = new ModifyLeg[](length);
+        for (uint256 i = 0; i < length; ++i) {
+            ModifyOrdersParams calldata mod = mods[i];
+            legs[i] = _applyOneModifyEffect(mod.orderId, mod.previousAmounts, mod.updatedOrder);
+        }
+
+        _settleModifyLegs(legs);
+    }
+
+    /// @notice Validates every order in a modify batch for duplicate IDs
+    /// @param mods Modify arguments to check
+    function _validateModifyOrders(
+        ModifyOrdersParams[] calldata mods
+    ) private pure {
+        uint256 length = mods.length;
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 orderId = mods[i].orderId;
+            for (uint256 j = i + 1; j < length; ++j) {
+                if (mods[j].orderId == orderId) {
+                    revert DuplicateOrderId(orderId);
+                }
+            }
+        }
+    }
+
+    /// @notice Validates one modify, updates order storage, emits `OrderModified`, and returns the leg
+    /// @param orderId Order to modify
+    /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
+    /// @param updatedOrder Desired remaining amounts
+    /// @return leg Escrow top-up / refund for settlement
+    function _applyOneModifyEffect(
+        uint256 orderId,
+        OrderAmounts calldata previousAmounts,
+        ModifyOrderParams calldata updatedOrder
+    ) private returns (ModifyLeg memory) {
+        Order storage order = _requireActiveOrder(orderId);
+        Order memory cached = order;
+
+        _requireMaker(orderId, cached.maker);
+
+        if (
+            previousAmounts.amountA != cached.amountA || previousAmounts.amountB != cached.amountB
+                || previousAmounts.availableA != cached.availableA || previousAmounts.availableB != cached.availableB
+        ) {
+            revert OrderStateMismatch(
+                orderId,
+                previousAmounts.amountA,
+                previousAmounts.amountB,
+                previousAmounts.availableA,
+                previousAmounts.availableB,
+                cached.amountA,
+                cached.amountB,
+                cached.availableA,
+                cached.availableB
+            );
+        }
+
+        uint128 newAvailableA = updatedOrder.availableA;
+        uint128 newAvailableB = updatedOrder.availableB;
+        if (newAvailableA == 0 || newAvailableB == 0) {
+            revert ZeroAmount();
+        }
+        if (newAvailableA == cached.availableA && newAvailableB == cached.availableB) {
+            revert NoChange();
+        }
+
+        uint256 topUp = 0;
+        uint256 refund = 0;
+        if (newAvailableA > cached.availableA) {
+            // Unchecked is safe: branch proves newAvailableA > cached.availableA.
+            unchecked {
+                topUp = uint256(newAvailableA - cached.availableA);
+            }
+        } else if (newAvailableA < cached.availableA) {
+            // Unchecked is safe: branch proves cached.availableA > newAvailableA.
+            unchecked {
+                refund = uint256(cached.availableA - newAvailableA);
+            }
+        }
+
+        // Reset totals to the new remainings (filled history is not preserved in amount fields).
+        order.amountA = newAvailableA;
+        order.amountB = newAvailableB;
+        order.availableA = newAvailableA;
+        order.availableB = newAvailableB;
+
+        emit OrderModified(orderId, newAvailableA, newAvailableB);
+
+        return ModifyLeg({tokenA: cached.tokenA, topUp: topUp, refund: refund});
+    }
+
+    /// @notice Settles modify legs after netting same-token top-ups against refunds
+    /// @dev Per unique tokenA (and ETH), only the net delta is pulled or sent — equal opposing
+    ///      flows cancel and produce no transfer. `msg.value` must equal the net ETH top-up.
+    /// @param legs Settled modify legs
+    function _settleModifyLegs(
+        ModifyLeg[] memory legs
+    ) private {
+        (
+            address[] memory tokens,
+            uint256[] memory topUps,
+            uint256[] memory refunds,
+            uint256 ethTopUp,
+            uint256 ethRefund
+        ) = _aggregateModifyLegs(legs);
+
+        if (ethTopUp > ethRefund) {
+            // Unchecked is safe: branch proves ethTopUp > ethRefund.
+            unchecked {
+                ethTopUp -= ethRefund;
+            }
+            ethRefund = 0;
+        } else {
+            // Unchecked is safe: ethRefund >= ethTopUp in this branch.
+            unchecked {
+                ethRefund -= ethTopUp;
+            }
+            ethTopUp = 0;
+        }
+
+        if (msg.value != ethTopUp) {
+            revert ETHAmountMismatch(ethTopUp, msg.value);
+        }
+
+        uint256 length = tokens.length;
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 topUp = topUps[i];
+            uint256 refund = refunds[i];
+            Token token = Token.wrap(tokens[i]);
+            if (topUp > refund) {
+                // Unchecked is safe: branch proves topUp > refund (and thus delta > 0).
+                unchecked {
+                    _pullExactToken(token, topUp - refund);
+                }
+            } else {
+                // Unchecked is safe: refund >= topUp; Token.safeTransfer no-ops when equal (delta 0).
+                unchecked {
+                    token.safeTransfer(msg.sender, refund - topUp);
+                }
+            }
+        }
+
+        NATIVE_TOKEN.safeTransfer(msg.sender, ethRefund);
+    }
+
+    /// @notice Aggregates modify-leg top-ups and refunds per unique ERC20 (ETH returned separately)
+    /// @param legs Per-order escrow deltas
+    /// @return tokens Distinct ERC20 tokenA values in first-seen order
+    /// @return topUps Summed top-up per token
+    /// @return refunds Summed refund per token
+    /// @return ethTopUp Summed ETH top-up (not yet netted)
+    /// @return ethRefund Summed ETH refund (not yet netted)
+    function _aggregateModifyLegs(
+        ModifyLeg[] memory legs
+    )
+        private
+        pure
+        returns (
+            address[] memory tokens,
+            uint256[] memory topUps,
+            uint256[] memory refunds,
+            uint256 ethTopUp,
+            uint256 ethRefund
+        )
+    {
+        uint256 length = legs.length;
+        address[] memory stackedTokens = new address[](length);
+        uint256[] memory stackedTopUps = new uint256[](length);
+        uint256[] memory stackedRefunds = new uint256[](length);
+        uint256 uniqueCount = 0;
+
+        for (uint256 i = 0; i < length; ++i) {
+            ModifyLeg memory leg = legs[i];
+            address token = leg.tokenA;
+            uint256 topUp = leg.topUp;
+            uint256 refund = leg.refund;
+            if (topUp == 0 && refund == 0) {
+                continue;
+            }
+            if (Token.wrap(token).isNative()) {
+                ethTopUp += topUp;
+                ethRefund += refund;
+
+                continue;
+            }
+
+            uint256 existing = _indexOfToken(stackedTokens, uniqueCount, token);
+            if (existing == uniqueCount) {
+                stackedTokens[uniqueCount] = token;
+                stackedTopUps[uniqueCount] = topUp;
+                stackedRefunds[uniqueCount] = refund;
+
+                ++uniqueCount;
+            } else {
+                stackedTopUps[existing] += topUp;
+                stackedRefunds[existing] += refund;
+            }
+        }
+
+        tokens = new address[](uniqueCount);
+        topUps = new uint256[](uniqueCount);
+        refunds = new uint256[](uniqueCount);
+        for (uint256 j = 0; j < uniqueCount; ++j) {
+            tokens[j] = stackedTokens[j];
+            topUps[j] = stackedTopUps[j];
+            refunds[j] = stackedRefunds[j];
+        }
     }
 
     /// @notice Cancels orders after aggregating ERC20 and ETH refunds to the maker
@@ -969,10 +1113,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             }
 
             Order storage order = _requireActiveOrder(orderId);
-            address maker = order.maker;
-            if (msg.sender != maker) {
-                revert NotMaker(orderId, msg.sender, maker);
-            }
+            _requireMaker(orderId, order.maker);
         }
     }
 
@@ -1011,15 +1152,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer
     ///         rebase / phantom transfers
+    /// @dev `Token.safeTransferFrom` no-ops when `amount == 0`. Native token is rejected by callers.
     /// @param token ERC20 token to pull from the caller
     /// @param amount Expected amount received
     function _pullExactToken(
-        address token,
+        Token token,
         uint256 amount
     ) private {
-        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        uint256 balanceAfter = IERC20(token).balanceOf(address(this));
+        uint256 balanceBefore = token.balanceOf(address(this));
+        token.safeTransferFrom(msg.sender, address(this), amount);
+        uint256 balanceAfter = token.balanceOf(address(this));
 
         // Detect fee-on-transfer / mid-transfer rebase / phantom by comparing received to expected
         // Using unchecked is safe: balanceAfter >= balanceBefore after successful transfer

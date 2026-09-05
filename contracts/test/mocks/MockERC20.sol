@@ -3,11 +3,11 @@ pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /// @title MockERC20
 /// @notice Shared ERC20 mock base used by test tokens
-contract MockERC20 is IERC20 {
+contract MockERC20 is IERC20Metadata {
     string private _name;
     string private _symbol;
     uint8 private _decimals;
