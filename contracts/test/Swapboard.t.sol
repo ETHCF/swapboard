@@ -6709,11 +6709,13 @@ contract SwapboardTest is Test {
 
         vm.startPrank(_maker);
         vm.expectRevert(MockRevertOnZeroERC20.ZeroAmountTransfer.selector);
-        assertTrue(token.transfer(_taker, 0));
+        // forge-lint: disable-next-line(erc20-unchecked-transfer)
+        token.transfer(_taker, 0);
 
-        token.approve(_maker, type(uint256).max);
+        token.approve(msg.sender, type(uint256).max);
         vm.expectRevert(MockRevertOnZeroERC20.ZeroAmountTransfer.selector);
-        assertTrue(token.transferFrom(msg.sender, _taker, 0));
+        // forge-lint: disable-next-line(erc20-unchecked-transfer)
+        token.transferFrom(msg.sender, _taker, 0);
         vm.stopPrank();
     }
 
