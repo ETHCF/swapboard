@@ -15,8 +15,20 @@ import {
   test,
 } from "matchstick-as/assembly/index";
 import { Address, BigInt, ethereum } from "@graphprotocol/graph-ts";
-import { handleOrderCanceled, handleOrderCreated, handleOrderFilled } from "../src/mapping";
-import { OrderCanceled, OrderCreated, OrderFilled } from "../generated/Swapboard/Swapboard";
+import {
+  handleOrderCanceled,
+  handleOrderCreated,
+  handleOrderFilled,
+  handleOrderModified,
+  handleOrderPartialFillUpdated,
+} from "../src/mapping";
+import {
+  OrderCanceled,
+  OrderCreated,
+  OrderFilled,
+  OrderModified,
+  OrderPartialFillUpdated,
+} from "../generated/Swapboard/Swapboard";
 import { Order } from "../generated/schema";
 
 const TKA_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
@@ -50,6 +62,12 @@ const QUARTER_B = "125000000";
 const REST_A = "750000000000000000000";
 /** 375 TKB */
 const REST_B = "375000000";
+/** 500 TKA */
+const FIVE_HUNDRED_A = "500000000000000000000";
+/** 750 TKB */
+const SEVEN_FIFTY_B = "750000000";
+/** 900 TKA */
+const NINE_HUNDRED_A = "900000000000000000000";
 
 const PAIR_AB = TKA + "-" + TKB;
 
@@ -136,6 +154,43 @@ function createOrderCanceledEvent(orderId: i32): OrderCanceled {
 
   event.parameters.push(
     new ethereum.EventParam("orderId", ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(orderId)))
+  );
+
+  return event;
+}
+
+function createOrderModifiedEvent(
+  orderId: i32,
+  availableA: string,
+  availableB: string,
+  logIndex: i32
+): OrderModified {
+  let event = changetype<OrderModified>(newMockEvent());
+  event.parameters = new Array();
+  event.logIndex = BigInt.fromI32(logIndex);
+
+  event.parameters.push(
+    new ethereum.EventParam("orderId", ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(orderId)))
+  );
+  event.parameters.push(
+    new ethereum.EventParam("availableA", ethereum.Value.fromUnsignedBigInt(BigInt.fromString(availableA)))
+  );
+  event.parameters.push(
+    new ethereum.EventParam("availableB", ethereum.Value.fromUnsignedBigInt(BigInt.fromString(availableB)))
+  );
+
+  return event;
+}
+
+function createOrderPartialFillUpdatedEvent(orderId: i32, partialFillAllowed: boolean): OrderPartialFillUpdated {
+  let event = changetype<OrderPartialFillUpdated>(newMockEvent());
+  event.parameters = new Array();
+
+  event.parameters.push(
+    new ethereum.EventParam("orderId", ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(orderId)))
+  );
+  event.parameters.push(
+    new ethereum.EventParam("partialFillAllowed", ethereum.Value.fromBoolean(partialFillAllowed))
   );
 
   return event;
@@ -310,6 +365,7 @@ describe("handleOrderCreated", () => {
     assert.fieldEquals("GlobalStats", "global", "filledOrders", "0");
     assert.fieldEquals("GlobalStats", "global", "canceledOrders", "0");
     assert.fieldEquals("GlobalStats", "global", "totalFills", "0");
+    assert.fieldEquals("GlobalStats", "global", "totalModifications", "0");
     assert.fieldEquals("GlobalStats", "global", "totalTokens", "2");
     assert.fieldEquals("GlobalStats", "global", "totalPairs", "1");
     assert.fieldEquals("GlobalStats", "global", "totalAccounts", "1");
@@ -569,6 +625,230 @@ describe("handleOrderCanceled", () => {
 
   test("ignores cancels for orders that were never indexed", () => {
     handleOrderCanceled(createOrderCanceledEvent(42));
+
+    assert.entityCount("Order", 0);
+  });
+});
+
+describe("handleOrderModified", () => {
+  beforeEach(() => {
+    clearStore();
+    mockTokens();
+  });
+
+  afterAll(() => {
+    clearStore();
+  });
+
+  test("resets the order totals to the new remainings", () => {
+    createPartialFillOrder();
+    let event = createOrderModifiedEvent(1, REST_A, SEVEN_FIFTY_B, 1);
+    handleOrderModified(event);
+
+    assert.fieldEquals("Order", "1", "amountA", REST_A);
+    assert.fieldEquals("Order", "1", "amountB", SEVEN_FIFTY_B);
+    assert.fieldEquals("Order", "1", "availableA", REST_A);
+    assert.fieldEquals("Order", "1", "availableB", SEVEN_FIFTY_B);
+    assert.fieldEquals("Order", "1", "status", "OPEN");
+    assert.fieldEquals("Order", "1", "active", "true");
+    assert.fieldEquals("Order", "1", "modifyCount", "1");
+    assert.fieldEquals("Order", "1", "modifiedAt", event.block.timestamp.toString());
+    assert.fieldEquals("Order", "1", "modifiedTx", event.transaction.hash.toHexString());
+    assert.fieldEquals("Order", "1", "updatedAt", event.block.timestamp.toString());
+  });
+
+  test("reprices the order in both directions", () => {
+    // 750 TKA (18 decimals) for 750 TKB (6 decimals) => 1 TKB per TKA.
+    createPartialFillOrder();
+    handleOrderModified(createOrderModifiedEvent(1, REST_A, SEVEN_FIFTY_B, 1));
+
+    assert.fieldEquals("Order", "1", "priceBPerA", "1");
+    assert.fieldEquals("Order", "1", "priceAPerB", "1");
+  });
+
+  test("returns a partially filled order to OPEN and clears its progress", () => {
+    createPartialFillOrder();
+    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, QUARTER_A, QUARTER_B, 1));
+    handleOrderModified(createOrderModifiedEvent(1, REST_A, SEVEN_FIFTY_B, 2));
+
+    assert.fieldEquals("Order", "1", "status", "OPEN");
+    assert.fieldEquals("Order", "1", "filledA", "0");
+    assert.fieldEquals("Order", "1", "filledB", "0");
+    assert.fieldEquals("Order", "1", "filledFraction", "0");
+    assert.fieldEquals("GlobalStats", "global", "partiallyFilledOrders", "0");
+  });
+
+  test("keeps the fill history the reset discards", () => {
+    createPartialFillOrder();
+    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, QUARTER_A, QUARTER_B, 1));
+    handleOrderModified(createOrderModifiedEvent(1, REST_A, SEVEN_FIFTY_B, 2));
+
+    assert.fieldEquals("Order", "1", "lifetimeFilledA", QUARTER_A);
+    assert.fieldEquals("Order", "1", "lifetimeFilledB", QUARTER_B);
+    assert.fieldEquals("Order", "1", "fillCount", "1");
+    assert.entityCount("Fill", 1);
+  });
+
+  test("accrues fills against the new totals after a modify", () => {
+    createPartialFillOrder();
+    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, QUARTER_A, QUARTER_B, 1));
+    handleOrderModified(createOrderModifiedEvent(1, FIVE_HUNDRED_A, SEVEN_FIFTY_B, 2));
+    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, QUARTER_A, QUARTER_B, 3));
+
+    // 250 of the 500 now on offer, not 250 of the original 1000.
+    assert.fieldEquals("Order", "1", "filledA", QUARTER_A);
+    assert.fieldEquals("Order", "1", "filledFraction", "0.5");
+    assert.fieldEquals("Order", "1", "lifetimeFilledA", FIVE_HUNDRED_A);
+    assert.fieldEquals("Order", "1", "fillCount", "2");
+  });
+
+  test("records an OrderModification carrying the pre-modify state", () => {
+    createPartialFillOrder();
+    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, QUARTER_A, QUARTER_B, 1));
+    let event = createOrderModifiedEvent(1, REST_A, SEVEN_FIFTY_B, 2);
+    handleOrderModified(event);
+
+    let modId = event.transaction.hash.toHexString() + "-2";
+    assert.entityCount("OrderModification", 1);
+    assert.fieldEquals("OrderModification", modId, "order", "1");
+    assert.fieldEquals("OrderModification", modId, "orderId", "1");
+    assert.fieldEquals("OrderModification", modId, "maker", MAKER);
+    assert.fieldEquals("OrderModification", modId, "tokenA", TKA);
+    assert.fieldEquals("OrderModification", modId, "tokenB", TKB);
+    assert.fieldEquals("OrderModification", modId, "pair", PAIR_AB);
+    assert.fieldEquals("OrderModification", modId, "previousAmountA", THOUSAND_A);
+    assert.fieldEquals("OrderModification", modId, "previousAmountB", FIVE_HUNDRED_B);
+    assert.fieldEquals("OrderModification", modId, "previousAvailableA", REST_A);
+    assert.fieldEquals("OrderModification", modId, "previousAvailableB", REST_B);
+    assert.fieldEquals("OrderModification", modId, "availableA", REST_A);
+    assert.fieldEquals("OrderModification", modId, "availableB", SEVEN_FIFTY_B);
+    assert.fieldEquals("OrderModification", modId, "previousPriceBPerA", "0.5");
+    assert.fieldEquals("OrderModification", modId, "priceBPerA", "1");
+    assert.fieldEquals("OrderModification", modId, "resetFillProgress", "true");
+    assert.fieldEquals("OrderModification", modId, "timestamp", event.block.timestamp.toString());
+    assert.fieldEquals("OrderModification", modId, "blockNumber", event.block.number.toString());
+    assert.fieldEquals("OrderModification", modId, "transactionHash", event.transaction.hash.toHexString());
+    assert.fieldEquals("OrderModification", modId, "logIndex", "2");
+  });
+
+  test("signs the escrow delta by the direction of the tokenA change", () => {
+    createPartialFillOrder();
+    let shrink = createOrderModifiedEvent(1, REST_A, SEVEN_FIFTY_B, 1);
+    handleOrderModified(shrink);
+    // 100 TKA topped up to 1000 TKA.
+    createFullFillOrder();
+    let grow = createOrderModifiedEvent(0, THOUSAND_A, FIVE_HUNDRED_B, 2);
+    handleOrderModified(grow);
+
+    assert.fieldEquals(
+      "OrderModification",
+      shrink.transaction.hash.toHexString() + "-1",
+      "escrowDeltaA",
+      "-" + QUARTER_A
+    );
+    assert.fieldEquals(
+      "OrderModification",
+      grow.transaction.hash.toHexString() + "-2",
+      "escrowDeltaA",
+      NINE_HUNDRED_A
+    );
+  });
+
+  test("keeps batch modifications in the same transaction distinct", () => {
+    createFullFillOrder();
+    createPartialFillOrder();
+    handleOrderModified(createOrderModifiedEvent(0, THOUSAND_A, FIVE_HUNDRED_B, 1));
+    handleOrderModified(createOrderModifiedEvent(1, REST_A, SEVEN_FIFTY_B, 2));
+
+    assert.entityCount("OrderModification", 2);
+    assert.fieldEquals("GlobalStats", "global", "totalModifications", "2");
+  });
+
+  test("leaves the order on the board and its counters untouched", () => {
+    createPartialFillOrder();
+    handleOrderModified(createOrderModifiedEvent(1, REST_A, SEVEN_FIFTY_B, 1));
+
+    assert.fieldEquals("Token", TKA, "openOrdersSelling", "1");
+    assert.fieldEquals("Token", TKA, "ordersSelling", "1");
+    assert.fieldEquals("Token", TKA, "volumeSold", "0");
+    assert.fieldEquals("Token", TKB, "openOrdersBuying", "1");
+    assert.fieldEquals("Pair", PAIR_AB, "openOrderCount", "1");
+    assert.fieldEquals("Pair", PAIR_AB, "orderCount", "1");
+    assert.fieldEquals("Account", MAKER, "ordersOpen", "1");
+    assert.fieldEquals("GlobalStats", "global", "openOrders", "1");
+    assert.fieldEquals("GlobalStats", "global", "filledOrders", "0");
+    assert.fieldEquals("GlobalStats", "global", "canceledOrders", "0");
+    assert.fieldEquals("GlobalStats", "global", "totalModifications", "1");
+  });
+
+  test("ignores modifications for orders that were never indexed", () => {
+    handleOrderModified(createOrderModifiedEvent(42, REST_A, SEVEN_FIFTY_B, 1));
+
+    assert.entityCount("Order", 0);
+    assert.entityCount("OrderModification", 0);
+  });
+
+  test("ignores modifications for orders that are already closed", () => {
+    createFullFillOrder();
+    handleOrderFilled(createOrderFilledEvent(0, TAKER_ADDRESS, HUNDRED_A, TWO_HUNDRED_B, 1));
+    handleOrderModified(createOrderModifiedEvent(0, THOUSAND_A, FIVE_HUNDRED_B, 2));
+
+    assert.entityCount("OrderModification", 0);
+    assert.fieldEquals("Order", "0", "status", "FILLED");
+    assert.fieldEquals("Order", "0", "amountA", HUNDRED_A);
+    assert.fieldEquals("Order", "0", "modifyCount", "0");
+    assert.fieldEquals("GlobalStats", "global", "totalModifications", "0");
+  });
+});
+
+describe("handleOrderPartialFillUpdated", () => {
+  beforeEach(() => {
+    clearStore();
+    mockTokens();
+  });
+
+  afterAll(() => {
+    clearStore();
+  });
+
+  test("enables partial fills on a full-fill order", () => {
+    createFullFillOrder();
+    let event = createOrderPartialFillUpdatedEvent(0, true);
+    handleOrderPartialFillUpdated(event);
+
+    assert.fieldEquals("Order", "0", "partialFillAllowed", "true");
+    assert.fieldEquals("Order", "0", "modifiedAt", event.block.timestamp.toString());
+    assert.fieldEquals("Order", "0", "modifiedTx", event.transaction.hash.toHexString());
+    assert.fieldEquals("Order", "0", "updatedAt", event.block.timestamp.toString());
+  });
+
+  test("disables partial fills on a partial-fill order", () => {
+    createPartialFillOrder();
+    handleOrderPartialFillUpdated(createOrderPartialFillUpdatedEvent(1, false));
+
+    assert.fieldEquals("Order", "1", "partialFillAllowed", "false");
+  });
+
+  test("leaves amounts, fill progress, and counters untouched", () => {
+    createPartialFillOrder();
+    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, QUARTER_A, QUARTER_B, 1));
+    handleOrderPartialFillUpdated(createOrderPartialFillUpdatedEvent(1, false));
+
+    assert.fieldEquals("Order", "1", "status", "PARTIALLY_FILLED");
+    assert.fieldEquals("Order", "1", "active", "true");
+    assert.fieldEquals("Order", "1", "amountA", THOUSAND_A);
+    assert.fieldEquals("Order", "1", "availableA", REST_A);
+    assert.fieldEquals("Order", "1", "filledA", QUARTER_A);
+    assert.fieldEquals("Order", "1", "filledFraction", "0.25");
+    assert.fieldEquals("Order", "1", "modifyCount", "0");
+    assert.entityCount("OrderModification", 0);
+    assert.fieldEquals("GlobalStats", "global", "openOrders", "1");
+    assert.fieldEquals("GlobalStats", "global", "partiallyFilledOrders", "1");
+    assert.fieldEquals("GlobalStats", "global", "totalModifications", "0");
+  });
+
+  test("ignores updates for orders that were never indexed", () => {
+    handleOrderPartialFillUpdated(createOrderPartialFillUpdatedEvent(42, true));
 
     assert.entityCount("Order", 0);
   });
