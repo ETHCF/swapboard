@@ -126,6 +126,7 @@ contract SwapboardInvariantTest is Test {
         console2.log("cancelOrder calls:", _handler.getCallsCancelOrder());
         console2.log("cancelOrders calls:", _handler.getCallsCancelOrders());
         console2.log("modifyOrder calls:", _handler.getCallsModifyOrder());
+        console2.log("modifyOrders calls:", _handler.getCallsModifyOrders());
         console2.log("setPartialFillAllowed calls:", _handler.getCallsSetPartialFillAllowed());
         console2.log("Orders created:", _handler.getGhostOrdersCreated());
         console2.log("Orders filled:", _handler.getGhostOrdersFilled());

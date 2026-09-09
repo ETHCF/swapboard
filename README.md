@@ -136,7 +136,7 @@ The Swapboard contract allows:
 
 - **createOrder**: Deposit tokenA, specify tokenB amount wanted
 - **fillOrder**: Pay tokenB, receive tokenA
-- **modifyOrder**: Maker updates remaining liquidity (cannot set remaining to 0 — cancel instead)
+- **modifyOrder** / **modifyOrders**: Maker updates remaining liquidity (cannot set remaining to 0 — cancel instead)
 - **setPartialFillAllowed**: Maker enables or disables partial fills (amounts unchanged)
 - **cancelOrder**: Maker reclaims tokenA
 
@@ -146,7 +146,7 @@ All operations are atomic. No partial fills. No admin functions.
 
 - Reentrancy protection via OpenZeppelin
 - Inbound fee-on-transfer / mid-transfer rebase / phantom token detection on deposits and tokenB pulls
-- SafeERC20 for all transfers
+- `Token` helpers for ERC20 and native ETH transfers (zero-amount no-op; ETH via `sendValue`)
 - No proxy, no upgrades, no owner
 
 ## Author

@@ -83,6 +83,16 @@ interface ISwapboard is ISemver {
         uint128 minAmountB;
     }
 
+    /// @notice Arguments for one entry in a `modifyOrders` batch
+    /// @param orderId Unique identifier of the order to modify
+    /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
+    /// @param updatedOrder Desired remaining amounts
+    struct ModifyOrdersParams {
+        uint256 orderId;
+        OrderAmounts previousAmounts;
+        ModifyOrderParams updatedOrder;
+    }
+
     // solhint-disable gas-indexed-events
 
     /// @notice Emitted when a new order is created
@@ -133,13 +143,14 @@ interface ISwapboard is ISemver {
     error ZeroAddress();
 
     /// @notice Thrown when a zero amount is provided
-    /// @dev On `modifyOrder`, also thrown when either remaining (`availableA` / `availableB`) is
-    ///      set to 0 — closing an order requires `cancelOrder` / `cancelOrders` instead.
+    /// @dev On `modifyOrder` / `modifyOrders`, also thrown when either remaining (`availableA` /
+    ///      `availableB`) is set to 0 — closing an order requires `cancelOrder` / `cancelOrders`
+    ///      instead. Empty `modifyOrders` also reverts.
     error ZeroAmount();
 
     /// @notice Thrown when a modification would leave the order unchanged
-    /// @dev `modifyOrder` when both remainings match on-chain; `setPartialFillAllowed` when the flag
-    ///      already equals the requested value.
+    /// @dev `modifyOrder` / `modifyOrders` when both remainings match on-chain; `setPartialFillAllowed`
+    ///      when the flag already equals the requested value.
     error NoChange();
 
     /// @notice Thrown when tokenA and tokenB are the same address
@@ -217,7 +228,7 @@ interface ISwapboard is ISemver {
         uint128 actualAvailableB
     );
 
-    /// @notice Thrown when the same order ID appears more than once in a cancel batch
+    /// @notice Thrown when the same order ID appears more than once in a cancel or modify batch
     /// @param orderId The duplicated order ID
     error DuplicateOrderId(uint256 orderId);
 
@@ -308,6 +319,15 @@ interface ISwapboard is ISemver {
         uint256 orderId,
         OrderAmounts calldata previousAmounts,
         ModifyOrderParams calldata updatedOrder
+    ) external payable;
+
+    /// @notice Modifies multiple orders' remaining liquidity in one call
+    /// @dev Only the maker may modify each order. Duplicate `orderId`s revert.
+    ///      Per unique tokenA (and ETH), top-ups are netted against refunds so only the net delta
+    ///      is pulled or sent. `msg.value` must equal the net ETH top-up (0 when flat or net refund).
+    /// @param mods Modify arguments in execution order
+    function modifyOrders(
+        ModifyOrdersParams[] calldata mods
     ) external payable;
 
     /// @notice Sets whether an active order may be filled in multiple parts

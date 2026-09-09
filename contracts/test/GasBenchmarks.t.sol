@@ -187,6 +187,76 @@ contract GasBenchmarks is Test {
         assertLt(gasUsed, 50_000);
     }
 
+    /// @notice Benchmarks gas used by modifyOrders for three same-token shrinks
+    function test_gas_modifyOrders() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
+        for (uint256 i = 0; i < 3; ++i) {
+            orders[i] = _order();
+        }
+
+        vm.prank(_maker);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
+        for (uint256 j = 0; j < 3; ++j) {
+            ISwapboard.Order memory snapshot = _board.getOrder(ids[j]);
+            mods[j] = ISwapboard.ModifyOrdersParams({
+                orderId: ids[j],
+                previousAmounts: ISwapboard.OrderAmounts({
+                    amountA: snapshot.amountA,
+                    amountB: snapshot.amountB,
+                    availableA: snapshot.availableA,
+                    availableB: snapshot.availableB
+                }),
+                updatedOrder: ISwapboard.ModifyOrderParams({availableA: ORDER_A / 2, availableB: ORDER_B})
+            });
+        }
+
+        vm.prank(_maker);
+        uint256 gasBefore = gasleft();
+        _board.modifyOrders(mods);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        console2.log("modifyOrders gas:", gasUsed);
+        assertLt(gasUsed, 250_000);
+    }
+
+    /// @notice Benchmarks gas used by modifyOrders when top-ups and refunds net to one pull
+    function test_gas_modifyOrders_netting() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
+        orders[0] = _order();
+        orders[1] = _order();
+        orders[2] = _order();
+
+        vm.prank(_maker);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +50, -25, -10 => net pull 15
+        uint128[3] memory newAs = [ORDER_A + 50 ether, ORDER_A - 25 ether, ORDER_A - 10 ether];
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
+        for (uint256 j = 0; j < 3; ++j) {
+            ISwapboard.Order memory snapshot = _board.getOrder(ids[j]);
+            mods[j] = ISwapboard.ModifyOrdersParams({
+                orderId: ids[j],
+                previousAmounts: ISwapboard.OrderAmounts({
+                    amountA: snapshot.amountA,
+                    amountB: snapshot.amountB,
+                    availableA: snapshot.availableA,
+                    availableB: snapshot.availableB
+                }),
+                updatedOrder: ISwapboard.ModifyOrderParams({availableA: newAs[j], availableB: ORDER_B})
+            });
+        }
+
+        vm.prank(_maker);
+        uint256 gasBefore = gasleft();
+        _board.modifyOrders(mods);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        console2.log("modifyOrders netting gas:", gasUsed);
+        assertLt(gasUsed, 250_000);
+    }
+
     /// @notice Benchmarks gas used by cancelOrders for three same-token orders
     function test_gas_cancelOrders() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
