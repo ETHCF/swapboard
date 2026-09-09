@@ -7,6 +7,8 @@
 #   carries remaining/filled amounts and has many Fill children.
 # - Native ETH participates directly via the `0xEeee...eEeE` sentinel address and
 #   is modelled as a Token with `isNative: true`.
+# - Makers can reprice a live order (`modifyOrder`) and flip its partial-fill flag
+#   (`setPartialFillAllowed`), so an Order's amounts are no longer write-once.
 # - Amounts are `uint128` on-chain; they are still stored as BigInt here.
 
 """
@@ -25,8 +27,13 @@ enum OrderStatus {
 
 """
 A single OTC order on the board.
-Amounts are in base units; `amountA`/`amountB` are the originals and never change,
+Amounts are in base units. `amountA`/`amountB` are the order's current totals and
 `availableA`/`availableB` shrink as the order is filled.
+
+A `modifyOrder` resets all four to the maker's new remainings, exactly as the contract
+does, which also zeroes `filledA`/`filledB`/`filledFraction` and returns a
+PARTIALLY_FILLED order to OPEN. Fill history survives the reset in `fills`, `fillCount`,
+and the `lifetimeFilled*` totals.
 """
 type Order @entity(immutable: false) {
   "Order ID from the contract, as a decimal string"
@@ -41,20 +48,24 @@ type Order @entity(immutable: false) {
   tokenB: Token! @index
   "The (tokenA, tokenB) pair this order belongs to"
   pair: Pair! @index
-  "Original amount of tokenA deposited (unchanged by fills)"
+  "Total tokenA offered (unchanged by fills; reset to availableA by a modify)"
   amountA: BigInt!
-  "Original amount of tokenB required (unchanged by fills)"
+  "Total tokenB required (unchanged by fills; reset to availableB by a modify)"
   amountB: BigInt!
   "Remaining tokenA still in escrow. After a cancel, the amount refunded to the maker"
   availableA: BigInt!
   "Remaining tokenB still required to complete the order"
   availableB: BigInt!
-  "Total tokenA taken from this order so far (amountA - availableA)"
+  "tokenA taken since the last modify (amountA - availableA)"
   filledA: BigInt!
-  "Total tokenB paid to the maker so far (amountB - availableB)"
+  "tokenB paid to the maker since the last modify (amountB - availableB)"
   filledB: BigInt!
-  "Fraction of tokenA filled, 0 to 1"
+  "Fraction of tokenA filled since the last modify, 0 to 1"
   filledFraction: BigDecimal! @index
+  "Total tokenA ever taken from this order, across modifies"
+  lifetimeFilledA: BigInt!
+  "Total tokenB ever paid to the maker for this order, across modifies"
+  lifetimeFilledB: BigInt!
   "Whether the order may be filled in multiple parts"
   partialFillAllowed: Boolean! @index
   "Current lifecycle state"
@@ -65,10 +76,14 @@ type Order @entity(immutable: false) {
   priceBPerA: BigDecimal! @index
   "Inverse asking price in human units: tokenA per 1 tokenB (0 if undeterminable)"
   priceAPerB: BigDecimal! @index
-  "Number of OrderFilled events seen for this order"
+  "Number of OrderFilled events seen for this order (not reset by a modify)"
   fillCount: Int! @index
+  "Number of OrderModified events seen for this order"
+  modifyCount: Int! @index
   "Individual fills against this order, oldest first"
   fills: [Fill!]! @derivedFrom(field: "order")
+  "Individual modifications of this order, oldest first"
+  modifications: [OrderModification!]! @derivedFrom(field: "order")
   "Block timestamp when the order was created"
   createdAt: BigInt! @index
   "Block number when the order was created"
@@ -85,6 +100,10 @@ type Order @entity(immutable: false) {
   canceledAt: BigInt
   "Transaction hash of order cancellation"
   canceledTx: Bytes
+  "Block timestamp of the most recent modification (amounts or partial-fill flag)"
+  modifiedAt: BigInt @index
+  "Transaction hash of the most recent modification"
+  modifiedTx: Bytes
 }
 
 """
@@ -127,6 +146,59 @@ type Fill @entity(immutable: true) {
   "Transaction hash of the fill"
   transactionHash: Bytes! @index
   "Log index within the transaction (batch fills emit several)"
+  logIndex: BigInt!
+}
+
+"""
+A single OrderModified event: the maker repriced a live order's remaining amounts.
+The contract resets the order's totals to the new remainings, so this entity is the
+only record of what the order looked like beforehand.
+
+Flag-only changes (`setPartialFillAllowed`) do not produce an OrderModification; they
+just update `Order.partialFillAllowed` and the `modifiedAt` / `modifiedTx` stamps.
+"""
+type OrderModification @entity(immutable: true) {
+  "Transaction hash + log index"
+  id: ID!
+  "The order that was modified"
+  order: Order! @index
+  "Order ID from the contract, denormalised for cheap filtering"
+  orderId: BigInt! @index
+  "Account that created the order (only the maker may modify)"
+  maker: Account! @index
+  "Token being sold"
+  tokenA: Token! @index
+  "Token wanted in exchange"
+  tokenB: Token! @index
+  "The (tokenA, tokenB) pair"
+  pair: Pair! @index
+  "Order total tokenA before the modification"
+  previousAmountA: BigInt!
+  "Order total tokenB before the modification"
+  previousAmountB: BigInt!
+  "Remaining tokenA before the modification"
+  previousAvailableA: BigInt!
+  "Remaining tokenB before the modification"
+  previousAvailableB: BigInt!
+  "Remaining tokenA after the modification (also the new total)"
+  availableA: BigInt!
+  "Remaining tokenB after the modification (also the new total)"
+  availableB: BigInt!
+  "Signed change in escrowed tokenA: positive is a top-up, negative a refund"
+  escrowDeltaA: BigInt!
+  "Asking price before the modification, tokenB per 1 tokenA (0 if undeterminable)"
+  previousPriceBPerA: BigDecimal!
+  "Asking price after the modification, tokenB per 1 tokenA (0 if undeterminable)"
+  priceBPerA: BigDecimal!
+  "Whether the order was PARTIALLY_FILLED before the modification reset its progress"
+  resetFillProgress: Boolean!
+  "Block timestamp of the modification"
+  timestamp: BigInt! @index
+  "Block number of the modification"
+  blockNumber: BigInt!
+  "Transaction hash of the modification"
+  transactionHash: Bytes! @index
+  "Log index within the transaction (batch modifies emit several)"
   logIndex: BigInt!
 }
 
@@ -252,6 +324,8 @@ type GlobalStats @entity(immutable: false) {
   canceledOrders: BigInt!
   "Total OrderFilled events indexed"
   totalFills: BigInt!
+  "Total OrderModified events indexed"
+  totalModifications: BigInt!
   "Distinct tokens seen"
   totalTokens: BigInt!
   "Distinct directional pairs seen"

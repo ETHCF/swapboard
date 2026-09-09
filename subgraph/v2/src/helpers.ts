@@ -97,6 +97,7 @@ export function getOrCreateGlobalStats(): GlobalStats {
     stats.filledOrders = ZERO_BI;
     stats.canceledOrders = ZERO_BI;
     stats.totalFills = ZERO_BI;
+    stats.totalModifications = ZERO_BI;
     stats.totalTokens = ZERO_BI;
     stats.totalPairs = ZERO_BI;
     stats.totalAccounts = ZERO_BI;

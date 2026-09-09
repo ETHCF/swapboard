@@ -12,18 +12,24 @@ For the indexer that serves the deployed v1 contract, see [`../v1`](../v1).
 | Fills | one `OrderFilled` per order | many, when `partialFillAllowed` |
 | Amounts | `uint256` | `uint128` |
 | Native ETH | not supported | `0xEeee…eEeE` sentinel, indexed as a `Token` with `isNative: true` |
-| Batching | — | `createOrders` / `fillOrders` / `cancelOrders` emit several events per transaction |
+| Batching | — | `createOrders` / `fillOrders` / `cancelOrders` / `modifyOrders` emit several events per transaction |
 | Fill history | none | one `Fill` entity per `OrderFilled` |
+| Live orders | write-once | makers can reprice (`modifyOrder`) and flip the partial-fill flag (`setPartialFillAllowed`) |
 
 ## Entities
 
-- **`Order`** — one per `OrderCreated`. `amountA`/`amountB` are the originals and never
-  change; `availableA`/`availableB` shrink with each fill; `filledA`/`filledB` and
+- **`Order`** — one per `OrderCreated`. `amountA`/`amountB` are the current totals;
+  `availableA`/`availableB` shrink with each fill; `filledA`/`filledB` and
   `filledFraction` accumulate. `status` is `OPEN`, `PARTIALLY_FILLED`, `FILLED`, or
-  `CANCELED`, and `active` is true for the first two.
+  `CANCELED`, and `active` is true for the first two. A modify rewrites the totals and
+  resets the fill progress (see below), so `lifetimeFilledA`/`lifetimeFilledB` carry the
+  totals that survive a reset.
 - **`Fill`** — one per `OrderFilled`, immutable, keyed by `<txHash>-<logIndex>` so batch
   fills in one transaction stay distinct. Carries the amounts, the price, and what was
   left on the order afterwards.
+- **`OrderModification`** — one per `OrderModified`, immutable, keyed the same way.
+  Carries the order's amounts and price on both sides of the change plus the signed
+  `escrowDeltaA`, and is the only record of what the order looked like beforehand.
 - **`Token`** — one per asset seen, including native ETH. Metadata is read from the ERC20
   once, on first sight, and falls back to `UNKNOWN` / `Unknown Token` / `18` decimals if
   the call reverts. `openOrdersSelling` / `openOrdersBuying` count only fillable orders.
@@ -39,6 +45,16 @@ For the indexer that serves the deployed v1 contract, see [`../v1`](../v1).
   a non-zero `availableA`: that is the rounding dust the contract deliberately leaves in
   escrow. Use `filledFraction` rather than `availableA == 0` to show fill progress.
 - On a `CANCELED` order, `availableA` is the amount refunded to the maker.
+- `modifyOrder` resets the order's totals to the maker's new remainings — the contract
+  does not preserve fill progress in `amountA`/`amountB` — so the subgraph zeroes
+  `filledA`, `filledB`, and `filledFraction` and returns a `PARTIALLY_FILLED` order to
+  `OPEN`. Anything showing an order's whole trading history should read `fills`,
+  `fillCount`, or `lifetimeFilledA`/`lifetimeFilledB`, none of which are reset.
+- A modify never opens or closes an order, so the open-order counters on `Token`, `Pair`,
+  `Account`, and `GlobalStats` do not move on one — even though escrow does.
+- `setPartialFillAllowed` only flips `Order.partialFillAllowed`. It stamps `modifiedAt` /
+  `modifiedTx` like a modify does, but writes no `OrderModification` and leaves amounts,
+  progress, and `modifyCount` alone.
 - `priceBPerA` / `priceAPerB` are decimal-adjusted human-unit prices, suitable for sorting.
   They are `0` when the price is not representable (zero amount, absurd `decimals`).
 
@@ -71,6 +87,28 @@ One account's orders and fills:
     fillsTakenCount
     orders(orderBy: createdAt, orderDirection: desc) { orderId status filledFraction }
     fillsTaken(orderBy: timestamp, orderDirection: desc) { orderId amountA amountB }
+  }
+}
+```
+
+Repricing history for one order:
+
+```graphql
+{
+  order(id: "42") {
+    amountA
+    availableA
+    lifetimeFilledA
+    modifyCount
+    modifications(orderBy: timestamp, orderDirection: desc) {
+      previousAvailableA
+      availableA
+      escrowDeltaA
+      previousPriceBPerA
+      priceBPerA
+      resetFillProgress
+      timestamp
+    }
   }
 }
 ```
@@ -108,9 +146,10 @@ pnpm test:local  # codegen + matchstick natively (needs a supported platform)
 the contract:
 
 ```bash
-forge build --root ../../contracts
-jq '.abi' ../../contracts/out/Swapboard.sol/Swapboard.json > abis/Swapboard.json
+forge inspect --root ../../contracts Swapboard abi --json > abis/Swapboard.json
 ```
+
+Adding or removing an event there also means updating `eventHandlers` in `subgraph.yaml`.
 
 `subgraph.yaml` ships a placeholder address and `startBlock: 0`; `deploy.sh` rewrites both
 after the contract is deployed.

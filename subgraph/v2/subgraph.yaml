@@ -19,6 +19,7 @@ dataSources:
       entities:
         - Order
         - Fill
+        - OrderModification
         - Token
         - Pair
         - Account
@@ -35,4 +36,8 @@ dataSources:
           handler: handleOrderFilled
         - event: OrderCanceled(indexed uint256)
           handler: handleOrderCanceled
+        - event: OrderModified(indexed uint256,uint128,uint128)
+          handler: handleOrderModified
+        - event: OrderPartialFillUpdated(indexed uint256,bool)
+          handler: handleOrderPartialFillUpdated
       file: ./src/mapping.ts
