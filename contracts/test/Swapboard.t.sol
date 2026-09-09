@@ -17,6 +17,7 @@ import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFOT} from "./mocks/MockFOT.sol";
+import {MockRevertOnZeroERC20} from "./mocks/MockRevertOnZeroERC20.sol";
 import {ETHRejecter} from "./mocks/ETHRejecter.sol";
 import {FillTestLib} from "./helpers/FillTestLib.sol";
 import {OrderTestLib} from "./helpers/OrderTestLib.sol";
@@ -137,6 +138,32 @@ contract SwapboardTest is Test {
         MockERC20 token
     ) private view returns (uint256) {
         return token.getTransferFromCalls();
+    }
+
+    function _modify(
+        uint128 availableA,
+        uint128 availableB
+    ) private pure returns (ISwapboard.ModifyOrderParams memory) {
+        return ISwapboard.ModifyOrderParams({availableA: availableA, availableB: availableB});
+    }
+
+    function _amounts(
+        ISwapboard.Order memory order
+    ) private pure returns (ISwapboard.OrderAmounts memory) {
+        return ISwapboard.OrderAmounts({
+            amountA: order.amountA, amountB: order.amountB, availableA: order.availableA, availableB: order.availableB
+        });
+    }
+
+    function _modItem(
+        uint256 orderId,
+        ISwapboard.Order memory snapshot,
+        uint128 availableA,
+        uint128 availableB
+    ) private pure returns (ISwapboard.ModifyOrdersParams memory) {
+        return ISwapboard.ModifyOrdersParams({
+            orderId: orderId, previousAmounts: _amounts(snapshot), updatedOrder: _modify(availableA, availableB)
+        });
     }
 
     // ========================================
@@ -4150,5 +4177,2796 @@ contract SwapboardTest is Test {
         assertFalse(_board.getOrder(ids[1]).active);
         assertEq(_board.getOrder(ids[0]).availableA, 0);
         assertEq(_board.getOrder(ids[1]).availableA, 0);
+    }
+
+    // ============ modifyOrder ============
+
+    /// @notice Tests modifyOrder reverts when previousAmounts does not match on-chain state
+    function test_modifyOrder_reverts_on_state_mismatch() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A + 10 ether);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A + 10 ether, AMOUNT_B));
+        vm.stopPrank();
+
+        ISwapboard.Order memory afterFirst = _board.getOrder(orderId);
+
+        vm.startPrank(_maker);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.OrderStateMismatch.selector,
+                orderId,
+                snapshot.amountA,
+                snapshot.amountB,
+                snapshot.availableA,
+                snapshot.availableB,
+                afterFirst.amountA,
+                afterFirst.amountB,
+                afterFirst.availableA,
+                afterFirst.availableB
+            )
+        );
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A + 10 ether, AMOUNT_B));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrder reverts when caller is not the maker
+    function test_modifyOrder_reverts_notMaker() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        vm.prank(_taker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotMaker.selector, orderId, _taker, _maker));
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, AMOUNT_B));
+    }
+
+    /// @notice Tests modifyOrder reverts when availableA is zero
+    function test_modifyOrder_reverts_zeroAvailableA() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(0, AMOUNT_B));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrder reverts when availableB is zero
+    function test_modifyOrder_reverts_zeroAvailableB() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, 0));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrder reverts when remainings are unchanged
+    function test_modifyOrder_reverts_noChange() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 makerTokenABefore = _tokenA.balanceOf(_maker);
+        vm.expectRevert(ISwapboard.NoChange.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, AMOUNT_B));
+        vm.stopPrank();
+
+        assertEq(_tokenA.balanceOf(_maker), makerTokenABefore);
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.amountA, AMOUNT_A);
+        assertEq(after_.availableA, AMOUNT_A);
+        assertEq(after_.availableB, AMOUNT_B);
+    }
+
+    /// @notice Tests modifyOrder refunds tokenA when remaining availableA decreases
+    function test_modifyOrder_refunds_tokenA_when_availableA_decreases() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        uint128 fillAmountA = AMOUNT_A / 2;
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(orderId, fillAmountA);
+        vm.stopPrank();
+
+        ISwapboard.Order memory before = _board.getOrder(orderId);
+        assertEq(before.availableA, AMOUNT_A - fillAmountA);
+
+        uint128 newAvailableA = before.availableA / 2;
+        uint128 expectedRefund = before.availableA - newAvailableA;
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+
+        vm.prank(_maker);
+        _board.modifyOrder(orderId, _amounts(before), _modify(newAvailableA, before.availableB));
+
+        assertEq(_tokenA.balanceOf(_maker) - makerBefore, expectedRefund);
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.amountA, newAvailableA);
+        assertEq(after_.availableA, newAvailableA);
+        assertEq(after_.amountB, before.availableB);
+        assertEq(after_.availableB, before.availableB);
+    }
+
+    /// @notice Tests modifyOrder pulls additional tokenA when remaining availableA increases
+    function test_modifyOrder_tops_up_tokenA_when_availableA_increases() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A + 25 ether);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        uint128 fillAmountA = AMOUNT_A / 2;
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(orderId, fillAmountA);
+        vm.stopPrank();
+
+        ISwapboard.Order memory before = _board.getOrder(orderId);
+        uint128 newAvailableA = before.availableA + 25 ether;
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+
+        vm.prank(_maker);
+        _board.modifyOrder(orderId, _amounts(before), _modify(newAvailableA, before.availableB));
+
+        assertEq(makerBefore - _tokenA.balanceOf(_maker), 25 ether);
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.amountA, newAvailableA);
+        assertEq(after_.availableA, newAvailableA);
+        assertEq(after_.availableB, before.availableB);
+    }
+
+    /// @notice Tests modifyOrder can change availableB without moving tokenA escrow
+    function test_modifyOrder_updates_availableB_only() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, AMOUNT_B * 2));
+        vm.stopPrank();
+
+        assertEq(_tokenA.balanceOf(_maker), makerBefore);
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.amountA, AMOUNT_A);
+        assertEq(after_.amountB, AMOUNT_B * 2);
+        assertEq(after_.availableA, AMOUNT_A);
+        assertEq(after_.availableB, AMOUNT_B * 2);
+        assertEq(after_.tokenA, address(_tokenA));
+        assertEq(after_.tokenB, address(_tokenB));
+    }
+
+    /// @notice Tests modifyOrder can set remaining below previously filled amounts
+    function test_modifyOrder_allows_any_remaining_afterPartialFill() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        uint128 fillAmountA = 60 ether;
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(orderId, fillAmountA);
+        vm.stopPrank();
+
+        ISwapboard.Order memory before = _board.getOrder(orderId);
+        assertEq(before.availableA, 40 ether);
+
+        uint128 newAvailableA = 10 ether;
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+
+        vm.prank(_maker);
+        _board.modifyOrder(orderId, _amounts(before), _modify(newAvailableA, before.availableB));
+
+        assertEq(_tokenA.balanceOf(_maker) - makerBefore, 30 ether);
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.amountA, newAvailableA);
+        assertEq(after_.availableA, newAvailableA);
+        assertTrue(after_.active);
+    }
+
+    /// @notice Tests modifyOrder emits OrderModified
+    function test_modifyOrder_emits_event() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint128 newAvailableB = AMOUNT_B / 2;
+
+        vm.expectEmit(true, false, false, true, address(_board));
+        emit ISwapboard.OrderModified(orderId, AMOUNT_A, newAvailableB);
+
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, newAvailableB));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests setPartialFillAllowed enables partial fills and emits OrderPartialFillUpdated
+    function test_setPartialFillAllowed_enables() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        assertFalse(_board.getOrder(orderId).partialFillAllowed);
+
+        vm.expectEmit(true, false, false, true, address(_board));
+        emit ISwapboard.OrderPartialFillUpdated(orderId, true);
+        _board.setPartialFillAllowed(orderId, true);
+        vm.stopPrank();
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertTrue(after_.partialFillAllowed);
+        assertEq(after_.availableA, AMOUNT_A);
+        assertEq(after_.availableB, AMOUNT_B);
+        assertEq(after_.amountA, AMOUNT_A);
+        assertEq(after_.amountB, AMOUNT_B);
+    }
+
+    /// @notice Tests setPartialFillAllowed reverts when the flag is already the requested value
+    function test_setPartialFillAllowed_reverts_noChange() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        assertFalse(_board.getOrder(orderId).partialFillAllowed);
+
+        vm.expectRevert(ISwapboard.NoChange.selector);
+        _board.setPartialFillAllowed(orderId, false);
+        vm.stopPrank();
+
+        assertFalse(_board.getOrder(orderId).partialFillAllowed);
+    }
+
+    /// @notice Tests setPartialFillAllowed reverts when re-setting the same enabled value
+    function test_setPartialFillAllowed_reverts_noChange_afterEnable() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        _board.setPartialFillAllowed(orderId, true);
+
+        vm.expectRevert(ISwapboard.NoChange.selector);
+        _board.setPartialFillAllowed(orderId, true);
+        vm.stopPrank();
+
+        assertTrue(_board.getOrder(orderId).partialFillAllowed);
+    }
+
+    /// @notice Tests setPartialFillAllowed reverts for a non-existent order
+    function test_setPartialFillAllowed_reverts_orderNotFound() public {
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
+        _board.setPartialFillAllowed(999, true);
+    }
+
+    /// @notice Tests setPartialFillAllowed reverts after a full fill (order is inactive)
+    function test_setPartialFillAllowed_reverts_orderNotActive_afterFill() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(orderId, AMOUNT_A);
+        vm.stopPrank();
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        _board.setPartialFillAllowed(orderId, true);
+    }
+
+    /// @notice Tests setPartialFillAllowed reverts after cancel (order is deleted)
+    function test_setPartialFillAllowed_reverts_orderNotFound_afterCancel() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        _board.cancelOrder(orderId);
+        vm.stopPrank();
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
+        _board.setPartialFillAllowed(orderId, true);
+    }
+
+    /// @notice Tests modifyOrder reverts for a non-existent order
+    function test_modifyOrder_reverts_orderNotFound() public {
+        ISwapboard.OrderAmounts memory previous =
+            ISwapboard.OrderAmounts({amountA: 1, amountB: 1, availableA: 1, availableB: 1});
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
+        _board.modifyOrder(999, previous, _modify(1, 1));
+    }
+
+    /// @notice Tests modifyOrder reverts after a full fill (order is inactive)
+    function test_modifyOrder_reverts_orderNotActive_afterFill() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(orderId, AMOUNT_A);
+        vm.stopPrank();
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, AMOUNT_B));
+    }
+
+    /// @notice Tests modifyOrder reverts after cancel (order is deleted)
+    function test_modifyOrder_reverts_orderNotFound_afterCancel() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        _board.cancelOrder(orderId);
+        vm.stopPrank();
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, AMOUNT_B));
+    }
+
+    /// @notice Tests modifyOrder reverts when a fill races between snapshot and modify
+    function test_modifyOrder_reverts_stateMismatch_afterFill() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(orderId, AMOUNT_A / 2);
+        vm.stopPrank();
+
+        ISwapboard.Order memory afterFill = _board.getOrder(orderId);
+
+        vm.prank(_maker);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.OrderStateMismatch.selector,
+                orderId,
+                snapshot.amountA,
+                snapshot.amountB,
+                snapshot.availableA,
+                snapshot.availableB,
+                afterFill.amountA,
+                afterFill.amountB,
+                afterFill.availableA,
+                afterFill.availableB
+            )
+        );
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, AMOUNT_B));
+    }
+
+    /// @notice Tests ZeroAmount blocks setting remaining to 0; cancel is required to close the order
+    function test_modifyOrder_reverts_zeroRemaining_mustCancel() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(0, AMOUNT_B));
+
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, 0));
+
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(0, 0));
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenA.balanceOf(_maker), makerBefore);
+        assertEq(_tokenA.balanceOf(address(_board)), boardBefore);
+        assertEq(_board.getOrder(orderId).availableA, AMOUNT_A);
+        assertEq(_board.getOrder(orderId).availableB, AMOUNT_B);
+
+        _board.cancelOrder(orderId);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(orderId));
+        assertEq(_board.getOrder(orderId).maker, address(0));
+        assertEq(_tokenA.balanceOf(_maker), makerBefore + AMOUNT_A);
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Tests ZeroAmount still blocks remaining 0 after a partial fill; leftover escrow is cancelled
+    function test_modifyOrder_reverts_zeroRemaining_afterPartialFill_mustCancel() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(orderId, AMOUNT_A / 2);
+        vm.stopPrank();
+
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        assertEq(snapshot.availableA, AMOUNT_A / 2);
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+
+        vm.startPrank(_maker);
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(0, snapshot.availableB));
+
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(snapshot.availableA, 0));
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenA.balanceOf(address(_board)), boardBefore);
+
+        _board.cancelOrder(orderId);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(orderId));
+        assertEq(_tokenA.balanceOf(_maker), makerBefore + snapshot.availableA);
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Tests ZeroAmount blocks setting ETH remaining to 0; cancel refunds escrow instead
+    function test_modifyOrder_sellEth_reverts_zeroRemaining_mustCancel() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+
+        vm.startPrank(_maker);
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(0, AMOUNT_B));
+
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(ETH_AMOUNT, 0));
+
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(0, 0));
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_maker.balance, makerBefore);
+        assertEq(address(_board).balance, boardBefore);
+        assertEq(_board.getOrder(orderId).availableA, ETH_AMOUNT);
+
+        _board.cancelOrder(orderId);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(orderId));
+        assertEq(_maker.balance, makerBefore + ETH_AMOUNT);
+        assertEq(address(_board).balance, 0);
+    }
+
+    /// @notice Tests modifyOrder reverts if ETH is sent when tokenA is ERC20
+    function test_modifyOrder_erc20_revert_accidentalEth() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0, 1 ether));
+        _board.modifyOrder{value: 1 ether}(orderId, _amounts(snapshot), _modify(AMOUNT_A, AMOUNT_B * 2));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrder selling ETH refunds excess escrow
+    function test_modifyOrder_sellEth_refunds() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint128 newAvailableA = ETH_AMOUNT / 2;
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+
+        vm.prank(_maker);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(newAvailableA, AMOUNT_B));
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.availableA, newAvailableA);
+        assertEq(after_.amountA, newAvailableA);
+        assertEq(_maker.balance, makerBefore + newAvailableA);
+        assertEq(address(_board).balance, boardBefore - newAvailableA);
+    }
+
+    /// @notice Tests modifyOrder selling ETH tops up escrow with msg.value
+    function test_modifyOrder_sellEth_topsUp() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint128 extra = 0.5 ether;
+        uint128 newAvailableA = ETH_AMOUNT + extra;
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+
+        vm.prank(_maker);
+        _board.modifyOrder{value: extra}(orderId, _amounts(snapshot), _modify(newAvailableA, AMOUNT_B));
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.availableA, newAvailableA);
+        assertEq(after_.amountA, newAvailableA);
+        assertEq(_maker.balance, makerBefore - extra);
+        assertEq(address(_board).balance, boardBefore + extra);
+    }
+
+    /// @notice Tests modifyOrder selling ETH reverts when msg.value is too low
+    function test_modifyOrder_sellEth_revert_ethMismatch_tooLow() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0.5 ether, 0));
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(ETH_AMOUNT + 0.5 ether, AMOUNT_B));
+    }
+
+    /// @notice Tests modifyOrder selling ETH reverts when msg.value is too high
+    function test_modifyOrder_sellEth_revert_ethMismatch_tooHigh() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0.5 ether, 1 ether));
+        _board.modifyOrder{value: 1 ether}(orderId, _amounts(snapshot), _modify(ETH_AMOUNT + 0.5 ether, AMOUNT_B));
+    }
+
+    /// @notice Tests modifyOrder selling ETH reverts when shrinking remaining but ETH is also sent
+    function test_modifyOrder_sellEth_refund_revert_accidentalEth() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0, 0.1 ether));
+        _board.modifyOrder{value: 0.1 ether}(orderId, _amounts(snapshot), _modify(ETH_AMOUNT / 2, AMOUNT_B));
+    }
+
+    /// @notice Tests modifyOrder ETH refund reverts when maker rejects ETH and leaves escrow intact
+    function test_modifyOrder_sellEth_revert_ethTransferFailed() public {
+        ETHRejecter rejecter = new ETHRejecter();
+        vm.deal(address(rejecter), 10 ether);
+
+        vm.prank(address(rejecter));
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 boardEthBefore = address(_board).balance;
+
+        vm.prank(address(rejecter));
+        vm.expectRevert(ETHRejecter.RejectETH.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(ETH_AMOUNT / 2, AMOUNT_B));
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(address(_board).balance, boardEthBefore);
+        assertEq(_board.getOrder(orderId).availableA, ETH_AMOUNT);
+    }
+
+    /// @notice Tests modifyOrder top-up rejects FOT tokenA via BalanceMismatch
+    function test_modifyOrder_revert_FOT_topUp() public {
+        MockFOT fot = new MockFOT();
+        fot.setFeePercent(0);
+        fot.mint(_maker, 1000 ether);
+
+        vm.startPrank(_maker);
+        fot.approve(address(_board), type(uint256).max);
+        uint256 orderId = _board.createOrder(_order(address(fot), 100 ether, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        vm.stopPrank();
+
+        fot.setFeePercent(5);
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, 50 ether, _fotNet(50 ether)));
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(150 ether, AMOUNT_B));
+
+        assertEq(_board.getOrder(orderId).availableA, 100 ether);
+        assertEq(fot.balanceOf(address(_board)), 100 ether);
+    }
+
+    /// @notice Tests fillOrder still works after modify changes remaining size and price
+    function test_modifyOrder_thenFill() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint128 newA = AMOUNT_A / 2;
+        uint128 newB = AMOUNT_B / 5;
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(newA, newB));
+        vm.stopPrank();
+
+        ISwapboard.Order memory modified = _board.getOrder(orderId);
+        assertEq(modified.availableA, newA);
+        assertEq(modified.availableB, newB);
+        assertEq(modified.amountA, newA);
+        assertEq(modified.amountB, newB);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), newB);
+        _fillOrder(orderId, newA);
+        vm.stopPrank();
+
+        ISwapboard.Order memory filled = _board.getOrder(orderId);
+        assertFalse(filled.active);
+        assertEq(filled.availableA, 0);
+        assertEq(_tokenA.balanceOf(_taker), AMOUNT_A * 10 + newA);
+        assertEq(_tokenB.balanceOf(_maker), AMOUNT_B * 10 + newB);
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Tests fillOrder paying ETH after modify of an ETH-buy order's remaining tokenA
+    function test_modifyOrder_thenFill_payEth() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, _eth, ETH_AMOUNT));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A / 2, ETH_AMOUNT / 2));
+        vm.stopPrank();
+
+        vm.prank(_taker);
+        _fillOrderPayEth(orderId, AMOUNT_A / 2, ETH_AMOUNT / 2);
+
+        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_tokenA.balanceOf(_taker), AMOUNT_A * 10 + AMOUNT_A / 2);
+        assertEq(address(_board).balance, 0);
+    }
+
+    /// @notice Tests modifyOrder leaves token pair and maker unchanged
+    function test_modifyOrder_preserves_tokens_and_maker() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A / 2, AMOUNT_B * 2));
+        vm.stopPrank();
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.tokenA, address(_tokenA));
+        assertEq(after_.tokenB, address(_tokenB));
+        assertEq(after_.maker, _maker);
+        assertTrue(after_.active);
+    }
+
+    /// @notice Tests modifyOrder reverts when previousAmounts.amountA is stale
+    function test_modifyOrder_reverts_stateMismatch_wrongAmountA() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
+        previous.amountA = snapshot.amountA - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.OrderStateMismatch.selector,
+                orderId,
+                previous.amountA,
+                previous.amountB,
+                previous.availableA,
+                previous.availableB,
+                snapshot.amountA,
+                snapshot.amountB,
+                snapshot.availableA,
+                snapshot.availableB
+            )
+        );
+        _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrder reverts when previousAmounts.amountB is stale
+    function test_modifyOrder_reverts_stateMismatch_wrongAmountB() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
+        previous.amountB = snapshot.amountB - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.OrderStateMismatch.selector,
+                orderId,
+                previous.amountA,
+                previous.amountB,
+                previous.availableA,
+                previous.availableB,
+                snapshot.amountA,
+                snapshot.amountB,
+                snapshot.availableA,
+                snapshot.availableB
+            )
+        );
+        _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrder reverts when previousAmounts.availableA is stale
+    function test_modifyOrder_reverts_stateMismatch_wrongAvailableA() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
+        previous.availableA = snapshot.availableA - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.OrderStateMismatch.selector,
+                orderId,
+                previous.amountA,
+                previous.amountB,
+                previous.availableA,
+                previous.availableB,
+                snapshot.amountA,
+                snapshot.amountB,
+                snapshot.availableA,
+                snapshot.availableB
+            )
+        );
+        _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrder reverts when previousAmounts.availableB is stale
+    function test_modifyOrder_reverts_stateMismatch_wrongAvailableB() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
+        previous.availableB = snapshot.availableB - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.OrderStateMismatch.selector,
+                orderId,
+                previous.amountA,
+                previous.amountB,
+                previous.availableA,
+                previous.availableB,
+                snapshot.amountA,
+                snapshot.amountB,
+                snapshot.availableA,
+                snapshot.availableB
+            )
+        );
+        _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrder top-up reverts when allowance is insufficient
+    function test_modifyOrder_revert_insufficientAllowance() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        _tokenA.approve(address(_board), 0);
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+
+        vm.expectRevert(stdError.arithmeticError);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A + 1 ether, AMOUNT_B));
+        vm.stopPrank();
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.availableA, AMOUNT_A);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore);
+        assertEq(_tokenA.balanceOf(address(_board)), boardBefore);
+    }
+
+    /// @notice Tests modifyOrder top-up reverts when maker tokenA balance is insufficient
+    function test_modifyOrder_revert_insufficientBalance() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 leftover = _tokenA.balanceOf(_maker);
+        assertTrue(_tokenA.transfer(address(0xdead), leftover));
+
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+        vm.expectRevert(stdError.arithmeticError);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A + 1 ether, AMOUNT_B));
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(orderId).availableA, AMOUNT_A);
+        assertEq(_tokenA.balanceOf(address(_board)), boardBefore);
+        assertEq(_tokenA.balanceOf(_maker), 0);
+    }
+
+    /// @notice Tests cancelOrder after modify refunds the updated remaining escrow
+    function test_modifyOrder_thenCancel() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        uint128 newA = AMOUNT_A / 4;
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(newA, AMOUNT_B));
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.cancelOrder(orderId);
+        vm.stopPrank();
+
+        assertEq(_tokenA.balanceOf(_maker) - makerBefore, newA);
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+        assertEq(_board.getOrder(orderId).maker, address(0));
+        assertFalse(_board.canFill(orderId));
+    }
+
+    /// @notice Tests setPartialFillAllowed can disable partial fills so a later partial fill reverts
+    function test_setPartialFillAllowed_disables_then_partialFillReverts() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        vm.expectEmit(true, false, false, true, address(_board));
+        emit ISwapboard.OrderPartialFillUpdated(orderId, false);
+        _board.setPartialFillAllowed(orderId, false);
+        vm.stopPrank();
+
+        assertFalse(_board.getOrder(orderId).partialFillAllowed);
+        assertEq(_board.getOrder(orderId).availableA, AMOUNT_A);
+        assertEq(_board.getOrder(orderId).availableB, AMOUNT_B);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.PartialFillNotAllowed.selector, orderId));
+        _fillOrderQuoted(order, orderId, AMOUNT_A / 2);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_board.getOrder(orderId).availableA, AMOUNT_A);
+    }
+
+    /// @notice Tests setPartialFillAllowed can enable partial fills so a later partial fill succeeds
+    function test_setPartialFillAllowed_enables_then_partialFill() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        _board.setPartialFillAllowed(orderId, true);
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(orderId, AMOUNT_A / 2);
+        vm.stopPrank();
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertTrue(after_.active);
+        assertEq(after_.availableA, AMOUNT_A / 2);
+        assertTrue(after_.partialFillAllowed);
+    }
+
+    /// @notice Tests setPartialFillAllowed reverts when caller is not the maker
+    function test_setPartialFillAllowed_reverts_notMaker() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        vm.prank(_taker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotMaker.selector, orderId, _taker, _maker));
+        _board.setPartialFillAllowed(orderId, true);
+
+        assertFalse(_board.getOrder(orderId).partialFillAllowed);
+    }
+
+    /// @notice Tests modifyOrder leaves partialFillAllowed unchanged
+    function test_modifyOrder_preserves_partialFillAllowed() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        assertTrue(snapshot.partialFillAllowed);
+
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A / 2, AMOUNT_B / 2));
+        vm.stopPrank();
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertTrue(after_.partialFillAllowed);
+        assertEq(after_.availableA, AMOUNT_A / 2);
+        assertEq(after_.availableB, AMOUNT_B / 2);
+    }
+
+    /// @notice Tests modifyOrder selling ETH reverts when remainings are unchanged
+    function test_modifyOrder_sellEth_reverts_noChange() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.NoChange.selector);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(ETH_AMOUNT, AMOUNT_B));
+
+        assertEq(_maker.balance, makerBefore);
+        assertEq(address(_board).balance, boardBefore);
+        assertEq(_board.getOrder(orderId).availableA, ETH_AMOUNT);
+        assertEq(_board.getOrder(orderId).availableB, AMOUNT_B);
+    }
+
+    /// @notice Tests modifyOrder selling ETH with unchanged availableA still allows availableB updates
+    function test_modifyOrder_sellEth_availableB_only_succeeds() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+
+        vm.prank(_maker);
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(ETH_AMOUNT, AMOUNT_B * 2));
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.availableA, ETH_AMOUNT);
+        assertEq(after_.amountB, AMOUNT_B * 2);
+        assertEq(_maker.balance, makerBefore);
+        assertEq(address(_board).balance, boardBefore);
+    }
+
+    /// @notice Fuzz tests modifyOrder remaining ERC20 amounts and escrow deltas
+    function testFuzz_modifyOrder_availableA(
+        uint256 newASeed,
+        uint256 newBSeed
+    ) public {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 newA = uint128(bound(newASeed, 1, AMOUNT_A * 5));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 newB = uint128(bound(newBSeed, 1, AMOUNT_B * 5));
+        vm.assume(newA != AMOUNT_A || newB != AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(newA, newB));
+        vm.stopPrank();
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.amountA, newA);
+        assertEq(after_.availableA, newA);
+        assertEq(after_.amountB, newB);
+        assertEq(after_.availableB, newB);
+        assertTrue(after_.active);
+
+        if (newA > AMOUNT_A) {
+            assertEq(makerBefore - _tokenA.balanceOf(_maker), newA - AMOUNT_A);
+            assertEq(_tokenA.balanceOf(address(_board)) - boardBefore, newA - AMOUNT_A);
+        } else {
+            assertEq(_tokenA.balanceOf(_maker) - makerBefore, AMOUNT_A - newA);
+            assertEq(boardBefore - _tokenA.balanceOf(address(_board)), AMOUNT_A - newA);
+        }
+    }
+
+    /// @notice Fuzz tests modifyOrder ETH tokenA top-up and refund
+    function testFuzz_modifyOrder_sellEth(
+        uint256 newASeed
+    ) public {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 newA = uint128(bound(newASeed, 1, 50 ether));
+        vm.assume(newA != ETH_AMOUNT);
+
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+        uint256 value = newA > ETH_AMOUNT ? uint256(newA - ETH_AMOUNT) : 0;
+
+        vm.prank(_maker);
+        _board.modifyOrder{value: value}(orderId, _amounts(snapshot), _modify(newA, AMOUNT_B));
+
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.availableA, newA);
+        assertEq(after_.amountA, newA);
+        assertEq(address(_board).balance, newA);
+        if (newA > ETH_AMOUNT) {
+            assertEq(makerBefore - _maker.balance, newA - ETH_AMOUNT);
+            assertEq(address(_board).balance - boardBefore, newA - ETH_AMOUNT);
+        } else {
+            assertEq(_maker.balance - makerBefore, ETH_AMOUNT - newA);
+            assertEq(boardBefore - address(_board).balance, ETH_AMOUNT - newA);
+        }
+    }
+
+    // ============ modifyOrders ============
+
+    /// @notice Tests modifyOrders aggregates ERC20 top-ups into one pull
+    function test_modifyOrders_aggregatesSameToken_topUp() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 15 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore + 1);
+        assertEq(makerBefore - _tokenA.balanceOf(_maker), 15 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 45 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 15 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 30 ether);
+    }
+
+    /// @notice Tests modifyOrders aggregates ERC20 refunds into one transfer
+    function test_modifyOrders_aggregatesSameToken_refund() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 60 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 10 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 20 ether, AMOUNT_B);
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tokenA.balanceOf(_maker) - makerBefore, 70 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 30 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 20 ether);
+    }
+
+    /// @notice Tests modifyOrders nets same-token top-up against refund into one pull
+    function test_modifyOrders_netsSameToken_topUpDominates() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +20 on ids[0], -10 on ids[1] => net pull 10, no refund transfer
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore + 1);
+        assertEq(makerBefore - _tokenA.balanceOf(_maker), 10 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 60 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 30 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 30 ether);
+    }
+
+    /// @notice Tests modifyOrders nets same-token top-up against refund into one refund
+    function test_modifyOrders_netsSameToken_refundDominates() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +5 on ids[0], -20 on ids[1] => net refund 15, no pull
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 15 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 20 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore);
+        assertEq(_tokenA.balanceOf(_maker) - makerBefore, 15 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 35 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 15 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 20 ether);
+    }
+
+    /// @notice Tests equal same-token top-up and refund cancel with no ERC20 transfer
+    function test_modifyOrders_netsSameToken_cancelsCompletely() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +10 on ids[0], -10 on ids[1] => no pull, no refund
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 20 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore);
+        assertEq(_tokenA.balanceOf(address(_board)), boardBefore);
+        assertEq(_board.getOrder(ids[0]).availableA, 20 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 30 ether);
+    }
+
+    /// @notice Tests ETH top-up and refund net so msg.value is only the surplus
+    function test_modifyOrders_netsEth_topUpDominates() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        // +0.75 ETH on id0, -0.25 ETH on id1 => msg.value 0.5, no ETH refund send
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.75 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), ETH_AMOUNT - 0.25 ether, AMOUNT_B);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+        _board.modifyOrders{value: 0.5 ether}(mods);
+        vm.stopPrank();
+
+        assertEq(makerBefore - _maker.balance, 0.5 ether);
+        assertEq(address(_board).balance, boardBefore + 0.5 ether);
+        assertEq(_board.getOrder(id0).availableA, ETH_AMOUNT + 0.75 ether);
+        assertEq(_board.getOrder(id1).availableA, ETH_AMOUNT - 0.25 ether);
+    }
+
+    /// @notice Tests equal ETH top-up and refund cancel with msg.value 0 and no send
+    function test_modifyOrders_netsEth_cancelsCompletely() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        // +0.5 ETH on id0, -0.5 ETH on id1 => msg.value 0, no ETH movement
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.5 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), ETH_AMOUNT - 0.5 ether, AMOUNT_B);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_maker.balance, makerBefore);
+        assertEq(address(_board).balance, boardBefore);
+        assertEq(_board.getOrder(id0).availableA, ETH_AMOUNT + 0.5 ether);
+        assertEq(_board.getOrder(id1).availableA, ETH_AMOUNT - 0.5 ether);
+    }
+
+    /// @notice Tests netted ETH path reverts when msg.value is the gross top-up instead of the net
+    function test_modifyOrders_netsEth_revert_msgValueIsGrossTopUp() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.75 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), ETH_AMOUNT - 0.25 ether, AMOUNT_B);
+
+        // Gross top-up is 0.75 ether; net required is 0.5 ether
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0.5 ether, 0.75 ether));
+        _board.modifyOrders{value: 0.75 ether}(mods);
+        vm.stopPrank();
+    }
+
+    /// @notice Tests three same-token legs: two top-ups and one refund net to a single pull
+    function test_modifyOrders_netsSameToken_threeOrders_topUpDominates() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+        orders[2] = _order(address(_tokenA), 30 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +10, +5, -8 => net pull 7
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 20 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 25 ether, AMOUNT_B);
+        mods[2] = _modItem(ids[2], _board.getOrder(ids[2]), 22 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore + 1);
+        assertEq(makerBefore - _tokenA.balanceOf(_maker), 7 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), boardBefore + 7 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 20 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 25 ether);
+        assertEq(_board.getOrder(ids[2]).availableA, 22 ether);
+    }
+
+    /// @notice Tests three same-token legs: one top-up and two refunds net to a single refund
+    function test_modifyOrders_netsSameToken_threeOrders_refundDominates() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+        orders[2] = _order(address(_tokenA), 50 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +3, -10, -5 => net refund 12
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 13 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+        mods[2] = _modItem(ids[2], _board.getOrder(ids[2]), 45 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore);
+        assertEq(_tokenA.balanceOf(_maker) - makerBefore, 12 ether);
+        assertEq(boardBefore - _tokenA.balanceOf(address(_board)), 12 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 13 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 30 ether);
+        assertEq(_board.getOrder(ids[2]).availableA, 45 ether);
+    }
+
+    /// @notice Tests three same-token legs whose top-ups and refunds cancel exactly
+    function test_modifyOrders_netsSameToken_threeOrders_cancelsCompletely() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+        orders[2] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +10, +5, -15 => cancel
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 20 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 25 ether, AMOUNT_B);
+        mods[2] = _modItem(ids[2], _board.getOrder(ids[2]), 25 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore);
+        assertEq(_tokenA.balanceOf(address(_board)), boardBefore);
+        assertEq(_board.getOrder(ids[0]).availableA, 20 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 25 ether);
+        assertEq(_board.getOrder(ids[2]).availableA, 25 ether);
+    }
+
+    /// @notice Tests refund-first then top-up ordering still nets to one pull
+    function test_modifyOrders_netsSameToken_refundThenTopUp() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // Refund listed first: -10 then +25 => net pull 15
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 35 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore + 1);
+        assertEq(makerBefore - _tokenA.balanceOf(_maker), 15 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 65 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 30 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 35 ether);
+    }
+
+    /// @notice Tests top-up-first then larger refund nets to one refund
+    function test_modifyOrders_netsSameToken_topUpThenLargerRefund() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 50 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +8 then -30 => net refund 22
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 18 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 20 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore);
+        assertEq(_tokenA.balanceOf(_maker) - makerBefore, 22 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 38 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 18 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 20 ether);
+    }
+
+    /// @notice Tests many alternating same-token top-ups and refunds collapse to one net pull
+    function test_modifyOrders_netsSameToken_alternatingLegs_topUpDominates() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](4);
+        orders[0] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+        orders[2] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+        orders[3] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +12, -3, +8, -5 => gross top 20, gross refund 8, net pull 12
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](4);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 32 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 17 ether, AMOUNT_B);
+        mods[2] = _modItem(ids[2], _board.getOrder(ids[2]), 28 ether, AMOUNT_B);
+        mods[3] = _modItem(ids[3], _board.getOrder(ids[3]), 15 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore + 1);
+        assertEq(makerBefore - _tokenA.balanceOf(_maker), 12 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 92 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 32 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 17 ether);
+        assertEq(_board.getOrder(ids[2]).availableA, 28 ether);
+        assertEq(_board.getOrder(ids[3]).availableA, 15 ether);
+    }
+
+    /// @notice Tests many alternating same-token top-ups and refunds collapse to one net refund
+    function test_modifyOrders_netsSameToken_alternatingLegs_refundDominates() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](4);
+        orders[0] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+        orders[2] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+        orders[3] = _order(address(_tokenA), 20 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +4, -11, +2, -9 => gross top 6, gross refund 20, net refund 14
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](4);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 24 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 9 ether, AMOUNT_B);
+        mods[2] = _modItem(ids[2], _board.getOrder(ids[2]), 22 ether, AMOUNT_B);
+        mods[3] = _modItem(ids[3], _board.getOrder(ids[3]), 11 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore);
+        assertEq(_tokenA.balanceOf(_maker) - makerBefore, 14 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 66 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 24 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 9 ether);
+        assertEq(_board.getOrder(ids[2]).availableA, 22 ether);
+        assertEq(_board.getOrder(ids[3]).availableA, 11 ether);
+    }
+
+    /// @notice Tests B-only change on one order does not disturb A netting on another
+    function test_modifyOrders_netsSameToken_withAvailableBOnlySibling() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // ids[0]: A +20 (top-up), ids[1]: A -5 and B changes (refund) => net pull 15
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 35 ether, AMOUNT_B * 2);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore + 1);
+        assertEq(makerBefore - _tokenA.balanceOf(_maker), 15 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 65 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 30 ether);
+        assertEq(_board.getOrder(ids[0]).availableB, AMOUNT_B);
+        assertEq(_board.getOrder(ids[1]).availableA, 35 ether);
+        assertEq(_board.getOrder(ids[1]).availableB, AMOUNT_B * 2);
+    }
+
+    /// @notice Tests distinct tokenA assets net independently in one batch
+    function test_modifyOrders_netsIndependentTokens() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        _tokenB.approve(address(_board), type(uint256).max);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](4);
+        // tokenA legs: 10 and 40
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+        // tokenB legs: 100e6 and 400e6
+        orders[2] = _order(address(_tokenB), 100e6, address(_tokenA), 1 ether);
+        orders[3] = _order(address(_tokenB), 400e6, address(_tokenA), 1 ether);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // tokenA: +20 / -5 => net pull 15
+        // tokenB: +50e6 / -200e6 => net refund 150e6
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](4);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 35 ether, AMOUNT_B);
+        mods[2] = _modItem(ids[2], _board.getOrder(ids[2]), 150e6, 1 ether);
+        mods[3] = _modItem(ids[3], _board.getOrder(ids[3]), 200e6, 1 ether);
+
+        uint256 pullsABefore = _tf(_tokenA);
+        uint256 pullsBBefore = _tf(_tokenB);
+        uint256 makerABefore = _tokenA.balanceOf(_maker);
+        uint256 makerBBefore = _tokenB.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsABefore + 1);
+        assertEq(_tf(_tokenB), pullsBBefore);
+        assertEq(makerABefore - _tokenA.balanceOf(_maker), 15 ether);
+        assertEq(_tokenB.balanceOf(_maker) - makerBBefore, 150e6);
+        assertEq(_tokenA.balanceOf(address(_board)), 65 ether);
+        assertEq(_tokenB.balanceOf(address(_board)), 350e6);
+    }
+
+    /// @notice Tests ETH refund dominates across two ETH orders
+    function test_modifyOrders_netsEth_refundDominates() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: 2 ether}(_order(_eth, 2 ether, address(_tokenB), AMOUNT_B));
+
+        // +0.2 ETH, -1.0 ETH => net refund 0.8, msg.value 0
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.2 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), 1 ether, AMOUNT_B);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_maker.balance - makerBefore, 0.8 ether);
+        assertEq(boardBefore - address(_board).balance, 0.8 ether);
+        assertEq(_board.getOrder(id0).availableA, ETH_AMOUNT + 0.2 ether);
+        assertEq(_board.getOrder(id1).availableA, 1 ether);
+    }
+
+    /// @notice Tests three ETH legs net to a single msg.value top-up
+    function test_modifyOrders_netsEth_threeOrders_topUpDominates() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id2 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        // +0.5, +0.3, -0.4 => net pull 0.4
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.5 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), ETH_AMOUNT + 0.3 ether, AMOUNT_B);
+        mods[2] = _modItem(id2, _board.getOrder(id2), ETH_AMOUNT - 0.4 ether, AMOUNT_B);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+        _board.modifyOrders{value: 0.4 ether}(mods);
+        vm.stopPrank();
+
+        assertEq(makerBefore - _maker.balance, 0.4 ether);
+        assertEq(address(_board).balance, boardBefore + 0.4 ether);
+        assertEq(_board.getOrder(id0).availableA, ETH_AMOUNT + 0.5 ether);
+        assertEq(_board.getOrder(id1).availableA, ETH_AMOUNT + 0.3 ether);
+        assertEq(_board.getOrder(id2).availableA, ETH_AMOUNT - 0.4 ether);
+    }
+
+    /// @notice Tests three ETH legs net to a single ETH refund
+    function test_modifyOrders_netsEth_threeOrders_refundDominates() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id2 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        // +0.1, -0.4, -0.2 => net refund 0.5
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.1 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), ETH_AMOUNT - 0.4 ether, AMOUNT_B);
+        mods[2] = _modItem(id2, _board.getOrder(id2), ETH_AMOUNT - 0.2 ether, AMOUNT_B);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_maker.balance - makerBefore, 0.5 ether);
+        assertEq(boardBefore - address(_board).balance, 0.5 ether);
+        assertEq(_board.getOrder(id0).availableA, ETH_AMOUNT + 0.1 ether);
+        assertEq(_board.getOrder(id1).availableA, ETH_AMOUNT - 0.4 ether);
+        assertEq(_board.getOrder(id2).availableA, ETH_AMOUNT - 0.2 ether);
+    }
+
+    /// @notice Tests ERC20 and ETH net independently when both have opposing legs
+    function test_modifyOrders_netsEthAndErc20_independently() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+
+        uint256 erc20Small = _board.createOrder(_order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B));
+        uint256 erc20Large = _board.createOrder(_order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B));
+        uint256 ethSmall = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 ethLarge = _board.createOrder{value: 2 ether}(_order(_eth, 2 ether, address(_tokenB), AMOUNT_B));
+
+        // ERC20: +25 / -10 => net pull 15
+        // ETH:   +0.25 / -1.0 => net refund 0.75, msg.value 0
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](4);
+        mods[0] = _modItem(erc20Small, _board.getOrder(erc20Small), 35 ether, AMOUNT_B);
+        mods[1] = _modItem(erc20Large, _board.getOrder(erc20Large), 30 ether, AMOUNT_B);
+        mods[2] = _modItem(ethSmall, _board.getOrder(ethSmall), ETH_AMOUNT + 0.25 ether, AMOUNT_B);
+        mods[3] = _modItem(ethLarge, _board.getOrder(ethLarge), 1 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerTokenBefore = _tokenA.balanceOf(_maker);
+        uint256 makerEthBefore = _maker.balance;
+        uint256 boardEthBefore = address(_board).balance;
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore + 1);
+        assertEq(makerTokenBefore - _tokenA.balanceOf(_maker), 15 ether);
+        assertEq(_maker.balance - makerEthBefore, 0.75 ether);
+        assertEq(boardEthBefore - address(_board).balance, 0.75 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 65 ether);
+        assertEq(_board.getOrder(erc20Small).availableA, 35 ether);
+        assertEq(_board.getOrder(erc20Large).availableA, 30 ether);
+        assertEq(_board.getOrder(ethSmall).availableA, ETH_AMOUNT + 0.25 ether);
+        assertEq(_board.getOrder(ethLarge).availableA, 1 ether);
+    }
+
+    /// @notice Tests ERC20 net refund with ETH net top-up in the same batch
+    function test_modifyOrders_netsEthAndErc20_oppositeDirections() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+
+        uint256 erc20Small = _board.createOrder(_order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B));
+        uint256 erc20Large = _board.createOrder(_order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B));
+        uint256 eth0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 eth1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        // ERC20: +5 / -20 => net refund 15
+        // ETH:   +0.6 / -0.1 => net pull 0.5
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](4);
+        mods[0] = _modItem(erc20Small, _board.getOrder(erc20Small), 15 ether, AMOUNT_B);
+        mods[1] = _modItem(erc20Large, _board.getOrder(erc20Large), 20 ether, AMOUNT_B);
+        mods[2] = _modItem(eth0, _board.getOrder(eth0), ETH_AMOUNT + 0.6 ether, AMOUNT_B);
+        mods[3] = _modItem(eth1, _board.getOrder(eth1), ETH_AMOUNT - 0.1 ether, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerTokenBefore = _tokenA.balanceOf(_maker);
+        uint256 makerEthBefore = _maker.balance;
+        _board.modifyOrders{value: 0.5 ether}(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore);
+        assertEq(_tokenA.balanceOf(_maker) - makerTokenBefore, 15 ether);
+        assertEq(makerEthBefore - _maker.balance, 0.5 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 35 ether);
+        assertEq(address(_board).balance, 2 ether + 0.5 ether);
+        assertEq(_board.getOrder(erc20Small).availableA, 15 ether);
+        assertEq(_board.getOrder(erc20Large).availableA, 20 ether);
+        assertEq(_board.getOrder(eth0).availableA, ETH_AMOUNT + 0.6 ether);
+        assertEq(_board.getOrder(eth1).availableA, ETH_AMOUNT - 0.1 ether);
+    }
+
+    /// @notice Property: two same-token modifies settle only the net availableA delta once
+    function testFuzz_modifyOrders_netsSameToken(
+        uint128 amount0,
+        uint128 amount1,
+        uint128 new0,
+        uint128 new1
+    ) public {
+        // casting to 'uint128' is safe because bound upper limits fit in uint128
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amount0 = uint128(bound(amount0, 1 ether, 80 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amount1 = uint128(bound(amount1, 1 ether, 80 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        new0 = uint128(bound(new0, 1, 120 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        new1 = uint128(bound(new1, 1, 120 ether));
+        vm.assume(new0 != amount0 && new1 != amount1);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), amount0, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), amount1, address(_tokenB), AMOUNT_B);
+        _tokenA.mint(_maker, uint256(new0) + uint256(new1));
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        (uint256 topUp, uint256 refund) = _netAvailableADeltas(amount0, new0, amount1, new1);
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), new0, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), new1, AMOUNT_B);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(ids[0]).availableA, new0);
+        assertEq(_board.getOrder(ids[1]).availableA, new1);
+        _assertNettedErc20Balances(topUp, refund, pullsBefore, makerBefore, boardBefore);
+    }
+
+    /// @notice Property: two ETH modifies settle only the net availableA delta once
+    function testFuzz_modifyOrders_netsEth(
+        uint128 amount0,
+        uint128 amount1,
+        uint128 new0,
+        uint128 new1
+    ) public {
+        // casting to 'uint128' is safe because bound upper limits fit in uint128
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amount0 = uint128(bound(amount0, 0.1 ether, 5 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        amount1 = uint128(bound(amount1, 0.1 ether, 5 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        new0 = uint128(bound(new0, 0.01 ether, 8 ether));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        new1 = uint128(bound(new1, 0.01 ether, 8 ether));
+        vm.assume(new0 != amount0 && new1 != amount1);
+
+        vm.deal(_maker, 50 ether);
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: amount0}(_order(_eth, amount0, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: amount1}(_order(_eth, amount1, address(_tokenB), AMOUNT_B));
+
+        (uint256 topUp, uint256 refund) = _netAvailableADeltas(amount0, new0, amount1, new1);
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), new0, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), new1, AMOUNT_B);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+        uint256 value = topUp > refund ? topUp - refund : 0;
+        _board.modifyOrders{value: value}(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(id0).availableA, new0);
+        assertEq(_board.getOrder(id1).availableA, new1);
+        _assertNettedEthBalances(topUp, refund, makerBefore, boardBefore);
+    }
+
+    /// @notice Computes gross top-up and refund for two availableA changes
+    function _netAvailableADeltas(
+        uint128 amount0,
+        uint128 new0,
+        uint128 amount1,
+        uint128 new1
+    ) private pure returns (uint256 topUp, uint256 refund) {
+        if (new0 > amount0) {
+            topUp += uint256(new0) - uint256(amount0);
+        } else {
+            refund += uint256(amount0) - uint256(new0);
+        }
+        if (new1 > amount1) {
+            topUp += uint256(new1) - uint256(amount1);
+        } else {
+            refund += uint256(amount1) - uint256(new1);
+        }
+    }
+
+    /// @notice Asserts ERC20 maker/board balances match a netted modify settlement
+    function _assertNettedErc20Balances(
+        uint256 topUp,
+        uint256 refund,
+        uint256 pullsBefore,
+        uint256 makerBefore,
+        uint256 boardBefore
+    ) private view {
+        if (topUp > refund) {
+            uint256 net = topUp - refund;
+            assertEq(_tf(_tokenA), pullsBefore + 1);
+            assertEq(makerBefore - _tokenA.balanceOf(_maker), net);
+            assertEq(_tokenA.balanceOf(address(_board)), boardBefore + net);
+        } else if (refund > topUp) {
+            uint256 net = refund - topUp;
+            assertEq(_tf(_tokenA), pullsBefore);
+            assertEq(_tokenA.balanceOf(_maker) - makerBefore, net);
+            assertEq(boardBefore - _tokenA.balanceOf(address(_board)), net);
+        } else {
+            assertEq(_tf(_tokenA), pullsBefore);
+            assertEq(_tokenA.balanceOf(_maker), makerBefore);
+            assertEq(_tokenA.balanceOf(address(_board)), boardBefore);
+        }
+    }
+
+    /// @notice Asserts ETH maker/board balances match a netted modify settlement
+    function _assertNettedEthBalances(
+        uint256 topUp,
+        uint256 refund,
+        uint256 makerBefore,
+        uint256 boardBefore
+    ) private view {
+        if (topUp > refund) {
+            uint256 net = topUp - refund;
+            assertEq(makerBefore - _maker.balance, net);
+            assertEq(address(_board).balance, boardBefore + net);
+        } else if (refund > topUp) {
+            uint256 net = refund - topUp;
+            assertEq(_maker.balance - makerBefore, net);
+            assertEq(boardBefore - address(_board).balance, net);
+        } else {
+            assertEq(_maker.balance, makerBefore);
+            assertEq(address(_board).balance, boardBefore);
+        }
+    }
+
+    /// @notice Tests modifyOrders with mixed ETH and ERC20 tokenA
+    function test_modifyOrders_mixedEthAndToken() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256 erc20Id = _board.createOrder(_order(address(_tokenA), 50 ether, address(_tokenB), AMOUNT_B));
+        uint256 ethId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(erc20Id, _board.getOrder(erc20Id), 20 ether, AMOUNT_B);
+        mods[1] = _modItem(ethId, _board.getOrder(ethId), ETH_AMOUNT + 0.5 ether, AMOUNT_B);
+
+        uint256 makerTokenBefore = _tokenA.balanceOf(_maker);
+        uint256 makerEthBefore = _maker.balance;
+        _board.modifyOrders{value: 0.5 ether}(mods);
+        vm.stopPrank();
+
+        assertEq(_tokenA.balanceOf(_maker) - makerTokenBefore, 30 ether);
+        assertEq(makerEthBefore - _maker.balance, 0.5 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 20 ether);
+        assertEq(address(_board).balance, ETH_AMOUNT + 0.5 ether);
+        assertEq(_board.getOrder(erc20Id).availableA, 20 ether);
+        assertEq(_board.getOrder(ethId).availableA, ETH_AMOUNT + 0.5 ether);
+    }
+
+    /// @notice Tests modifyOrders aggregates ETH top-ups into one msg.value check
+    function test_modifyOrders_allEth_topsUp() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.25 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), ETH_AMOUNT + 0.75 ether, AMOUNT_B);
+
+        uint256 makerBefore = _maker.balance;
+        _board.modifyOrders{value: 1 ether}(mods);
+        vm.stopPrank();
+
+        assertEq(makerBefore - _maker.balance, 1 ether);
+        assertEq(address(_board).balance, 2 ether + 1 ether);
+        assertEq(_board.getOrder(id0).availableA, ETH_AMOUNT + 0.25 ether);
+        assertEq(_board.getOrder(id1).availableA, ETH_AMOUNT + 0.75 ether);
+    }
+
+    /// @notice Tests modifyOrders aggregates ETH refunds into one send
+    function test_modifyOrders_allEth_refunds() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), 0.4 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), 0.3 ether, AMOUNT_B);
+
+        uint256 makerBefore = _maker.balance;
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_maker.balance - makerBefore, 1.3 ether);
+        assertEq(address(_board).balance, 0.7 ether);
+    }
+
+    /// @notice Tests empty modifyOrders reverts
+    function test_modifyOrders_revert_empty() public {
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](0);
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrders(mods);
+    }
+
+    /// @notice Tests modifyOrders reverts when msg.value is too low for aggregated ETH top-ups
+    function test_modifyOrders_revert_ethMismatch_tooLow() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.5 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), ETH_AMOUNT + 0.5 ether, AMOUNT_B);
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 1 ether, 0.5 ether));
+        _board.modifyOrders{value: 0.5 ether}(mods);
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrders reverts when msg.value is too high
+    function test_modifyOrders_revert_ethMismatch_tooHigh() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](1);
+        mods[0] = _modItem(orderId, _board.getOrder(orderId), AMOUNT_A / 2, AMOUNT_B);
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0, 1 ether));
+        _board.modifyOrders{value: 1 ether}(mods);
+        vm.stopPrank();
+    }
+
+    /// @notice Tests a one-item modifyOrders matches modifyOrder accounting
+    function test_modifyOrders_singleElement() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](1);
+        mods[0] = _modItem(orderId, _board.getOrder(orderId), AMOUNT_A / 2, AMOUNT_B * 2);
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tokenA.balanceOf(_maker) - makerBefore, AMOUNT_A / 2);
+        assertEq(_board.getOrder(orderId).availableA, AMOUNT_A / 2);
+        assertEq(_board.getOrder(orderId).availableB, AMOUNT_B * 2);
+        assertEq(_board.getOrder(orderId).amountA, AMOUNT_A / 2);
+        assertEq(_board.getOrder(orderId).amountB, AMOUNT_B * 2);
+    }
+
+    /// @notice Tests modifyOrders emits OrderModified for each order
+    function test_modifyOrders_events() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), AMOUNT_A / 2, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), AMOUNT_A / 4, AMOUNT_B);
+
+        vm.expectEmit(true, false, false, true, address(_board));
+        emit ISwapboard.OrderModified(ids[0], AMOUNT_A / 2, AMOUNT_B);
+        vm.expectEmit(true, false, false, true, address(_board));
+        emit ISwapboard.OrderModified(ids[1], AMOUNT_A / 4, AMOUNT_B);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+    }
+
+    /// @notice Tests modifyOrders reverts DuplicateOrderId
+    function test_modifyOrders_revert_duplicateOrderId() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(orderId, snapshot, AMOUNT_A / 2, AMOUNT_B);
+        mods[1] = _modItem(orderId, snapshot, AMOUNT_A / 4, AMOUNT_B);
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.DuplicateOrderId.selector, orderId));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(orderId).availableA, AMOUNT_A);
+    }
+
+    /// @notice Tests modifyOrders reverts NotMaker on a later item without applying earlier legs
+    function test_modifyOrders_revert_notMaker_laterItem() public {
+        address maker2 = address(0x3);
+        _tokenA.mint(maker2, AMOUNT_A);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 order0 = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        vm.startPrank(maker2);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 order1 = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(order0, _board.getOrder(order0), AMOUNT_A / 2, AMOUNT_B);
+        mods[1] = _modItem(order1, _board.getOrder(order1), AMOUNT_A / 2, AMOUNT_B);
+
+        vm.startPrank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotMaker.selector, order1, _maker, maker2));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(order0).availableA, AMOUNT_A);
+        assertEq(_board.getOrder(order1).availableA, AMOUNT_A);
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A * 2);
+    }
+
+    /// @notice Tests modifyOrders reverts OrderNotFound on a later item
+    function test_modifyOrders_revert_orderNotFound_laterItem() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(orderId, _board.getOrder(orderId), AMOUNT_A / 2, AMOUNT_B);
+        mods[1] = ISwapboard.ModifyOrdersParams({
+            orderId: 999,
+            previousAmounts: ISwapboard.OrderAmounts({amountA: 1, amountB: 1, availableA: 1, availableB: 1}),
+            updatedOrder: _modify(1, 1)
+        });
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(orderId).availableA, AMOUNT_A);
+    }
+
+    /// @notice Tests modifyOrders reverts OrderNotActive when a filled order is included
+    function test_modifyOrders_revert_orderNotActive_laterItem() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        uint256 order0 = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        uint256 order1 = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(order1, AMOUNT_A);
+        vm.stopPrank();
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(order0, _board.getOrder(order0), AMOUNT_A / 2, AMOUNT_B);
+        mods[1] = _modItem(order1, _board.getOrder(order1), AMOUNT_A / 2, AMOUNT_B);
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, order1));
+        _board.modifyOrders(mods);
+
+        assertEq(_board.getOrder(order0).availableA, AMOUNT_A);
+    }
+
+    /// @notice Tests modifyOrders reverts NoChange when one item is unchanged
+    function test_modifyOrders_revert_noChange_laterItem() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        uint256 order0 = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        uint256 order1 = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(order0, _board.getOrder(order0), AMOUNT_A / 2, AMOUNT_B);
+        mods[1] = _modItem(order1, _board.getOrder(order1), AMOUNT_A, AMOUNT_B);
+
+        vm.expectRevert(ISwapboard.NoChange.selector);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(order0).availableA, AMOUNT_A);
+        assertEq(_board.getOrder(order1).availableA, AMOUNT_A);
+    }
+
+    /// @notice Tests modifyOrders ETH refund reverts when maker rejects ETH and leaves escrow intact
+    function test_modifyOrders_revert_ethTransferFailed() public {
+        ETHRejecter rejecter = new ETHRejecter();
+        vm.deal(address(rejecter), 10 ether);
+
+        vm.startPrank(address(rejecter));
+        uint256 id0 = _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: 1 ether}(_order(_eth, 1 ether, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), 0.5 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), 0.5 ether, AMOUNT_B);
+
+        uint256 boardEthBefore = address(_board).balance;
+        vm.expectRevert(ETHRejecter.RejectETH.selector);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(id0));
+        assertTrue(_board.canFill(id1));
+        assertEq(_board.getOrder(id0).availableA, 1 ether);
+        assertEq(_board.getOrder(id1).availableA, 1 ether);
+        assertEq(address(_board).balance, boardEthBefore);
+    }
+
+    /// @notice Tests modifyOrders then fills each resized order
+    function test_modifyOrders_thenFillEach() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        uint256 order0 = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        uint256 order1 = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(order0, _board.getOrder(order0), AMOUNT_A / 2, AMOUNT_B / 5);
+        mods[1] = _modItem(order1, _board.getOrder(order1), AMOUNT_A / 4, AMOUNT_B / 10);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(order0, AMOUNT_A / 2);
+        _fillOrder(order1, AMOUNT_A / 4);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(order0));
+        assertFalse(_board.canFill(order1));
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Tests netted top-up succeeds when allowance equals the net (not gross) pull
+    function test_modifyOrders_netsSameToken_succeedsWithNetAllowance() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +20 / -10 => net pull 10; gross top-up 20 would fail this allowance
+        _tokenA.approve(address(_board), 10 ether);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(makerBefore - _tokenA.balanceOf(_maker), 10 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 60 ether);
+        assertEq(_tokenA.allowance(_maker, address(_board)), 0);
+    }
+
+    /// @notice Tests netted top-up succeeds when balance equals the net (not gross) pull
+    function test_modifyOrders_netsSameToken_succeedsWithNetBalance() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        uint256 leftover = _tokenA.balanceOf(_maker);
+        assertTrue(_tokenA.transfer(address(0xdead), leftover - 10 ether));
+        assertEq(_tokenA.balanceOf(_maker), 10 ether);
+
+        // +20 / -10 => net pull 10; gross 20 would exceed balance
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tokenA.balanceOf(_maker), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), 60 ether);
+    }
+
+    /// @notice Tests netted top-up reverts when allowance is below the net pull
+    function test_modifyOrders_revert_insufficientAllowance_belowNet() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+        _tokenA.approve(address(_board), 9 ether);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+        vm.expectRevert(stdError.arithmeticError);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore);
+        assertEq(_tokenA.balanceOf(address(_board)), boardBefore);
+    }
+
+    /// @notice Tests netted top-up reverts when maker balance is below the net pull
+    function test_modifyOrders_revert_insufficientBalance_belowNet() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        uint256 leftover = _tokenA.balanceOf(_maker);
+        assertTrue(_tokenA.transfer(address(0xdead), leftover - 9 ether));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+        vm.expectRevert(stdError.arithmeticError);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), boardBefore);
+        assertEq(_tokenA.balanceOf(_maker), 9 ether);
+    }
+
+    /// @notice Tests OrderStateMismatch on a later item leaves earlier legs unapplied
+    function test_modifyOrders_revert_orderStateMismatch_laterItem() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.Order memory snap0 = _board.getOrder(ids[0]);
+        ISwapboard.Order memory snap1 = _board.getOrder(ids[1]);
+        ISwapboard.OrderAmounts memory stale1 = _amounts(snap1);
+        stale1.availableA = snap1.availableA - 1;
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], snap0, 30 ether, AMOUNT_B);
+        mods[1] = ISwapboard.ModifyOrdersParams({
+            orderId: ids[1], previousAmounts: stale1, updatedOrder: _modify(30 ether, AMOUNT_B)
+        });
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.OrderStateMismatch.selector,
+                ids[1],
+                stale1.amountA,
+                stale1.amountB,
+                stale1.availableA,
+                stale1.availableB,
+                snap1.amountA,
+                snap1.amountB,
+                snap1.availableA,
+                snap1.availableB
+            )
+        );
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 50 ether);
+    }
+
+    /// @notice Tests ZeroAmount when a later batch item sets availableA to 0
+    function test_modifyOrders_revert_zeroAvailableA_laterItem() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 0, AMOUNT_B);
+
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
+    }
+
+    /// @notice Tests ZeroAmount when a later batch item sets availableB to 0
+    function test_modifyOrders_revert_zeroAvailableB_laterItem() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, 0);
+
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
+    }
+
+    /// @notice Tests FOT tokenA rejects the netted pull amount (not the gross top-up)
+    function test_modifyOrders_revert_FOT_nettedTopUp() public {
+        MockFOT fot = new MockFOT();
+        fot.setFeePercent(0);
+        fot.mint(_maker, 1000 ether);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(fot), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(fot), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        fot.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+        vm.stopPrank();
+
+        fot.setFeePercent(5);
+
+        // +20 / -10 => net pull 10; BalanceMismatch must quote 10, not 20
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, 10 ether, _fotNet(10 ether)));
+        _board.modifyOrders(mods);
+
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
+        assertEq(fot.balanceOf(address(_board)), 50 ether);
+    }
+
+    /// @notice Tests ERC20-only batch reverts when msg.value is non-zero
+    function test_modifyOrders_revert_accidentalEth_erc20Only() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0, 1 ether));
+        _board.modifyOrders{value: 1 ether}(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
+    }
+
+    /// @notice Tests fully-netted ETH batch reverts when msg.value is non-zero
+    function test_modifyOrders_netsEth_cancelsCompletely_revert_accidentalEth() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.5 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), ETH_AMOUNT - 0.5 ether, AMOUNT_B);
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0, 0.1 ether));
+        _board.modifyOrders{value: 0.1 ether}(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(id0).availableA, ETH_AMOUNT);
+        assertEq(_board.getOrder(id1).availableA, ETH_AMOUNT);
+    }
+
+    /// @notice Tests ETH refund-dominates path reverts when msg.value is non-zero
+    function test_modifyOrders_netsEth_refundDominates_revert_accidentalEth() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: 2 ether}(_order(_eth, 2 ether, address(_tokenB), AMOUNT_B));
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.2 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), 1 ether, AMOUNT_B);
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0, 0.2 ether));
+        _board.modifyOrders{value: 0.2 ether}(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(id0).availableA, ETH_AMOUNT);
+        assertEq(_board.getOrder(id1).availableA, 2 ether);
+    }
+
+    /// @notice Tests three ETH legs whose top-ups and refunds cancel exactly
+    function test_modifyOrders_netsEth_threeOrders_cancelsCompletely() public {
+        vm.startPrank(_maker);
+        uint256 id0 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id1 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        uint256 id2 = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+
+        // +0.4, +0.2, -0.6 => cancel
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
+        mods[0] = _modItem(id0, _board.getOrder(id0), ETH_AMOUNT + 0.4 ether, AMOUNT_B);
+        mods[1] = _modItem(id1, _board.getOrder(id1), ETH_AMOUNT + 0.2 ether, AMOUNT_B);
+        mods[2] = _modItem(id2, _board.getOrder(id2), ETH_AMOUNT - 0.6 ether, AMOUNT_B);
+
+        uint256 makerBefore = _maker.balance;
+        uint256 boardBefore = address(_board).balance;
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_maker.balance, makerBefore);
+        assertEq(address(_board).balance, boardBefore);
+        assertEq(_board.getOrder(id0).availableA, ETH_AMOUNT + 0.4 ether);
+        assertEq(_board.getOrder(id1).availableA, ETH_AMOUNT + 0.2 ether);
+        assertEq(_board.getOrder(id2).availableA, ETH_AMOUNT - 0.6 ether);
+    }
+
+    /// @notice Tests availableB-only batch moves no tokenA and requires msg.value 0
+    function test_modifyOrders_availableBOnly_noTokenMovement() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 10 ether, AMOUNT_B * 2);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 40 ether, AMOUNT_B / 2);
+
+        uint256 pullsBefore = _tf(_tokenA);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint256 boardBefore = _tokenA.balanceOf(address(_board));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_tf(_tokenA), pullsBefore);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore);
+        assertEq(_tokenA.balanceOf(address(_board)), boardBefore);
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[0]).availableB, AMOUNT_B * 2);
+        assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
+        assertEq(_board.getOrder(ids[1]).availableB, AMOUNT_B / 2);
+    }
+
+    /// @notice Tests DuplicateOrderId when a repeated id is not adjacent
+    function test_modifyOrders_revert_duplicateOrderId_nonAdjacent() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 15 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+        mods[2] = _modItem(ids[0], _board.getOrder(ids[0]), 20 ether, AMOUNT_B);
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.DuplicateOrderId.selector, ids[0]));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
+    }
+
+    /// @notice Tests batch modify preserves maker, tokens, and partialFillAllowed
+    function test_modifyOrders_preserves_immutables() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _orderPartial(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B / 2);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B * 2);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        ISwapboard.Order memory after0 = _board.getOrder(ids[0]);
+        ISwapboard.Order memory after1 = _board.getOrder(ids[1]);
+        assertEq(after0.maker, _maker);
+        assertEq(after1.maker, _maker);
+        assertEq(after0.tokenA, address(_tokenA));
+        assertEq(after0.tokenB, address(_tokenB));
+        assertEq(after1.tokenA, address(_tokenA));
+        assertEq(after1.tokenB, address(_tokenB));
+        assertTrue(after0.partialFillAllowed);
+        assertFalse(after1.partialFillAllowed);
+        assertEq(after0.availableA, 30 ether);
+        assertEq(after1.availableA, 30 ether);
+    }
+
+    /// @notice Tests batch modify after partial fills, then fills and cancels the new remainings
+    function test_modifyOrders_afterPartialFill_thenFillAndCancel() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _orderPartial(address(_tokenA), 100 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _orderPartial(address(_tokenA), 100 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B * 2);
+        _fillOrder(ids[0], 60 ether);
+        _fillOrder(ids[1], 20 ether);
+        vm.stopPrank();
+
+        assertEq(_board.getOrder(ids[0]).availableA, 40 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 80 ether);
+
+        // +10 on ids[0], -30 on ids[1] => net refund 20
+        vm.startPrank(_maker);
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 50 ether, AMOUNT_B / 5);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 50 ether, AMOUNT_B / 5);
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        assertEq(_tokenA.balanceOf(_maker) - makerBefore, 20 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 50 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 50 ether);
+
+        uint256[] memory cancelIds = new uint256[](1);
+        cancelIds[0] = ids[1];
+        uint256 makerBeforeCancel = _tokenA.balanceOf(_maker);
+        _board.cancelOrders(cancelIds);
+        assertEq(_tokenA.balanceOf(_maker) - makerBeforeCancel, 50 ether);
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        _fillOrder(ids[0], 50 ether);
+        vm.stopPrank();
+
+        assertFalse(_board.canFill(ids[0]));
+        assertEq(_board.getOrder(ids[1]).maker, address(0));
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Sanity: MockRevertOnZeroERC20 reverts on zero-amount transfer / transferFrom
+    function test_mockRevertOnZeroERC20_revertsOnZero() public {
+        MockRevertOnZeroERC20 token = new MockRevertOnZeroERC20("ZeroRevert", "ZRV", 18);
+        token.mint(_maker, 100 ether);
+
+        vm.startPrank(_maker);
+        vm.expectRevert(MockRevertOnZeroERC20.ZeroAmountTransfer.selector);
+        // forge-lint: disable-next-line(erc20-unchecked-transfer)
+        token.transfer(_taker, 0);
+
+        token.approve(msg.sender, type(uint256).max);
+        vm.expectRevert(MockRevertOnZeroERC20.ZeroAmountTransfer.selector);
+        // forge-lint: disable-next-line(erc20-unchecked-transfer)
+        token.transferFrom(msg.sender, _taker, 0);
+        vm.stopPrank();
+    }
+
+    /// @notice Tests exact top-up/refund cancel with a token that reverts on zero transfers
+    function test_modifyOrders_netsSameToken_cancelsCompletely_revertOnZeroToken() public {
+        MockRevertOnZeroERC20 token = new MockRevertOnZeroERC20("ZeroRevert", "ZRV", 18);
+        token.mint(_maker, 1000 ether);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(token), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(token), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        token.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +10 / -10 => net 0; must not call transfer(0) / transferFrom(0)
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 20 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        uint256 makerBefore = token.balanceOf(_maker);
+        uint256 boardBefore = token.balanceOf(address(_board));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(_maker), makerBefore);
+        assertEq(token.balanceOf(address(_board)), boardBefore);
+        assertEq(_board.getOrder(ids[0]).availableA, 20 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 30 ether);
+    }
+
+    /// @notice Tests availableB-only batch with a zero-reverting token does not touch tokenA
+    function test_modifyOrders_availableBOnly_revertOnZeroToken() public {
+        MockRevertOnZeroERC20 token = new MockRevertOnZeroERC20("ZeroRevert", "ZRV", 18);
+        token.mint(_maker, 1000 ether);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(token), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(token), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        token.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 10 ether, AMOUNT_B * 2);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 40 ether, AMOUNT_B / 2);
+
+        uint256 makerBefore = token.balanceOf(_maker);
+        uint256 boardBefore = token.balanceOf(address(_board));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(_maker), makerBefore);
+        assertEq(token.balanceOf(address(_board)), boardBefore);
+        assertEq(_board.getOrder(ids[0]).availableB, AMOUNT_B * 2);
+        assertEq(_board.getOrder(ids[1]).availableB, AMOUNT_B / 2);
+    }
+
+    /// @notice Tests three-leg exact cancel with a zero-reverting token
+    function test_modifyOrders_netsSameToken_threeOrders_cancelsCompletely_revertOnZeroToken() public {
+        MockRevertOnZeroERC20 token = new MockRevertOnZeroERC20("ZeroRevert", "ZRV", 18);
+        token.mint(_maker, 1000 ether);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
+        orders[0] = _order(address(token), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(token), 20 ether, address(_tokenB), AMOUNT_B);
+        orders[2] = _order(address(token), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        token.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +10, +5, -15 => cancel
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](3);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 20 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 25 ether, AMOUNT_B);
+        mods[2] = _modItem(ids[2], _board.getOrder(ids[2]), 25 ether, AMOUNT_B);
+
+        uint256 makerBefore = token.balanceOf(_maker);
+        uint256 boardBefore = token.balanceOf(address(_board));
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(_maker), makerBefore);
+        assertEq(token.balanceOf(address(_board)), boardBefore);
+        assertEq(_board.getOrder(ids[0]).availableA, 20 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 25 ether);
+        assertEq(_board.getOrder(ids[2]).availableA, 25 ether);
+    }
+
+    /// @notice Tests netted top-up with a zero-reverting token still pulls the non-zero net
+    function test_modifyOrders_netsSameToken_topUpDominates_revertOnZeroToken() public {
+        MockRevertOnZeroERC20 token = new MockRevertOnZeroERC20("ZeroRevert", "ZRV", 18);
+        token.mint(_maker, 1000 ether);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(token), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(token), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        token.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +20 / -10 => net pull 10 (must transferFrom 10, never 0)
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        uint256 makerBefore = token.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(makerBefore - token.balanceOf(_maker), 10 ether);
+        assertEq(token.balanceOf(address(_board)), 60 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 30 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 30 ether);
+    }
+
+    /// @notice Tests netted refund with a zero-reverting token still sends the non-zero net
+    function test_modifyOrders_netsSameToken_refundDominates_revertOnZeroToken() public {
+        MockRevertOnZeroERC20 token = new MockRevertOnZeroERC20("ZeroRevert", "ZRV", 18);
+        token.mint(_maker, 1000 ether);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(token), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(token), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        token.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        // +5 / -20 => net refund 15 (must transfer 15, never 0)
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 15 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 20 ether, AMOUNT_B);
+
+        uint256 makerBefore = token.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(_maker) - makerBefore, 15 ether);
+        assertEq(token.balanceOf(address(_board)), 35 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 15 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 20 ether);
+    }
+
+    /// @notice Tests one token cancels exactly while another nets a pull; zero-revert only on cancel token
+    function test_modifyOrders_mixedCancelAndPull_revertOnZeroToken() public {
+        MockRevertOnZeroERC20 cancelToken = new MockRevertOnZeroERC20("ZeroRevert", "ZRV", 18);
+        cancelToken.mint(_maker, 1000 ether);
+
+        vm.startPrank(_maker);
+        cancelToken.approve(address(_board), type(uint256).max);
+        _tokenA.approve(address(_board), type(uint256).max);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](4);
+        // cancelToken: 10 and 40 — will net-cancel
+        orders[0] = _order(address(cancelToken), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(cancelToken), 40 ether, address(_tokenB), AMOUNT_B);
+        // tokenA: 10 and 40 — will net-pull 15
+        orders[2] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[3] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](4);
+        // cancelToken +10 / -10 => no transfer
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 20 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+        // tokenA +20 / -5 => net pull 15
+        mods[2] = _modItem(ids[2], _board.getOrder(ids[2]), 30 ether, AMOUNT_B);
+        mods[3] = _modItem(ids[3], _board.getOrder(ids[3]), 35 ether, AMOUNT_B);
+
+        uint256 cancelMakerBefore = cancelToken.balanceOf(_maker);
+        uint256 cancelBoardBefore = cancelToken.balanceOf(address(_board));
+        uint256 tokenAMakerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(cancelToken.balanceOf(_maker), cancelMakerBefore);
+        assertEq(cancelToken.balanceOf(address(_board)), cancelBoardBefore);
+        assertEq(tokenAMakerBefore - _tokenA.balanceOf(_maker), 15 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 65 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 20 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 30 ether);
+        assertEq(_board.getOrder(ids[2]).availableA, 30 ether);
+        assertEq(_board.getOrder(ids[3]).availableA, 35 ether);
+    }
+
+    /// @notice Tests one token cancels exactly while another nets a refund; zero-revert only on cancel token
+    function test_modifyOrders_mixedCancelAndRefund_revertOnZeroToken() public {
+        MockRevertOnZeroERC20 cancelToken = new MockRevertOnZeroERC20("ZeroRevert", "ZRV", 18);
+        cancelToken.mint(_maker, 1000 ether);
+
+        vm.startPrank(_maker);
+        cancelToken.approve(address(_board), type(uint256).max);
+        _tokenA.approve(address(_board), type(uint256).max);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](4);
+        orders[0] = _order(address(cancelToken), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(cancelToken), 40 ether, address(_tokenB), AMOUNT_B);
+        orders[2] = _order(address(_tokenA), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[3] = _order(address(_tokenA), 40 ether, address(_tokenB), AMOUNT_B);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](4);
+        // cancelToken +10 / -10 => no transfer
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 20 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+        // tokenA +5 / -20 => net refund 15
+        mods[2] = _modItem(ids[2], _board.getOrder(ids[2]), 15 ether, AMOUNT_B);
+        mods[3] = _modItem(ids[3], _board.getOrder(ids[3]), 20 ether, AMOUNT_B);
+
+        uint256 cancelMakerBefore = cancelToken.balanceOf(_maker);
+        uint256 cancelBoardBefore = cancelToken.balanceOf(address(_board));
+        uint256 tokenAMakerBefore = _tokenA.balanceOf(_maker);
+        _board.modifyOrders(mods);
+        vm.stopPrank();
+
+        assertEq(cancelToken.balanceOf(_maker), cancelMakerBefore);
+        assertEq(cancelToken.balanceOf(address(_board)), cancelBoardBefore);
+        assertEq(_tokenA.balanceOf(_maker) - tokenAMakerBefore, 15 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), 35 ether);
+        assertEq(_board.getOrder(ids[0]).availableA, 20 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 30 ether);
+        assertEq(_board.getOrder(ids[2]).availableA, 15 ether);
+        assertEq(_board.getOrder(ids[3]).availableA, 20 ether);
+    }
+
+    /// @notice Tests single modifyOrder availableB-only with a zero-reverting token
+    function test_modifyOrder_availableBOnly_revertOnZeroToken() public {
+        MockRevertOnZeroERC20 token = new MockRevertOnZeroERC20("ZeroRevert", "ZRV", 18);
+        token.mint(_maker, 1000 ether);
+
+        vm.startPrank(_maker);
+        token.approve(address(_board), type(uint256).max);
+        uint256 orderId = _board.createOrder(_order(address(token), 50 ether, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        uint256 makerBefore = token.balanceOf(_maker);
+        uint256 boardBefore = token.balanceOf(address(_board));
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(50 ether, AMOUNT_B * 2));
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(_maker), makerBefore);
+        assertEq(token.balanceOf(address(_board)), boardBefore);
+        ISwapboard.Order memory after_ = _board.getOrder(orderId);
+        assertEq(after_.availableA, 50 ether);
+        assertEq(after_.availableB, AMOUNT_B * 2);
+        assertEq(after_.amountA, 50 ether);
+        assertEq(after_.amountB, AMOUNT_B * 2);
     }
 }
