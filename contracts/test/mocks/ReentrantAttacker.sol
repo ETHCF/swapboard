@@ -124,6 +124,20 @@ contract ReentrantAttacker is MockERC20 {
                 tokenA: address(this), amountA: 1, tokenB: _tokenB, amountB: 1, partialFillAllowed: false
             });
             try _BOARD.createOrders(orders) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("modifyOrders"))) {
+            ISwapboard.Order memory order = _BOARD.getOrder(_orderId);
+            ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](1);
+            mods[0] = ISwapboard.ModifyOrdersParams({
+                orderId: _orderId,
+                previousAmounts: ISwapboard.OrderAmounts({
+                    amountA: order.amountA,
+                    amountB: order.amountB,
+                    availableA: order.availableA,
+                    availableB: order.availableB
+                }),
+                updatedOrder: ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1})
+            });
+            try _BOARD.modifyOrders(mods) {} catch {}
         }
 
         _attacking = false;
