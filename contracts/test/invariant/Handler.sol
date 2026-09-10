@@ -38,21 +38,25 @@ contract SwapboardHandler is Test {
     address[] internal _actors;
     address internal _currentActor;
 
-    // Counters for call tracking
-    uint256 private _callsCreateOrder;
-    uint256 private _callsCreateOrderSellEth;
-    uint256 private _callsCreateOrderWantEth;
-    uint256 private _callsCreateOrderAllowPartial;
-    uint256 private _callsCreateOrders;
-    uint256 private _callsFillOrder;
-    uint256 private _callsFillOrders;
-    uint256 private _callsFillOrderPaying;
-    uint256 private _callsFillOrdersPaying;
-    uint256 private _callsCancelOrder;
-    uint256 private _callsCancelOrders;
-    uint256 private _callsModifyOrder;
-    uint256 private _callsModifyOrders;
-    uint256 private _callsSetPartialFillAllowed;
+    // Counters for call tracking (packed to satisfy solhint max-states-count)
+    struct CallCounts {
+        uint256 createOrder;
+        uint256 createOrderSellEth;
+        uint256 createOrderWantEth;
+        uint256 createOrderAllowPartial;
+        uint256 createOrders;
+        uint256 fillOrder;
+        uint256 fillOrders;
+        uint256 fillOrderPaying;
+        uint256 fillOrdersPaying;
+        uint256 cancelOrder;
+        uint256 cancelOrders;
+        uint256 modifyOrder;
+        uint256 modifyOrders;
+        uint256 setPartialFillAllowed;
+    }
+
+    CallCounts private _calls;
 
     modifier useActor(
         uint256 actorIndexSeed
@@ -139,59 +143,59 @@ contract SwapboardHandler is Test {
     }
 
     function getCallsCreateOrder() external view returns (uint256) {
-        return _callsCreateOrder;
+        return _calls.createOrder;
     }
 
     function getCallsCreateOrderSellEth() external view returns (uint256) {
-        return _callsCreateOrderSellEth;
+        return _calls.createOrderSellEth;
     }
 
     function getCallsCreateOrderWantEth() external view returns (uint256) {
-        return _callsCreateOrderWantEth;
+        return _calls.createOrderWantEth;
     }
 
     function getCallsCreateOrderAllowPartial() external view returns (uint256) {
-        return _callsCreateOrderAllowPartial;
+        return _calls.createOrderAllowPartial;
     }
 
     function getCallsCreateOrders() external view returns (uint256) {
-        return _callsCreateOrders;
+        return _calls.createOrders;
     }
 
     function getCallsFillOrder() external view returns (uint256) {
-        return _callsFillOrder;
+        return _calls.fillOrder;
     }
 
     function getCallsFillOrders() external view returns (uint256) {
-        return _callsFillOrders;
+        return _calls.fillOrders;
     }
 
     function getCallsFillOrderPaying() external view returns (uint256) {
-        return _callsFillOrderPaying;
+        return _calls.fillOrderPaying;
     }
 
     function getCallsFillOrdersPaying() external view returns (uint256) {
-        return _callsFillOrdersPaying;
+        return _calls.fillOrdersPaying;
     }
 
     function getCallsCancelOrder() external view returns (uint256) {
-        return _callsCancelOrder;
+        return _calls.cancelOrder;
     }
 
     function getCallsCancelOrders() external view returns (uint256) {
-        return _callsCancelOrders;
+        return _calls.cancelOrders;
     }
 
     function getCallsModifyOrder() external view returns (uint256) {
-        return _callsModifyOrder;
+        return _calls.modifyOrder;
     }
 
     function getCallsModifyOrders() external view returns (uint256) {
-        return _callsModifyOrders;
+        return _calls.modifyOrders;
     }
 
     function getCallsSetPartialFillAllowed() external view returns (uint256) {
-        return _callsSetPartialFillAllowed;
+        return _calls.setPartialFillAllowed;
     }
 
     /// @notice Creates a new ERC20/ERC20 order with bounded amounts
@@ -208,7 +212,7 @@ contract SwapboardHandler is Test {
             return; // Skip if insufficient balance
         }
 
-        ++_callsCreateOrder;
+        ++_calls.createOrder;
 
         // casting to 'uint128' is safe because amounts are bounded well below uint128.max
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -242,7 +246,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsCreateOrderSellEth;
+        ++_calls.createOrderSellEth;
 
         // casting to 'uint128' is safe because amounts are bounded well below uint128.max
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -276,7 +280,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsCreateOrderWantEth;
+        ++_calls.createOrderWantEth;
 
         // casting to 'uint128' is safe because amounts are bounded well below uint128.max
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -310,7 +314,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsCreateOrderAllowPartial;
+        ++_calls.createOrderAllowPartial;
 
         // casting to 'uint128' is safe because amounts are bounded well below uint128.max
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -369,7 +373,7 @@ contract SwapboardHandler is Test {
             partialFillAllowed: true
         });
 
-        ++_callsCreateOrders;
+        ++_calls.createOrders;
         uint256[] memory ids = _board.createOrders(orders);
 
         _ghostTotalTokenADeposited += amountA;
@@ -479,7 +483,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsFillOrder;
+        ++_calls.fillOrder;
 
         if (order.tokenB == _ETH) {
             _board.fillOrder{value: amountBIn}(loaded.orderId, fillA128, amountBIn, 0);
@@ -516,7 +520,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsFillOrderPaying;
+        ++_calls.fillOrderPaying;
 
         if (order.tokenB == _ETH) {
             _board.fillOrderPaying{value: fillB128}(loaded.orderId, fillB128, amountAOut, 0);
@@ -545,7 +549,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsFillOrders;
+        ++_calls.fillOrders;
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
         fills[0] = FillTestLib.fillParams(order1, loaded.id1, order1.availableA);
         fills[1] = FillTestLib.fillParams(order2, loaded.id2, order2.availableA);
@@ -573,7 +577,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsFillOrdersPaying;
+        ++_calls.fillOrdersPaying;
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
         fills[0] = FillTestLib.fillPayingParams(order1, loaded.id1, order1.availableB);
         fills[1] = FillTestLib.fillPayingParams(order2, loaded.id2, order2.availableB);
@@ -608,7 +612,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsFillOrders;
+        ++_calls.fillOrders;
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
         fills[0] = FillTestLib.fillParams(order, loaded.orderId, fillA1);
         fills[1] = FillTestLib.fillParams(order, loaded.orderId, fillA2);
@@ -644,7 +648,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsFillOrdersPaying;
+        ++_calls.fillOrdersPaying;
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
         // Use availableA as maxAmountA so the second leg is not clipped by a stale floor quote.
         fills[0] =
@@ -707,7 +711,7 @@ contract SwapboardHandler is Test {
         // Only maker can cancel
         vm.prank(order.maker);
 
-        ++_callsCancelOrder;
+        ++_calls.cancelOrder;
 
         _board.cancelOrder(orderId);
 
@@ -751,7 +755,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsCancelOrders;
+        ++_calls.cancelOrders;
         uint256[] memory ids = new uint256[](2);
         ids[0] = id1;
         ids[1] = id2;
@@ -795,7 +799,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsModifyOrder;
+        ++_calls.modifyOrder;
 
         ISwapboard.OrderAmounts memory previous = ISwapboard.OrderAmounts({
             amountA: order.amountA, amountB: order.amountB, availableA: order.availableA, availableB: order.availableB
@@ -892,7 +896,7 @@ contract SwapboardHandler is Test {
         BoundModifyAmounts memory amounts,
         uint256 ethValue
     ) private {
-        ++_callsModifyOrders;
+        ++_calls.modifyOrders;
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = ISwapboard.ModifyOrdersParams({
@@ -1071,7 +1075,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsSetPartialFillAllowed;
+        ++_calls.setPartialFillAllowed;
         _board.setPartialFillAllowed(orderId, partialFillAllowed);
     }
 
