@@ -136,6 +136,36 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc ISwapboard
+    /// @dev Inbound tokenB pulls use `_pullExactToken` and reject fee-on-transfer / mid-transfer
+    ///      rebase / phantom transfers via `BalanceMismatch`. tokenA out uses floor division so the
+    ///      taker never over-receives for the paid tokenB relative to the escrow ratio.
+    function fillOrderPaying(
+        uint256 orderId,
+        uint128 amountB,
+        uint128 maxAmountA,
+        uint256 deadline
+    ) external payable nonReentrant {
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
+        }
+        if (amountB == 0) {
+            revert ZeroAmount();
+        }
+
+        FillLeg[] memory legs = new FillLeg[](1);
+        legs[0] = _applyOneFillPayingEffect(orderId, amountB, maxAmountA);
+        _settleFills(legs);
+    }
+
+    /// @inheritdoc ISwapboard
+    function fillOrdersPaying(
+        FillOrderPayingParams[] calldata fills,
+        uint256 deadline
+    ) external payable nonReentrant {
+        _fillOrdersPaying(fills, deadline);
+    }
+
+    /// @inheritdoc ISwapboard
     function cancelOrder(
         uint256 orderId
     ) external nonReentrant {
@@ -582,6 +612,51 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
+    /// @notice Quotes the floored tokenA receive for a fill driven by tokenB paid
+    /// @dev Floor division benefits escrow/maker. Full remaining `amountB` returns all `availableA`.
+    /// @param order Order to quote (must already be active)
+    /// @param orderId Order id for error payloads
+    /// @param amountB Requested tokenB in
+    /// @return maker Order maker
+    /// @return tokenA Sold asset
+    /// @return tokenB Payment asset
+    /// @return amountAOut Floored tokenA the taker receives
+    function _quoteFillPaying(
+        Order memory order,
+        uint256 orderId,
+        uint128 amountB
+    ) private pure returns (address maker, address tokenA, address tokenB, uint128 amountAOut) {
+        maker = order.maker;
+        tokenA = order.tokenA;
+        tokenB = order.tokenB;
+        bool partialFillAllowed = order.partialFillAllowed;
+        uint128 availableA = order.availableA;
+        uint128 availableB = order.availableB;
+
+        if (amountB > availableB) {
+            revert FillAmountTooHigh(orderId, amountB, availableB);
+        }
+        if (!partialFillAllowed && amountB != availableB) {
+            revert PartialFillNotAllowed(orderId);
+        }
+
+        if (amountB == availableB) {
+            amountAOut = availableA;
+        } else {
+            // Unchecked is safe: else branch implies amountB < availableB so availableB >= 1;
+            // product of two uint128 values always fits in uint256; floor result is < availableA.
+            uint256 quotedA;
+            unchecked {
+                quotedA = (uint256(amountB) * uint256(availableA)) / uint256(availableB);
+            }
+            // forge-lint: disable-next-line(unsafe-typecast)
+            amountAOut = uint128(quotedA);
+        }
+        if (amountAOut == 0) {
+            revert ZeroAmount();
+        }
+    }
+
     /// @notice Fills orders after aggregating tokenB pulls and tokenA/tokenB payouts
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
@@ -599,6 +674,25 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         _settleFills(_applyFillEffects(fills));
+    }
+
+    /// @notice Fills orders by tokenB paid after aggregating pulls/payouts
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    function _fillOrdersPaying(
+        FillOrderPayingParams[] calldata fills,
+        uint256 deadline
+    ) private {
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
+        }
+
+        uint256 length = fills.length;
+        if (length == 0) {
+            revert ZeroAmount();
+        }
+
+        _settleFills(_applyFillPayingEffects(fills));
     }
 
     /// @notice Validates one fill, updates order storage, emits `OrderFilled`, and returns the leg
@@ -638,6 +732,44 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return FillLeg({maker: maker, tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountBIn});
     }
 
+    /// @notice Validates one amountB-driven fill, updates storage, emits, and returns the leg
+    /// @param orderId Order to fill
+    /// @param amountB Requested tokenB in
+    /// @param maxAmountA Maximum tokenA receive declared by the taker
+    /// @return leg Settled fill leg
+    function _applyOneFillPayingEffect(
+        uint256 orderId,
+        uint128 amountB,
+        uint128 maxAmountA
+    ) private returns (FillLeg memory) {
+        Order storage order = _requireActiveOrder(orderId);
+        Order memory cached = order;
+        (address maker, address tokenA, address tokenB, uint128 amountAOut) =
+            _quoteFillPaying(cached, orderId, amountB);
+
+        if (amountAOut > maxAmountA) {
+            revert FillReceiveTooHigh(orderId, amountAOut, maxAmountA);
+        }
+
+        // Unchecked is safe: _quoteFillPaying ensures amountB <= availableB and
+        // amountAOut <= availableA (exact remaining or floored proportion).
+        uint128 remainingA;
+        uint128 remainingB;
+        unchecked {
+            remainingA = cached.availableA - amountAOut;
+            remainingB = cached.availableB - amountB;
+        }
+        order.availableA = remainingA;
+        order.availableB = remainingB;
+        if (remainingA == 0 || remainingB == 0) {
+            order.active = false;
+        }
+
+        emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountAOut, amountB: amountB});
+
+        return FillLeg({maker: maker, tokenA: tokenA, amountA: amountAOut, tokenB: tokenB, amountB: amountB});
+    }
+
     /// @notice Validates fills, updates order storage, and collects transfer legs
     /// @dev Same `orderId` may appear more than once; later legs see reduced available amounts.
     /// @param fills Fill arguments in execution order
@@ -655,6 +787,27 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             }
 
             legs[i] = _applyOneFillEffect(fill.orderId, fill.amountA, fill.minAmountB);
+        }
+
+        return legs;
+    }
+
+    /// @notice Validates amountB-driven fills, updates storage, and collects transfer legs
+    /// @param fills Fill arguments in execution order
+    /// @return legs Settled fill legs in input order
+    function _applyFillPayingEffects(
+        FillOrderPayingParams[] calldata fills
+    ) private returns (FillLeg[] memory) {
+        uint256 length = fills.length;
+        FillLeg[] memory legs = new FillLeg[](length);
+
+        for (uint256 i = 0; i < length; ++i) {
+            FillOrderPayingParams calldata fill = fills[i];
+            if (fill.amountB == 0) {
+                revert ZeroAmount();
+            }
+
+            legs[i] = _applyOneFillPayingEffect(fill.orderId, fill.amountB, fill.maxAmountA);
         }
 
         return legs;
@@ -772,7 +925,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 continue;
             }
             uint256 amount = amounts[i];
-
             uint256 existing = _indexOfToken(ethRecipients, ethCount, recipients[i]);
             if (existing == ethCount) {
                 ethRecipients[ethCount] = recipients[i];
