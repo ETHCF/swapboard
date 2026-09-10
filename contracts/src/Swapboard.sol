@@ -121,9 +121,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert ZeroAmount();
         }
 
-        FillLeg[] memory legs = new FillLeg[](1);
-        legs[0] = _applyOneFillEffect(orderId, amountA, minAmountB);
-        _settleFills(legs);
+        _settleFill(_applyOneFillEffect(orderId, amountA, minAmountB));
     }
 
     /// @inheritdoc ISwapboard
@@ -150,9 +148,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert ZeroAmount();
         }
 
-        FillLeg[] memory legs = new FillLeg[](1);
-        legs[0] = _applyOneFillPayingEffect(orderId, amountB, maxAmountA);
-        _settleFills(legs);
+        _settleFill(_applyOneFillPayingEffect(orderId, amountB, maxAmountA));
     }
 
     /// @inheritdoc ISwapboard
@@ -200,9 +196,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         OrderAmounts calldata previousAmounts,
         ModifyOrderParams calldata updatedOrder
     ) external payable nonReentrant {
-        ModifyLeg[] memory legs = new ModifyLeg[](1);
-        legs[0] = _applyOneModifyEffect(orderId, previousAmounts, updatedOrder);
-        _settleModifyLegs(legs);
+        _settleModifyLeg(_applyOneModifyEffect(orderId, previousAmounts, updatedOrder));
     }
 
     /// @inheritdoc ISwapboard
@@ -218,13 +212,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         bool partialFillAllowed
     ) external nonReentrant {
         Order storage order = _requireActiveOrder(orderId);
+        _requireMaker(orderId, order.maker);
 
-        address maker = order.maker;
-        bool currentPartialFillAllowed = order.partialFillAllowed;
-
-        _requireMaker(orderId, maker);
-
-        if (partialFillAllowed == currentPartialFillAllowed) {
+        if (partialFillAllowed == order.partialFillAllowed) {
             revert NoChange();
         }
 
@@ -501,32 +491,26 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             _nextOrderId = orderId + 1;
         }
 
-        bool partialFillAllowed = params.partialFillAllowed;
-        address tokenA = params.tokenA;
-        address tokenB = params.tokenB;
-        uint128 amountA = params.amountA;
-        uint128 amountB = params.amountB;
-
         _orders[orderId] = Order({
             maker: msg.sender,
             active: true,
-            partialFillAllowed: partialFillAllowed,
-            tokenA: tokenA,
-            tokenB: tokenB,
-            amountA: amountA,
-            amountB: amountB,
-            availableA: amountA,
-            availableB: amountB
+            partialFillAllowed: params.partialFillAllowed,
+            tokenA: params.tokenA,
+            tokenB: params.tokenB,
+            amountA: params.amountA,
+            amountB: params.amountB,
+            availableA: params.amountA,
+            availableB: params.amountB
         });
 
         emit OrderCreated({
             orderId: orderId,
             maker: msg.sender,
-            tokenA: tokenA,
-            amountA: amountA,
-            tokenB: tokenB,
-            amountB: amountB,
-            partialFillAllowed: partialFillAllowed
+            tokenA: params.tokenA,
+            amountA: params.amountA,
+            tokenB: params.tokenB,
+            amountB: params.amountB,
+            partialFillAllowed: params.partialFillAllowed
         });
 
         return orderId;
@@ -553,33 +537,27 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             }
             orderIds[i] = orderId;
 
-            bool partialFillAllowed = params.partialFillAllowed;
-            address tokenA = params.tokenA;
-            address tokenB = params.tokenB;
-            uint128 amountA = params.amountA;
-            uint128 amountB = params.amountB;
-
             // forge-lint: disable-next-item(costly-loop)
             _orders[orderId] = Order({
                 maker: msg.sender,
                 active: true,
-                partialFillAllowed: partialFillAllowed,
-                tokenA: tokenA,
-                tokenB: tokenB,
-                amountA: amountA,
-                amountB: amountB,
-                availableA: amountA,
-                availableB: amountB
+                partialFillAllowed: params.partialFillAllowed,
+                tokenA: params.tokenA,
+                tokenB: params.tokenB,
+                amountA: params.amountA,
+                amountB: params.amountB,
+                availableA: params.amountA,
+                availableB: params.amountB
             });
 
             emit OrderCreated({
                 orderId: orderId,
                 maker: msg.sender,
-                tokenA: tokenA,
-                amountA: amountA,
-                tokenB: tokenB,
-                amountB: amountB,
-                partialFillAllowed: partialFillAllowed
+                tokenA: params.tokenA,
+                amountA: params.amountA,
+                tokenB: params.tokenB,
+                amountB: params.amountB,
+                partialFillAllowed: params.partialFillAllowed
             });
         }
 
@@ -827,6 +805,24 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         return legs;
+    }
+
+    /// @notice Pulls tokenB and pays maker/taker for a single settled fill leg
+    /// @param leg Settled fill leg
+    function _settleFill(
+        FillLeg memory leg
+    ) private {
+        Token tokenB = Token.wrap(leg.tokenB);
+        uint256 ethIn = tokenB.isNative() ? leg.amountB : 0;
+        if (msg.value != ethIn) {
+            revert ETHAmountMismatch(ethIn, msg.value);
+        }
+        if (!tokenB.isNative()) {
+            _pullExactToken(tokenB, leg.amountB);
+        }
+
+        tokenB.safeTransfer(leg.maker, leg.amountB);
+        Token.wrap(leg.tokenA).safeTransfer(msg.sender, leg.amountA);
     }
 
     /// @notice Pulls aggregated tokenB and pays makers/taker for settled fill legs
@@ -1126,6 +1122,30 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         emit OrderModified(orderId, newAvailableA, newAvailableB);
 
         return ModifyLeg({tokenA: cached.tokenA, topUp: topUp, refund: refund});
+    }
+
+    /// @notice Settles one modify leg's escrow top-up or refund
+    /// @param leg Escrow delta for a single order
+    function _settleModifyLeg(
+        ModifyLeg memory leg
+    ) private {
+        Token token = Token.wrap(leg.tokenA);
+        if (token.isNative()) {
+            if (msg.value != leg.topUp) {
+                revert ETHAmountMismatch(leg.topUp, msg.value);
+            }
+            token.safeTransfer(msg.sender, leg.refund);
+            return;
+        }
+
+        if (msg.value != 0) {
+            revert ETHAmountMismatch(0, msg.value);
+        }
+        if (leg.topUp != 0) {
+            _pullExactToken(token, leg.topUp);
+        } else {
+            token.safeTransfer(msg.sender, leg.refund);
+        }
     }
 
     /// @notice Settles modify legs after netting same-token top-ups against refunds
