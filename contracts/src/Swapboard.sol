@@ -115,9 +115,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 minAmountB,
         uint256 deadline
     ) external payable nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) {
-            revert DeadlineExpired();
-        }
+        _requireDeadline(deadline);
+
         if (amountA == 0) {
             revert ZeroAmount();
         }
@@ -145,9 +144,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 maxAmountA,
         uint256 deadline
     ) external payable nonReentrant {
-        if (deadline != 0 && block.timestamp > deadline) {
-            revert DeadlineExpired();
-        }
+        _requireDeadline(deadline);
+
         if (amountB == 0) {
             revert ZeroAmount();
         }
@@ -220,10 +218,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         bool partialFillAllowed
     ) external nonReentrant {
         Order storage order = _requireActiveOrder(orderId);
+
         address maker = order.maker;
         bool currentPartialFillAllowed = order.partialFillAllowed;
 
         _requireMaker(orderId, maker);
+
         if (partialFillAllowed == currentPartialFillAllowed) {
             revert NoChange();
         }
@@ -283,11 +283,36 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         if (maker == address(0)) {
             revert OrderNotFound(orderId);
         }
+
         if (!active) {
             revert OrderNotActive(orderId);
         }
 
         return order;
+    }
+
+    /// @notice Reverts when a non-zero deadline has already passed
+    /// @param deadline Unix timestamp after which the call reverts (0 = no deadline)
+    function _requireDeadline(
+        uint256 deadline
+    ) private view {
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired();
+        }
+    }
+
+    /// @notice Reverts on an expired deadline or empty fill batch
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    /// @param length Number of fill legs
+    function _requireFillBatch(
+        uint256 deadline,
+        uint256 length
+    ) private view {
+        _requireDeadline(deadline);
+
+        if (length == 0) {
+            revert ZeroAmount();
+        }
     }
 
     /// @notice Reverts unless `msg.sender` is the order's maker
@@ -664,15 +689,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         FillOrderParams[] calldata fills,
         uint256 deadline
     ) private {
-        if (deadline != 0 && block.timestamp > deadline) {
-            revert DeadlineExpired();
-        }
-
-        uint256 length = fills.length;
-        if (length == 0) {
-            revert ZeroAmount();
-        }
-
+        _requireFillBatch(deadline, fills.length);
         _settleFills(_applyFillEffects(fills));
     }
 
@@ -683,15 +700,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         FillOrderPayingParams[] calldata fills,
         uint256 deadline
     ) private {
-        if (deadline != 0 && block.timestamp > deadline) {
-            revert DeadlineExpired();
-        }
-
-        uint256 length = fills.length;
-        if (length == 0) {
-            revert ZeroAmount();
-        }
-
+        _requireFillBatch(deadline, fills.length);
         _settleFills(_applyFillPayingEffects(fills));
     }
 
@@ -715,21 +724,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         // Unchecked is safe: _quoteFill ensures amountA <= availableA and
         // amountBIn <= availableB (exact remaining or ceiled proportion).
-        uint128 remainingA;
-        uint128 remainingB;
-        unchecked {
-            remainingA = cached.availableA - amountA;
-            remainingB = cached.availableB - amountBIn;
-        }
-        order.availableA = remainingA;
-        order.availableB = remainingB;
-        if (remainingA == 0 || remainingB == 0) {
-            order.active = false;
-        }
-
-        emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB: amountBIn});
-
-        return FillLeg({maker: maker, tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountBIn});
+        return _commitFill(order, orderId, maker, tokenA, tokenB, amountA, amountBIn);
     }
 
     /// @notice Validates one amountB-driven fill, updates storage, emits, and returns the leg
@@ -753,11 +748,32 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         // Unchecked is safe: _quoteFillPaying ensures amountB <= availableB and
         // amountAOut <= availableA (exact remaining or floored proportion).
+        return _commitFill(order, orderId, maker, tokenA, tokenB, amountAOut, amountB);
+    }
+
+    /// @notice Writes remaining amounts, deactivates if exhausted, emits, and builds the fill leg
+    /// @param order Active order storage
+    /// @param orderId Order id for the event
+    /// @param maker Order maker
+    /// @param tokenA Sold asset
+    /// @param tokenB Payment asset
+    /// @param amountA tokenA out for this fill
+    /// @param amountB tokenB in for this fill
+    /// @return leg Settled fill leg
+    function _commitFill(
+        Order storage order,
+        uint256 orderId,
+        address maker,
+        address tokenA,
+        address tokenB,
+        uint128 amountA,
+        uint128 amountB
+    ) private returns (FillLeg memory) {
         uint128 remainingA;
         uint128 remainingB;
         unchecked {
-            remainingA = cached.availableA - amountAOut;
-            remainingB = cached.availableB - amountB;
+            remainingA = order.availableA - amountA;
+            remainingB = order.availableB - amountB;
         }
         order.availableA = remainingA;
         order.availableB = remainingB;
@@ -765,9 +781,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             order.active = false;
         }
 
-        emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountAOut, amountB: amountB});
+        emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: amountA, amountB: amountB});
 
-        return FillLeg({maker: maker, tokenA: tokenA, amountA: amountAOut, tokenB: tokenB, amountB: amountB});
+        return FillLeg({maker: maker, tokenA: tokenA, amountA: amountA, tokenB: tokenB, amountB: amountB});
     }
 
     /// @notice Validates fills, updates order storage, and collects transfer legs
