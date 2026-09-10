@@ -29,9 +29,10 @@
  * whole point, and it is enforced two ways:
  *
  *   1. The store is built by *replaying* order lifecycles through create/fill/
- *      cancel functions that mirror `subgraph/v2/src/mapping.ts`. Every counter,
- *      remaining amount and status is arrived at the same way the real indexer
- *      arrives at it, rather than being computed independently and hoped to match.
+ *      cancel/modify/setPartialFillAllowed functions that mirror the five
+ *      handlers in `subgraph/v2/src/mapping.ts`. Every counter, remaining amount
+ *      and status is arrived at the same way the real indexer arrives at it,
+ *      rather than being computed independently and hoped to match.
  *   2. Queries are parsed and validated against a schema descriptor transcribed
  *      from `subgraph/v2/schema.graphql`. An unknown field is an error, exactly
  *      as graph-node treats it — which is the failure this mock used to hide,
@@ -431,14 +432,16 @@
   // for `maker { id }` exercises the same shape the real subgraph would.
   //
   // Nothing here is computed twice: the store is populated by replaying order
-  // lifecycles through applyCreate/applyFill/applyCancel below, which mirror the
-  // three handlers in subgraph/v2/src/mapping.ts. Every counter and remaining
-  // amount is therefore derived exactly the way the indexer derives it.
+  // lifecycles through applyCreate/applyFill/applyCancel/applyModify and
+  // applySetPartialFillAllowed below, which mirror the five handlers in
+  // subgraph/v2/src/mapping.ts. Every counter and remaining amount is therefore
+  // derived exactly the way the indexer derives it.
   // ============================================================================
 
   const STORE = {
     orders: new Map(),
     fills: [],
+    modifications: [],
     tokens: new Map(),
     pairs: new Map(),
     accounts: new Map(),
@@ -450,6 +453,7 @@
       filledOrders: "0",
       canceledOrders: "0",
       totalFills: "0",
+      totalModifications: "0",
       totalTokens: "0",
       totalPairs: "0",
       totalAccounts: "0",
@@ -585,12 +589,16 @@
       filledA: "0",
       filledB: "0",
       filledFraction: "0",
+      // Fill totals a modify does *not* reset, unlike filledA/filledB.
+      lifetimeFilledA: "0",
+      lifetimeFilledB: "0",
       partialFillAllowed: spec.partialFillAllowed,
       status: STATUS.OPEN,
       active: true,
       priceBPerA: priceOf(spec.amountA, tokenA.decimals, spec.amountB, tokenB.decimals),
       priceAPerB: priceOf(spec.amountB, tokenB.decimals, spec.amountA, tokenA.decimals),
       fillCount: 0,
+      modifyCount: 0,
       createdAt: ts,
       createdBlock: String(spec.block),
       createdTx: generateTxHash(spec.orderId * 1000),
@@ -599,6 +607,8 @@
       filledTx: null,
       canceledAt: null,
       canceledTx: null,
+      modifiedAt: null,
+      modifiedTx: null,
     };
     STORE.orders.set(order.id, order);
 
@@ -658,6 +668,10 @@
       BigInt(order.amountA) === 0n
         ? "0"
         : String(Number(BigInt(order.filledA)) / Number(BigInt(order.amountA)));
+    // filledA/filledB are "since the last modify" and get reset by one; these
+    // accumulate across the order's whole life and never do.
+    bump(order, "lifetimeFilledA", amountA);
+    bump(order, "lifetimeFilledB", amountB);
     order.fillCount += 1;
     order.updatedAt = ts;
 
@@ -756,6 +770,116 @@
     bump(STORE.globalStats, "openOrders", -1);
     bump(STORE.globalStats, "canceledOrders", 1);
     if (wasPartiallyFilled) bump(STORE.globalStats, "partiallyFilledOrders", -1);
+    STORE.globalStats.updatedAt = ts;
+  }
+
+  /**
+   * Mirrors handleOrderModified, including the OrderModification it emits.
+   *
+   * A modify is a re-quote, not a top-up of the original: the contract sets all
+   * four amount fields to the new remainings, so the order's own record of how
+   * much of it has been filled is destroyed. That is why `lifetimeFilledA/B`
+   * exist — they are the only fill totals that survive one — and why an order
+   * can read as OPEN with a non-zero `fillCount`.
+   *
+   * Escrow moves, but no open/filled/cancelled counter does: the order was open
+   * before and is open after.
+   *
+   * @param {string} orderId - Order being modified
+   * @param {Object} spec - {availableA, availableB, timestamp, block, txNonce, logIndex}
+   */
+  function applyModify(orderId, spec) {
+    const order = STORE.orders.get(String(orderId));
+    // handleOrderModified bails on an inactive order rather than resurrecting
+    // one; a cancelled order is gone from contract storage entirely.
+    if (!order || !order.active) return;
+
+    const tokenA = STORE.tokens.get(order.tokenA);
+    const tokenB = STORE.tokens.get(order.tokenB);
+    const pair = STORE.pairs.get(order.pair);
+    const maker = STORE.accounts.get(order.maker);
+    const ts = String(spec.timestamp);
+    const wasPartiallyFilled = order.status === STATUS.PARTIALLY_FILLED;
+
+    const availableA = String(spec.availableA);
+    const availableB = String(spec.availableB);
+    const priceBPerA = priceOf(availableA, tokenA.decimals, availableB, tokenB.decimals);
+    const txHash = generateTxHash(spec.txNonce);
+
+    STORE.modifications.push({
+      id: txHash + "-" + spec.logIndex,
+      order: order.id,
+      orderId: order.orderId,
+      maker: maker.id,
+      tokenA: tokenA.id,
+      tokenB: tokenB.id,
+      pair: pair.id,
+      previousAmountA: order.amountA,
+      previousAmountB: order.amountB,
+      previousAvailableA: order.availableA,
+      previousAvailableB: order.availableB,
+      availableA: availableA,
+      availableB: availableB,
+      // Signed: positive is a top-up pulled from the maker, negative a refund.
+      escrowDeltaA: (BigInt(availableA) - BigInt(order.availableA)).toString(),
+      previousPriceBPerA: order.priceBPerA,
+      priceBPerA: priceBPerA,
+      resetFillProgress: wasPartiallyFilled,
+      timestamp: ts,
+      blockNumber: String(spec.block),
+      transactionHash: txHash,
+      logIndex: String(spec.logIndex),
+    });
+
+    // All four collapse to the new remainings — the fill history held in the
+    // amount fields does not survive.
+    order.amountA = availableA;
+    order.amountB = availableB;
+    order.availableA = availableA;
+    order.availableB = availableB;
+    order.filledA = "0";
+    order.filledB = "0";
+    order.filledFraction = "0";
+    order.priceBPerA = priceBPerA;
+    order.priceAPerB = priceOf(availableB, tokenB.decimals, availableA, tokenA.decimals);
+    // Always OPEN, even from PARTIALLY_FILLED: there is no fill progress left
+    // to be partial against. `active`, `fillCount` and `lifetimeFilled*` stand.
+    order.status = STATUS.OPEN;
+    order.modifyCount += 1;
+    order.modifiedAt = ts;
+    order.modifiedTx = txHash;
+    order.updatedAt = ts;
+
+    maker.lastActiveAt = ts;
+    bump(STORE.globalStats, "totalModifications", 1);
+    if (wasPartiallyFilled) bump(STORE.globalStats, "partiallyFilledOrders", -1);
+    STORE.globalStats.updatedAt = ts;
+  }
+
+  /**
+   * Mirrors handleOrderPartialFillUpdated.
+   *
+   * Deliberately thin: the contract moves no escrow and no amount here, so the
+   * handler emits no OrderModification and does not bump `modifyCount`. It
+   * still stamps `modifiedAt`/`modifiedTx`, which is the one way this shows up
+   * in a query.
+   *
+   * @param {string} orderId - Order whose flag is being flipped
+   * @param {Object} spec - {partialFillAllowed, timestamp, txNonce}
+   */
+  function applySetPartialFillAllowed(orderId, spec) {
+    const order = STORE.orders.get(String(orderId));
+    if (!order || !order.active) return;
+
+    const maker = STORE.accounts.get(order.maker);
+    const ts = String(spec.timestamp);
+
+    order.partialFillAllowed = spec.partialFillAllowed;
+    order.modifiedAt = ts;
+    order.modifiedTx = generateTxHash(spec.txNonce);
+    order.updatedAt = ts;
+
+    maker.lastActiveAt = ts;
     STORE.globalStats.updatedAt = ts;
   }
 
@@ -993,6 +1117,83 @@
     }
   }
 
+  /**
+   * Re-quotes and flag-flips a slice of the open book, so the modify surface has
+   * rows rather than being a schema that is always empty.
+   *
+   * Two things this must not do. It must not consume a PRNG draw — the seeded
+   * open/filled/cancelled split is asserted on in test.js, and it is the *order*
+   * the stream is consumed in that fixes it, so every choice here comes off the
+   * loop index instead. And it must not run under v1, which has no modify.
+   *
+   * The status counters are safe by construction: a modify leaves an open order
+   * open, so totalOrders/openOrders/filledOrders/canceledOrders cannot move.
+   *
+   * @param {number} now - Current unix timestamp
+   */
+  function generateModifications(now) {
+    const ids = [...STORE.orders.keys()];
+
+    for (let i = 0; i < ids.length; i++) {
+      const order = STORE.orders.get(ids[i]);
+      if (!order.active) continue;
+
+      // A modify resets a partially filled order to OPEN, so re-quoting them
+      // freely would eat the partial-fill cohort the UI needs. Take a narrow
+      // slice — enough to exercise resetFillProgress and the
+      // PARTIALLY_FILLED -> OPEN transition, and leave the rest partial.
+      if (order.status === STATUS.PARTIALLY_FILLED && i % 21 !== 3) continue;
+
+      // Every 7th open order is re-quoted.
+      if (i % 7 === 3) {
+        const availableA = order.availableA;
+        // Ask ~10% more tokenB for the same tokenA, i.e. a re-price with no
+        // escrow movement — escrowDeltaA is 0 on these.
+        const availableB = ((BigInt(order.availableB) * 11n) / 10n).toString();
+        if (availableB !== "0" && availableB !== order.availableB) {
+          applyModify(order.id, {
+            availableA: availableA,
+            availableB: availableB,
+            timestamp: now - 1800,
+            block: blockAt(now - 1800),
+            txNonce: Number(order.id) * 1000 + 5,
+            logIndex: 0,
+          });
+        }
+      }
+
+      // Every 11th open order has its escrow topped up as well, so escrowDeltaA
+      // is not uniformly zero across the seeded set.
+      if (i % 11 === 5) {
+        const availableA = ((BigInt(order.availableA) * 3n) / 2n).toString();
+        const availableB = ((BigInt(order.availableB) * 3n) / 2n).toString();
+        if (availableA !== "0" && availableB !== "0" && availableA !== order.availableA) {
+          applyModify(order.id, {
+            availableA: availableA,
+            availableB: availableB,
+            timestamp: now - 900,
+            block: blockAt(now - 900),
+            txNonce: Number(order.id) * 1000 + 5,
+            // A second modify on the same order in the same tx would collide on
+            // id; the log index is what separates them, exactly as it separates
+            // the legs of a batch modify on chain.
+            logIndex: 1,
+          });
+        }
+      }
+
+      // Every 9th open order toggles its partial-fill flag. No OrderModification
+      // and no modifyCount — only the modifiedAt/modifiedTx stamp.
+      if (i % 9 === 4) {
+        applySetPartialFillAllowed(order.id, {
+          partialFillAllowed: !order.partialFillAllowed,
+          timestamp: now - 600,
+          txNonce: Number(order.id) * 1000 + 6,
+        });
+      }
+    }
+  }
+
   (function populateStore() {
     const now = Math.floor(Date.now() / 1000);
     generateSeededOrders(now);
@@ -1000,10 +1201,16 @@
     // Fill cohort last so it takes the highest IDs and lands at the top of the
     // default newest-first sort — it is the one you need visible to shift-select.
     generateFillCohort(MOCK_CONFIG.orderCount + MOCK_CONFIG.cancelCohortSize, now);
+    // After every cohort, so it re-quotes a book that is already in its final
+    // shape, and so it cannot perturb the PRNG the cohorts above draw from.
+    if (IS_V2) generateModifications(now);
   })();
 
   /** Fills indexed by id, so relation lookups do not scan the array. */
   const FILLS_BY_ID = new Map(STORE.fills.map((f) => [f.id, f]));
+
+  /** Modifications indexed by id, for the same reason. */
+  const MODIFICATIONS_BY_ID = new Map(STORE.modifications.map((m) => [m.id, m]));
 
   /**
    * The taker of the fill that closed an order, or null while it is still open.
@@ -1057,6 +1264,9 @@
   const ORDER_FILL_IDS = (order) =>
     STORE.fills.filter((f) => f.order === order.id).map((f) => f.id);
 
+  const ORDER_MODIFICATION_IDS = (order) =>
+    STORE.modifications.filter((m) => m.order === order.id).map((m) => m.id);
+
   const SCHEMA_V2 = {
     Order: {
       id: scalar("id"),
@@ -1072,13 +1282,17 @@
       filledA: scalar("filledA"),
       filledB: scalar("filledB"),
       filledFraction: scalar("filledFraction"),
+      lifetimeFilledA: scalar("lifetimeFilledA"),
+      lifetimeFilledB: scalar("lifetimeFilledB"),
       partialFillAllowed: scalar("partialFillAllowed"),
       status: scalar("status"),
       active: scalar("active"),
       priceBPerA: scalar("priceBPerA"),
       priceAPerB: scalar("priceAPerB"),
       fillCount: scalar("fillCount"),
+      modifyCount: scalar("modifyCount"),
       fills: derived("Fill", ORDER_FILL_IDS),
+      modifications: derived("OrderModification", ORDER_MODIFICATION_IDS),
       createdAt: scalar("createdAt"),
       createdBlock: scalar("createdBlock"),
       createdTx: scalar("createdTx"),
@@ -1087,6 +1301,8 @@
       filledTx: scalar("filledTx"),
       canceledAt: scalar("canceledAt"),
       canceledTx: scalar("canceledTx"),
+      modifiedAt: scalar("modifiedAt"),
+      modifiedTx: scalar("modifiedTx"),
     },
     Fill: {
       id: scalar("id"),
@@ -1103,6 +1319,29 @@
       remainingA: scalar("remainingA"),
       remainingB: scalar("remainingB"),
       closedOrder: scalar("closedOrder"),
+      timestamp: scalar("timestamp"),
+      blockNumber: scalar("blockNumber"),
+      transactionHash: scalar("transactionHash"),
+      logIndex: scalar("logIndex"),
+    },
+    OrderModification: {
+      id: scalar("id"),
+      order: ref("Order", "order"),
+      orderId: scalar("orderId"),
+      maker: ref("Account", "maker"),
+      tokenA: ref("Token", "tokenA"),
+      tokenB: ref("Token", "tokenB"),
+      pair: ref("Pair", "pair"),
+      previousAmountA: scalar("previousAmountA"),
+      previousAmountB: scalar("previousAmountB"),
+      previousAvailableA: scalar("previousAvailableA"),
+      previousAvailableB: scalar("previousAvailableB"),
+      availableA: scalar("availableA"),
+      availableB: scalar("availableB"),
+      escrowDeltaA: scalar("escrowDeltaA"),
+      previousPriceBPerA: scalar("previousPriceBPerA"),
+      priceBPerA: scalar("priceBPerA"),
+      resetFillProgress: scalar("resetFillProgress"),
       timestamp: scalar("timestamp"),
       blockNumber: scalar("blockNumber"),
       transactionHash: scalar("transactionHash"),
@@ -1168,6 +1407,7 @@
       filledOrders: scalar("filledOrders"),
       canceledOrders: scalar("canceledOrders"),
       totalFills: scalar("totalFills"),
+      totalModifications: scalar("totalModifications"),
       totalTokens: scalar("totalTokens"),
       totalPairs: scalar("totalPairs"),
       totalAccounts: scalar("totalAccounts"),
@@ -1241,6 +1481,7 @@
   const LOOKUP = {
     Order: (id) => STORE.orders.get(id),
     Fill: (id) => FILLS_BY_ID.get(id),
+    OrderModification: (id) => MODIFICATIONS_BY_ID.get(id),
     Token: (id) => STORE.tokens.get(id),
     Pair: (id) => STORE.pairs.get(id),
     Account: (id) => STORE.accounts.get(id),
@@ -1253,6 +1494,12 @@
         orders: { type: "Order", many: true, all: () => [...STORE.orders.values()] },
         order: { type: "Order", many: false },
         fills: { type: "Fill", many: true, all: () => STORE.fills.slice() },
+        orderModifications: {
+          type: "OrderModification",
+          many: true,
+          all: () => STORE.modifications.slice(),
+        },
+        orderModification: { type: "OrderModification", many: false },
         tokens: { type: "Token", many: true, all: () => [...STORE.tokens.values()] },
         pairs: { type: "Pair", many: true, all: () => [...STORE.pairs.values()] },
         accounts: { type: "Account", many: true, all: () => [...STORE.accounts.values()] },
@@ -1738,7 +1985,11 @@
    * all four amounts.
    */
   function encOrderTuple(order) {
-    if (!order) {
+    // cancelOrder deletes the slot before emitting OrderCanceled, so on chain a
+    // cancelled id is indistinguishable from one that never existed. The
+    // subgraph keeps the row — that is the point of an indexer — but a view call
+    // must not, or the UI would be reading state the contract has dropped.
+    if (!order || order.status === STATUS.CANCELED) {
       // getOrder on an unknown id returns a zeroed struct rather than
       // reverting, exactly as the contract does.
       return word(0).repeat(9);
