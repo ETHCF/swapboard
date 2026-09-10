@@ -6,7 +6,8 @@ Usage:
 
 <a>/<b> may be:
   - a path to a .gas-snapshot file
-  - a date prefix (YYYY-MM-DD) resolved under snapshots_dir as YYYY-MM-DD.gas-snapshot
+  - a stamp prefix (YYYY-MM-DD or YYYY-MM-DDTHHMMSS) resolved under
+    snapshots_dir as <stamp>.gas-snapshot
 """
 
 from __future__ import annotations

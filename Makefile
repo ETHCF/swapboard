@@ -88,10 +88,10 @@ deploy-local:
 snapshot:
 	$(FORGE) snapshot --match-contract GasBenchmarks --snap .gas-snapshot
 
-# Archive current .gas-snapshot as gas-snapshots/YYYY-MM-DD.gas-snapshot
+# Archive current .gas-snapshot as gas-snapshots/YYYY-MM-DDTHHMMSS.gas-snapshot
 snapshot-save: snapshot
 	@mkdir -p $(GAS_SNAPSHOTS)
-	@dest="$(GAS_SNAPSHOTS)/$$(date +%Y-%m-%d).gas-snapshot"; \
+	@dest="$(GAS_SNAPSHOTS)/$$(date +%Y-%m-%dT%H%M%S).gas-snapshot"; \
 		cp $(CONTRACTS)/.gas-snapshot "$$dest"; \
 		echo "Saved $$dest"
 
@@ -131,7 +131,7 @@ help:
 	@echo "  anvil           - Start local Anvil on port $(ANVIL_PORT)"
 	@echo "  deploy-local    - Deploy to local Anvil ($(ANVIL_RPC_URL))"
 	@echo "  snapshot        - Write GasBenchmarks gas → contracts/.gas-snapshot"
-	@echo "  snapshot-save   - snapshot + archive to gas-snapshots/YYYY-MM-DD.gas-snapshot"
+	@echo "  snapshot-save   - snapshot + archive to gas-snapshots/YYYY-MM-DDTHHMMSS.gas-snapshot"
 	@echo "  snapshot-diff   - Compare two snapshots as a table (A=... B=...)"
 	@echo "  slither         - Run Slither analysis"
 	@echo "  serve           - Start frontend dev server"
