@@ -36,9 +36,6 @@ Thumbs.db
 contracts/broadcast/
 contracts/cache_forge/
 
-# Test token contracts (development only)
-contracts/src/TestToken.sol
-contracts/script/DeployTestTokens.s.sol
 
 # Logs
 *.log
@@ -68,5 +65,7 @@ CLAUDE.md
 keystore/
 *.pem
 *.key
-.gas-snapshot
+contracts/.gas-snapshot
+contracts/gas-snapshots/
+contracts/gas-snapshots/*.gas-snapshot
 
