@@ -14,7 +14,10 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      Key properties:
 ///      - No admin functions, fees, or upgrades
 ///      - Full fills are atomic; partial fills are opt-in via `partialFillAllowed`
-///      - Partial fill size is specified as tokenA to receive (`amountA`); tokenB paid is ceiled
+///      - `fillOrder` sizes by tokenA to receive (`amountA`) with `minAmountA`; tokenB paid is
+///        ceiled and any extra tokenA that payment buys is paid out
+///      - `fillOrderPaying` sizes by tokenB to pay (`amountB`) with `maxAmountB`; tokenA out is
+///        floored and any unused tokenB from that receive is not pulled
 ///      - Fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on inbound
 ///        tokenA deposits (`_pullExactToken`) and on ERC20 tokenB payments to the maker
 ///        (`_pullExactTokenTo` / `BalanceMismatch`). ETH tokenB uses `msg.value` then `sendValue`.
@@ -35,9 +38,9 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///        can still short the maker
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
 ///        can run `receive`/`fallback`; always after state updates (CEI)
-///      - Floor/ceil rounding on partial fills may leave tokenA dust in escrow; refunding that dust
-///        is not worth the gas. It can later benefit a user who rounds favorably on another
-///        fill where that dust token is tokenB
+///      - Floor/ceil rounding on partial fills may leave tokenA dust in escrow when the ceiled
+///        payment still does not cover it; refunding that dust is not worth the gas. It can later
+///        benefit a user who rounds favorably on another fill where that dust token is tokenB
 ///
 /// @custom:security-contact zak@numbergroup.xyz
 contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
@@ -171,13 +174,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ///      uses `msg.value` then `sendValue`. Residual risk is fee-on-transfer / mid-transfer
     ///      rebase only on the outbound tokenA `transfer` to the taker.
     ///      tokenB in uses ceil division so the taker never underpays for the requested tokenA.
-    ///      Residual tokenA dust (when amountB is exhausted first) is not refunded (not worth the
-    ///      gas); it can be picked up by any user that rounds favorably on another order where the
-    ///      dust token is tokenB.
+    ///      The ceiled payment may buy more tokenA than requested; that extra is paid out.
+    ///      Residual tokenA dust (when the payment still does not cover it) is not refunded.
     function fillOrder(
         uint256 orderId,
         uint128 amountA,
-        uint128 minAmountB,
+        uint128 minAmountA,
         uint256 deadline
     ) external payable nonReentrant {
         _requireDeadline(deadline);
@@ -186,7 +188,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert ZeroAmount();
         }
 
-        _settleFillQuote(_applyOneFillEffect(orderId, amountA, minAmountB));
+        _settleFillQuote(_applyOneFillEffect(orderId, amountA, minAmountA));
     }
 
     /// @inheritdoc ISwapboard
@@ -201,11 +203,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @dev ERC20 tokenB is pulled directly to the maker via `_pullExactTokenTo` (rejects
     ///      fee-on-transfer / mid-transfer rebase / phantom via `BalanceMismatch`). tokenA out
     ///      uses floor division so the taker never over-receives for the paid tokenB relative to
-    ///      the escrow ratio.
+    ///      the escrow ratio. The floored receive may cost less tokenB than requested; only that
+    ///      lesser payment is pulled.
     function fillOrderPaying(
         uint256 orderId,
         uint128 amountB,
-        uint128 maxAmountA,
+        uint128 maxAmountB,
         uint256 deadline
     ) external payable nonReentrant {
         _requireDeadline(deadline);
@@ -214,7 +217,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert ZeroAmount();
         }
 
-        _settleFillQuote(_applyOneFillPayingEffect(orderId, amountB, maxAmountA));
+        _settleFillQuote(_applyOneFillPayingEffect(orderId, amountB, maxAmountB));
     }
 
     /// @inheritdoc ISwapboard
@@ -622,8 +625,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return orderIds;
     }
 
-    /// @notice Quotes the ceiled tokenB payment for an active order
-    /// @dev Ceil division benefits escrow/maker. Residual tokenA dust is not refunded.
+    /// @notice Quotes the ceiled tokenB payment for an active order, then the tokenA that payment buys
+    /// @dev Ceil division on tokenB so the taker never underpays for the requested tokenA. The ceiled
+    ///      payment is then floored back to tokenA, which may exceed the request (taker can get more).
     ///      Intermediate math widens to uint256; both factors are uint128 so the product fits.
     ///      Reads only the fields needed for quoting (skips amountA/amountB originals).
     /// @param order Order to quote (must already be active)
@@ -638,7 +642,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         quote.maker = order.maker;
         quote.tokenA = order.tokenA;
         quote.tokenB = order.tokenB;
-        quote.amountA = amountA;
         quote.availableA = order.availableA;
         quote.availableB = order.availableB;
         bool partialFillAllowed = order.partialFillAllowed;
@@ -650,26 +653,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert PartialFillNotAllowed(orderId);
         }
 
-        if (amountA == quote.availableA) {
-            quote.amountB = quote.availableB;
-        } else {
-            // Unchecked is safe: else branch implies amountA < availableA so availableA >= 1;
-            // product of two uint128 values always fits in uint256; ceil result is <= availableB.
-            uint256 quotedB;
-            unchecked {
-                quotedB = (uint256(amountA) * uint256(quote.availableB) + uint256(quote.availableA) - 1)
-                    / uint256(quote.availableA);
-            }
-            // forge-lint: disable-next-line(unsafe-typecast)
-            quote.amountB = uint128(quotedB);
-        }
+        quote.amountB = _ceilB(amountA, quote.availableA, quote.availableB);
+        quote.amountA = _floorA(quote.amountB, quote.availableA, quote.availableB);
         if (quote.amountB == 0) {
             revert ZeroAmount();
         }
     }
 
-    /// @notice Quotes the floored tokenA receive for a fill driven by tokenB paid
-    /// @dev Floor division benefits escrow/maker. Full remaining `amountB` returns all `availableA`.
+    /// @notice Quotes the floored tokenA receive for a fill driven by tokenB paid, then the tokenB due
+    /// @dev Floor division on tokenA so the taker never over-receives. That receive is then ceiled
+    ///      back to tokenB, which may be below the request (taker can send less).
     ///      Reads only the fields needed for quoting (skips amountA/amountB originals).
     /// @param order Order to quote (must already be active)
     /// @param orderId Order id for error payloads
@@ -683,7 +676,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         quote.maker = order.maker;
         quote.tokenA = order.tokenA;
         quote.tokenB = order.tokenB;
-        quote.amountB = amountB;
         quote.availableA = order.availableA;
         quote.availableB = order.availableB;
         bool partialFillAllowed = order.partialFillAllowed;
@@ -695,21 +687,51 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert PartialFillNotAllowed(orderId);
         }
 
-        if (amountB == quote.availableB) {
-            quote.amountA = quote.availableA;
-        } else {
-            // Unchecked is safe: else branch implies amountB < availableB so availableB >= 1;
-            // product of two uint128 values always fits in uint256; floor result is < availableA.
-            uint256 quotedA;
-            unchecked {
-                quotedA = (uint256(amountB) * uint256(quote.availableA)) / uint256(quote.availableB);
-            }
-            // forge-lint: disable-next-line(unsafe-typecast)
-            quote.amountA = uint128(quotedA);
-        }
+        quote.amountA = _floorA(amountB, quote.availableA, quote.availableB);
+        quote.amountB = _ceilB(quote.amountA, quote.availableA, quote.availableB);
         if (quote.amountA == 0) {
             revert ZeroAmount();
         }
+    }
+
+    /// @notice Ceiled tokenB payment for `amountA` against remaining liquidity
+    /// @dev `amountA == availableA` returns all remaining tokenB. Else branch implies
+    ///      `amountA < availableA` so `availableA >= 1`; product of two uint128 values fits in
+    ///      uint256; ceil result is <= `availableB`.
+    function _ceilB(
+        uint128 amountA,
+        uint128 availableA,
+        uint128 availableB
+    ) private pure returns (uint128) {
+        if (amountA == availableA) {
+            return availableB;
+        }
+        uint256 quotedB;
+        unchecked {
+            quotedB = (uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA);
+        }
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint128(quotedB);
+    }
+
+    /// @notice Floored tokenA receive for `amountB` against remaining liquidity
+    /// @dev `amountB == availableB` returns all remaining tokenA. Else branch implies
+    ///      `amountB < availableB` so `availableB >= 1`; product of two uint128 values fits in
+    ///      uint256; floor result is < `availableA`.
+    function _floorA(
+        uint128 amountB,
+        uint128 availableA,
+        uint128 availableB
+    ) private pure returns (uint128) {
+        if (amountB == availableB) {
+            return availableA;
+        }
+        uint256 quotedA;
+        unchecked {
+            quotedA = (uint256(amountB) * uint256(availableA)) / uint256(availableB);
+        }
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint128(quotedA);
     }
 
     /// @notice Fills orders after committing legs and settling tokenB/tokenA transfers
@@ -726,7 +748,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (fill.amountA == 0) {
                 revert ZeroAmount();
             }
-            _settleFillQuote(_applyOneFillEffect(fill.orderId, fill.amountA, fill.minAmountB));
+            _settleFillQuote(_applyOneFillEffect(fill.orderId, fill.amountA, fill.minAmountA));
 
             return;
         }
@@ -748,7 +770,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (fill.amountB == 0) {
                 revert ZeroAmount();
             }
-            _settleFillQuote(_applyOneFillPayingEffect(fill.orderId, fill.amountB, fill.maxAmountA));
+            _settleFillQuote(_applyOneFillPayingEffect(fill.orderId, fill.amountB, fill.maxAmountB));
             return;
         }
 
@@ -758,18 +780,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Validates one fill, updates order storage, emits `OrderFilled`, and returns the quote
     /// @param orderId Order to fill
     /// @param amountA Requested tokenA out
-    /// @param minAmountB Minimum tokenB payment declared by the taker
+    /// @param minAmountA Minimum tokenA receive declared by the taker
     /// @return quote Settled fill quote
     function _applyOneFillEffect(
         uint256 orderId,
         uint128 amountA,
-        uint128 minAmountB
+        uint128 minAmountA
     ) private returns (FillQuote memory quote) {
         Order storage order = _requireActiveOrder(orderId);
         quote = _quoteFill(order, orderId, amountA);
 
-        if (quote.amountB < minAmountB) {
-            revert FillAmountMismatch(orderId, quote.amountB, minAmountB);
+        if (quote.amountA < minAmountA) {
+            revert FillAmountMismatch(orderId, quote.amountA, minAmountA);
         }
 
         // Unchecked is safe: _quoteFill ensures amountA <= availableA and
@@ -780,18 +802,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Validates one amountB-driven fill, updates storage, emits, and returns the quote
     /// @param orderId Order to fill
     /// @param amountB Requested tokenB in
-    /// @param maxAmountA Maximum tokenA receive declared by the taker
+    /// @param maxAmountB Maximum tokenB payment declared by the taker
     /// @return quote Settled fill quote
     function _applyOneFillPayingEffect(
         uint256 orderId,
         uint128 amountB,
-        uint128 maxAmountA
+        uint128 maxAmountB
     ) private returns (FillQuote memory quote) {
         Order storage order = _requireActiveOrder(orderId);
         quote = _quoteFillPaying(order, orderId, amountB);
 
-        if (quote.amountA > maxAmountA) {
-            revert FillReceiveTooHigh(orderId, quote.amountA, maxAmountA);
+        if (quote.amountB > maxAmountB) {
+            revert FillPayTooHigh(orderId, quote.amountB, maxAmountB);
         }
 
         // Unchecked is safe: _quoteFillPaying ensures amountB <= availableB and
@@ -829,18 +851,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Validates one fill into a batch settlement leg
     /// @param orderId Order to fill
     /// @param amountA Requested tokenA out
-    /// @param minAmountB Minimum tokenB payment declared by the taker
+    /// @param minAmountA Minimum tokenA receive declared by the taker
     /// @return leg Settled fill leg
     function _applyOneFillLeg(
         uint256 orderId,
         uint128 amountA,
-        uint128 minAmountB
+        uint128 minAmountA
     ) private returns (FillLeg memory leg) {
         Order storage order = _requireActiveOrder(orderId);
         FillQuote memory quote = _quoteFill(order, orderId, amountA);
 
-        if (quote.amountB < minAmountB) {
-            revert FillAmountMismatch(orderId, quote.amountB, minAmountB);
+        if (quote.amountA < minAmountA) {
+            revert FillAmountMismatch(orderId, quote.amountA, minAmountA);
         }
 
         _commitFill(order, orderId, quote);
@@ -855,18 +877,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Validates one amountB-driven fill into a batch settlement leg
     /// @param orderId Order to fill
     /// @param amountB Requested tokenB in
-    /// @param maxAmountA Maximum tokenA receive declared by the taker
+    /// @param maxAmountB Maximum tokenB payment declared by the taker
     /// @return leg Settled fill leg
     function _applyOneFillPayingLeg(
         uint256 orderId,
         uint128 amountB,
-        uint128 maxAmountA
+        uint128 maxAmountB
     ) private returns (FillLeg memory leg) {
         Order storage order = _requireActiveOrder(orderId);
         FillQuote memory quote = _quoteFillPaying(order, orderId, amountB);
 
-        if (quote.amountA > maxAmountA) {
-            revert FillReceiveTooHigh(orderId, quote.amountA, maxAmountA);
+        if (quote.amountB > maxAmountB) {
+            revert FillPayTooHigh(orderId, quote.amountB, maxAmountB);
         }
 
         _commitFill(order, orderId, quote);
@@ -894,7 +916,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 revert ZeroAmount();
             }
 
-            legs[i] = _applyOneFillLeg(fill.orderId, fill.amountA, fill.minAmountB);
+            legs[i] = _applyOneFillLeg(fill.orderId, fill.amountA, fill.minAmountA);
         }
 
         return legs;
@@ -915,7 +937,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 revert ZeroAmount();
             }
 
-            legs[i] = _applyOneFillPayingLeg(fill.orderId, fill.amountB, fill.maxAmountA);
+            legs[i] = _applyOneFillPayingLeg(fill.orderId, fill.amountB, fill.maxAmountB);
         }
 
         return legs;

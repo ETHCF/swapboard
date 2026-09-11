@@ -84,6 +84,7 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 amountBIn =
             fillA == amountA ? amountB : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
         vm.assume(amountBIn > 0);
+        uint256 amountAOut = amountBIn == amountB ? amountA : (amountBIn * uint256(amountA)) / uint256(amountB);
 
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(
@@ -101,8 +102,9 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        uint128 remainingA = amountA - fillA;
-        // casting to 'uint128' is safe because amountBIn <= amountB
+        // casting to 'uint128' is safe because amountAOut <= amountA and amountBIn <= amountB
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 remainingA = amountA - uint128(amountAOut);
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 remainingB = amountB - uint128(amountBIn);
         if (remainingA == 0 || remainingB == 0) {
@@ -135,6 +137,9 @@ contract SwapboardStatelessInvariantTest is Test {
 
         uint256 amountAOut = fillB == amountB ? amountA : (uint256(fillB) * uint256(amountA)) / uint256(amountB);
         vm.assume(amountAOut > 0);
+        uint256 amountBIn = amountAOut == amountA
+            ? amountB
+            : (amountAOut * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
 
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(
@@ -152,10 +157,11 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        // casting to 'uint128' is safe because amountAOut <= amountA
+        // casting to 'uint128' is safe because amountAOut <= amountA and amountBIn <= amountB
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 remainingA = amountA - uint128(amountAOut);
-        uint128 remainingB = amountB - fillB;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 remainingB = amountB - uint128(amountBIn);
         if (remainingA == 0 || remainingB == 0) {
             assertEq(order.maker, address(0));
             assertFalse(order.active);
@@ -321,7 +327,7 @@ contract SwapboardStatelessInvariantTest is Test {
 
         uint256 filledA1 = uint256(afterFirst.amountA) - uint256(afterFirst.availableA);
         uint256 filledB1 = uint256(afterFirst.amountB) - uint256(afterFirst.availableB);
-        assertEq(filledA1, fillA1);
+        assertTrue(!(filledA1 < fillA1));
         assertEq(filledB1, bIn1);
         assertEq(afterFirst.amountA, amountA);
         assertEq(afterFirst.amountB, amountB);

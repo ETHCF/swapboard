@@ -169,11 +169,9 @@ contract SwapboardIntegrationTest is Test {
         _fillOrder(orderId, 10 ether);
         vm.stopPrank();
 
-        ISwapboard.Order memory orderBeforeCharlie = _board.getOrder(orderId);
-        uint128 amountBCharlie = FillTestLib.quoteAmountB(orderBeforeCharlie, 10 ether);
         vm.startPrank(_charlie);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
-        _board.fillOrder(orderId, 10 ether, amountBCharlie, 0);
+        _board.fillOrder(orderId, 10 ether, 10 ether, 0);
         vm.stopPrank();
 
         assertFalse(_board.getOrder(orderId).active);
@@ -497,9 +495,8 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_charlie);
         _usdc.approve(address(_board), 30_000e6);
-        ISwapboard.Order memory order = _board.getOrder(orderId);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, 4 ether, remainingA));
-        _board.fillOrder(orderId, 4 ether, FillTestLib.quoteAmountB(order, 4 ether), 0);
+        _board.fillOrder(orderId, 4 ether, 4 ether, 0);
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));
@@ -868,9 +865,9 @@ contract SwapboardIntegrationTest is Test {
     function _fillOrderPayEth(
         uint256 orderId,
         uint128 amountA,
-        uint128 minAmountB
+        uint128 value
     ) private {
-        FillTestLib.fillPayEth(_board, orderId, amountA, minAmountB);
+        FillTestLib.fillPayEth(_board, orderId, amountA, value);
     }
 
     function _order(
