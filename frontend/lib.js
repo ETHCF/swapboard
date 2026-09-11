@@ -800,11 +800,14 @@ const ERROR_SIGNATURES = {
   "0xcfc02c6e": "NotWETH",
   "0x1c988062": "ETHTransferFailed",
 
-  // v2 only: partial fills, slippage bounds, and batch entry points.
+  // v2 only: partial fills, slippage bounds, batch entry points, and maker edits.
   "0xed38596f": "PartialFillNotAllowed",
   "0x535a34f0": "FillAmountTooHigh",
   "0x19113a72": "FillAmountMismatch",
+  "0x771534f7": "FillReceiveTooHigh",
   "0x54b9c511": "DuplicateOrderId",
+  "0xa88ee577": "NoChange",
+  "0xe796ec17": "OrderStateMismatch",
 
   // v2 only, from OpenZeppelin. Address.sendValue and SafeERC20 replace v1's
   // hand-rolled ETHTransferFailed, and the transient reentrancy guard has its
@@ -842,7 +845,12 @@ const ERROR_MESSAGES = {
     `Order #${args[0]} has less left than you asked for. Refresh and try again.`,
   FillAmountMismatch: (args) =>
     `Order #${args[0]} repriced while you were confirming. Refresh and try again.`,
+  FillReceiveTooHigh: (args) =>
+    `Order #${args[0]} repriced while you were confirming. Refresh and try again.`,
   DuplicateOrderId: (args) => `Order #${args[0]} appears twice in this batch`,
+  NoChange: "Nothing to change: the order already has these values",
+  OrderStateMismatch: (args) =>
+    `Order #${args[0]} changed while you were editing it. Refresh and try again.`,
   FailedCall: "ETH transfer to recipient failed",
   InsufficientBalance: "The contract holds less ETH than this transfer needs",
   SafeERC20FailedOperation: "Token transfer failed",
@@ -1108,12 +1116,18 @@ const VERSION_CAPS = {
     nativeEth: true,
     multiCreate: true,
     remainingAmounts: true,
-    // Both off until the v2 contracts and subgraph exist: there is no ABI to
-    // encode a gas estimate against, and polling an index that will never
-    // update only ever times out.
-    gasEstimate: false,
+    /**
+     * The connector encodes against the real v2 ABI, so a call can be priced.
+     * Until there is a deployment it declines to estimate against the zero
+     * placeholder, so the modal shows no figure rather than a made-up one.
+     */
+    gasEstimate: true,
+    /** Off until a v2 subgraph is deployed: polling a placeholder only times out. */
     subgraphPolling: false,
-    /** Writes go to the dummy connector. */
+    /**
+     * Not deployed. Writes still go through the real connector, which refuses
+     * to send to the zero placeholder outside mock mode — see requireDeployed().
+     */
     live: false,
   },
 };
@@ -1442,6 +1456,26 @@ function isNativeEth(addr) {
   return addr.toLowerCase() === NATIVE_ETH.toLowerCase();
 }
 
+/**
+ * The `msg.value` a v2 call must carry: the sum of its native-ETH legs.
+ *
+ * v2 totals every sentinel-denominated leg of a call into a single exact
+ * `msg.value` check and reverts with ETHAmountMismatch on any difference, over
+ * or under. So this counts exactly the NATIVE_ETH legs and nothing else —
+ * not WETH, which v2 settles as an ordinary ERC20.
+ *
+ * @param {Array<{token: string, amount: (bigint|string)}>} legs - Token and amount per leg
+ * @returns {bigint} Total of the legs denominated in native ETH
+ */
+function nativeEthTotal(legs) {
+  if (!Array.isArray(legs)) return 0n;
+  let total = 0n;
+  for (const { token, amount } of legs) {
+    if (isNativeEth(token)) total += BigInt(amount);
+  }
+  return total;
+}
+
 // ============================================================================
 // V2: Batching
 // ============================================================================
@@ -1551,13 +1585,16 @@ function getShiftRangeIds(sortedOrders, anchorId, targetId, firstSelected, userA
 // V2: Partial fill math
 // ============================================================================
 //
-// These mirror `Swapboard._quoteFill` exactly. They have to: v2 pays with an
-// exact `msg.value` when the wanted token is native ETH, and submits the quote
-// it computed as `minAmountB`, so a formula that disagrees with the contract by
-// one base unit is a reverted transaction rather than a rounding artifact.
+// These mirror `Swapboard._quoteFill` and `_quoteFillPaying` exactly. They
+// have to: v2 pays with an exact `msg.value` when the wanted token is native
+// ETH, so a formula that disagrees with the contract by one base unit is a
+// reverted transaction rather than a rounding artifact.
 //
-// A fill is expressed as `amountA` — the offered token the taker receives —
-// and the payment is derived from it, ceiled in the maker's favour.
+// The UI fills by payment (`fillOrderPaying`): the taker names the tokenB they
+// pay, which is exactly what leaves their wallet, and the tokenA they receive
+// is derived from it, floored in the maker's favour (computeFillFromPayment).
+// The receive-driven pair, quoteFill / computeFillFromReceive, mirrors
+// `fillOrder`, where the payment is derived instead and ceiled.
 // ============================================================================
 
 /**
@@ -1584,11 +1621,11 @@ function quoteFill(order, amountA) {
 }
 
 /**
- * Largest `amountA` obtainable for a given tokenB budget.
+ * The tokenA a payment of `amountB` receives.
  *
- * The inverse of quoteFill, and floored, so the quote for the returned amount
- * never exceeds the budget. Used to drive the fill controls when the taker
- * thinks in terms of what they are paying rather than what they receive.
+ * Mirrors `Swapboard._quoteFillPaying`: paying the whole remainder receives
+ * exactly the remaining tokenA, and anything less floors the proportion, so
+ * the taker never receives more than the escrow ratio allows.
  *
  * @param {Object} order - Order with availableA/availableB in base units
  * @param {string|bigint} amountB - Budget in the wanted token, in base units
@@ -1623,6 +1660,27 @@ function computeFillFromReceive(order, receiveAmountA) {
   if (want > availableA) want = availableA;
 
   return { amountA: want, amountB: quoteFill(order, want) };
+}
+
+/**
+ * Resolves a payment into the pair of values a fill-by-payment is made of.
+ *
+ * Clamps to what is left, like computeFillFromReceive. An amountA of 0 means
+ * the payment cannot buy a single base unit, which the contract rejects with
+ * ZeroAmount, so callers treat it as no fill at all.
+ *
+ * @param {Object} order - Order with availableA/availableB in base units
+ * @param {string|bigint} payAmountB - Wanted token the taker pays
+ * @returns {{amountA: bigint, amountB: bigint}} Receive, and the exact payment
+ *   fillOrderPaying is sent with
+ */
+function computeFillFromPayment(order, payAmountB) {
+  const availableB = BigInt(order.availableB);
+  let pay = BigInt(payAmountB);
+  if (pay < 0n) pay = 0n;
+  if (pay > availableB) pay = availableB;
+
+  return { amountA: computeReceiveFromFill(order, pay), amountB: pay };
 }
 
 /**
@@ -1756,6 +1814,7 @@ if (typeof window !== "undefined") {
     // V2: native ETH
     NATIVE_ETH,
     isNativeEth,
+    nativeEthTotal,
 
     // V2: batching
     chunkArray,
@@ -1770,6 +1829,7 @@ if (typeof window !== "undefined") {
     quoteFill,
     computeReceiveFromFill,
     computeFillFromReceive,
+    computeFillFromPayment,
     allowsPartialFill,
     summarizeFillBatch,
   };
@@ -1865,6 +1925,7 @@ if (typeof module !== "undefined" && module.exports) {
 
     // V2: native ETH
     isNativeEth,
+    nativeEthTotal,
 
     // V2: batching
     chunkArray,
@@ -1879,6 +1940,7 @@ if (typeof module !== "undefined" && module.exports) {
     quoteFill,
     computeReceiveFromFill,
     computeFillFromReceive,
+    computeFillFromPayment,
     allowsPartialFill,
     summarizeFillBatch,
   };
