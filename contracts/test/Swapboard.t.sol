@@ -3894,21 +3894,25 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertEq(order.amountA, amountA);
-        assertEq(order.amountB, amountB);
-        assertEq(order.availableA, amountA - fillA);
-        assertEq(order.availableB, amountB - amountBIn);
+        uint256 remainingA = amountA - fillA;
+        uint256 remainingB = amountB - amountBIn;
+        if (remainingA == 0 || remainingB == 0) {
+            assertEq(order.maker, address(0));
+            assertFalse(order.active);
+            assertEq(order.availableA, 0);
+            assertEq(order.availableB, 0);
+        } else {
+            assertEq(order.amountA, amountA);
+            assertEq(order.amountB, amountB);
+            assertEq(order.availableA, remainingA);
+            assertEq(order.availableB, remainingB);
+            assertTrue(order.active);
+        }
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
         assertEq(_tokenA.balanceOf(_taker), takerABefore + fillA);
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + amountBIn);
-        assertEq(_tokenA.balanceOf(address(_board)), amountA - fillA);
-
-        if (order.availableA == 0 || order.availableB == 0) {
-            assertFalse(order.active);
-        } else {
-            assertTrue(order.active);
-        }
+        assertEq(_tokenA.balanceOf(address(_board)), remainingA);
     }
 
     /// @notice Fuzz: non-partial orders reject any amountA other than the full remaining

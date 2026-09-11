@@ -61,6 +61,14 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 refund;
     }
 
+    /// @notice tokenA escrow delta between current and desired availableA
+    /// @param topUp Amount to pull from the maker (0 if none)
+    /// @param refund Amount to return to the maker (0 if none)
+    struct EscrowADelta {
+        uint256 topUp;
+        uint256 refund;
+    }
+
     /// @notice Aggregated ERC20 amounts with a separate ETH total
     /// @dev `tokens` / `amounts` may be longer than `count`; only the first `count` entries are valid
     /// @param tokens Distinct ERC20 tokens in first-seen order
@@ -132,11 +140,14 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _validateCreateOrder(tokenA, amountA, order.tokenB, order.amountB);
 
         Token token = Token.wrap(tokenA);
-        uint256 ethAmount = token.isNative() ? uint256(amountA) : 0;
-        if (msg.value != ethAmount) {
-            revert ETHAmountMismatch(ethAmount, msg.value);
-        }
-        if (!token.isNative()) {
+        if (token.isNative()) {
+            if (msg.value != amountA) {
+                revert ETHAmountMismatch(amountA, msg.value);
+            }
+        } else {
+            if (msg.value != 0) {
+                revert ETHAmountMismatch(0, msg.value);
+            }
             _pullExactToken(token, amountA);
         }
 
@@ -170,7 +181,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert ZeroAmount();
         }
 
-        _settleFill(_applyOneFillEffect(orderId, amountA, minAmountB));
+        _settleFillQuote(_applyOneFillEffect(orderId, amountA, minAmountB));
     }
 
     /// @inheritdoc ISwapboard
@@ -197,7 +208,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert ZeroAmount();
         }
 
-        _settleFill(_applyOneFillPayingEffect(orderId, amountB, maxAmountA));
+        _settleFillQuote(_applyOneFillPayingEffect(orderId, amountB, maxAmountA));
     }
 
     /// @inheritdoc ISwapboard
@@ -404,8 +415,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert ZeroAmount();
         }
 
-        _validateCreateOrders(orders);
-
         AggregatedAmounts memory deposits = _aggregateDepositAssets(orders);
         if (msg.value != deposits.ethAmount) {
             revert ETHAmountMismatch(deposits.ethAmount, msg.value);
@@ -416,25 +425,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return _storeOrders(orders);
     }
 
-    /// @notice Validates every order in a create batch
-    /// @param orders Order creation arguments
-    function _validateCreateOrders(
-        CreateOrderParams[] calldata orders
-    ) private view {
-        uint256 length = orders.length;
-        for (uint256 i = 0; i < length; ++i) {
-            CreateOrderParams calldata params = orders[i];
-
-            _validateCreateOrder(params.tokenA, params.amountA, params.tokenB, params.amountB);
-        }
-    }
-
-    /// @notice Aggregates tokenA deposits from a create batch (ETH summed separately)
+    /// @notice Validates create args and aggregates tokenA deposits (ETH summed separately)
     /// @param orders Order creation arguments
     /// @return aggregated Distinct ERC20 deposits plus summed ETH
     function _aggregateDepositAssets(
         CreateOrderParams[] calldata orders
-    ) private pure returns (AggregatedAmounts memory aggregated) {
+    ) private view returns (AggregatedAmounts memory aggregated) {
         uint256 length = orders.length;
         aggregated.tokens = new address[](length);
         aggregated.amounts = new uint256[](length);
@@ -442,7 +438,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         for (uint256 i = 0; i < length; ++i) {
             CreateOrderParams calldata params = orders[i];
             address token = params.tokenA;
-            uint256 amount = params.amountA;
+            uint128 amountA = params.amountA;
+
+            _validateCreateOrder(token, amountA, params.tokenB, params.amountB);
+
+            uint256 amount = amountA;
             if (Token.wrap(token).isNative()) {
                 aggregated.ethAmount += amount;
 
@@ -619,15 +619,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Quotes the ceiled tokenB payment for an active order
     /// @dev Ceil division benefits escrow/maker. Residual tokenA dust is not refunded.
     ///      Intermediate math widens to uint256; both factors are uint128 so the product fits.
+    ///      Reads only the fields needed for quoting (skips amountA/amountB originals).
     /// @param order Order to quote (must already be active)
     /// @param orderId Order id for error payloads
     /// @param amountA Requested tokenA out
     /// @return quote Maker, tokens, fill amounts, and pre-fill availables
     function _quoteFill(
-        Order memory order,
+        Order storage order,
         uint256 orderId,
         uint128 amountA
-    ) private pure returns (FillQuote memory quote) {
+    ) private view returns (FillQuote memory quote) {
         quote.maker = order.maker;
         quote.tokenA = order.tokenA;
         quote.tokenB = order.tokenB;
@@ -663,15 +664,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Quotes the floored tokenA receive for a fill driven by tokenB paid
     /// @dev Floor division benefits escrow/maker. Full remaining `amountB` returns all `availableA`.
+    ///      Reads only the fields needed for quoting (skips amountA/amountB originals).
     /// @param order Order to quote (must already be active)
     /// @param orderId Order id for error payloads
     /// @param amountB Requested tokenB in
     /// @return quote Maker, tokens, fill amounts, and pre-fill availables
     function _quoteFillPaying(
-        Order memory order,
+        Order storage order,
         uint256 orderId,
         uint128 amountB
-    ) private pure returns (FillQuote memory quote) {
+    ) private view returns (FillQuote memory quote) {
         quote.maker = order.maker;
         quote.tokenA = order.tokenA;
         quote.tokenB = order.tokenB;
@@ -718,7 +720,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (fill.amountA == 0) {
                 revert ZeroAmount();
             }
-            _settleFill(_applyOneFillEffect(fill.orderId, fill.amountA, fill.minAmountB));
+            _settleFillQuote(_applyOneFillEffect(fill.orderId, fill.amountA, fill.minAmountB));
+
             return;
         }
 
@@ -739,23 +742,23 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (fill.amountB == 0) {
                 revert ZeroAmount();
             }
-            _settleFill(_applyOneFillPayingEffect(fill.orderId, fill.amountB, fill.maxAmountA));
+            _settleFillQuote(_applyOneFillPayingEffect(fill.orderId, fill.amountB, fill.maxAmountA));
             return;
         }
 
         _settleFills(_applyFillPayingEffects(fills));
     }
 
-    /// @notice Validates one fill, updates order storage, emits `OrderFilled`, and returns the leg
+    /// @notice Validates one fill, updates order storage, emits `OrderFilled`, and returns the quote
     /// @param orderId Order to fill
     /// @param amountA Requested tokenA out
     /// @param minAmountB Minimum tokenB payment declared by the taker
-    /// @return leg Settled fill leg
+    /// @return quote Settled fill quote
     function _applyOneFillEffect(
         uint256 orderId,
         uint128 amountA,
         uint128 minAmountB
-    ) private returns (FillLeg memory) {
+    ) private returns (FillQuote memory) {
         Order storage order = _requireActiveOrder(orderId);
         FillQuote memory quote = _quoteFill(order, orderId, amountA);
 
@@ -768,16 +771,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return _commitFill(order, orderId, quote);
     }
 
-    /// @notice Validates one amountB-driven fill, updates storage, emits, and returns the leg
+    /// @notice Validates one amountB-driven fill, updates storage, emits, and returns the quote
     /// @param orderId Order to fill
     /// @param amountB Requested tokenB in
     /// @param maxAmountA Maximum tokenA receive declared by the taker
-    /// @return leg Settled fill leg
+    /// @return quote Settled fill quote
     function _applyOneFillPayingEffect(
         uint256 orderId,
         uint128 amountB,
         uint128 maxAmountA
-    ) private returns (FillLeg memory) {
+    ) private returns (FillQuote memory) {
         Order storage order = _requireActiveOrder(orderId);
         FillQuote memory quote = _quoteFillPaying(order, orderId, amountB);
 
@@ -790,18 +793,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return _commitFill(order, orderId, quote);
     }
 
-    /// @notice Writes remaining amounts (or deletes on exhaustion), emits, and builds the fill leg
+    /// @notice Writes remaining amounts (or deletes on exhaustion), emits, and returns the quote
     /// @dev Full fills `delete` the order so later reads look like `OrderNotFound` rather than an
     ///      inactive shell. Partial fills keep originals and update availables only.
     /// @param order Active order storage
     /// @param orderId Order id for the event
     /// @param quote Quoted fill amounts and pre-fill availables
-    /// @return leg Settled fill leg
+    /// @return quote Settled fill quote (unchanged amounts; used for settlement)
     function _commitFill(
         Order storage order,
         uint256 orderId,
         FillQuote memory quote
-    ) private returns (FillLeg memory) {
+    ) private returns (FillQuote memory) {
         uint128 remainingA;
         uint128 remainingB;
         unchecked {
@@ -817,6 +820,15 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         emit OrderFilled({orderId: orderId, taker: msg.sender, amountA: quote.amountA, amountB: quote.amountB});
 
+        return quote;
+    }
+
+    /// @notice Builds a settlement leg from a committed fill quote
+    /// @param quote Settled fill quote
+    /// @return leg Transfer leg for batch settlement
+    function _fillLegFromQuote(
+        FillQuote memory quote
+    ) private pure returns (FillLeg memory) {
         return FillLeg({
             maker: quote.maker,
             tokenA: quote.tokenA,
@@ -842,7 +854,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 revert ZeroAmount();
             }
 
-            legs[i] = _applyOneFillEffect(fill.orderId, fill.amountA, fill.minAmountB);
+            legs[i] = _fillLegFromQuote(_applyOneFillEffect(fill.orderId, fill.amountA, fill.minAmountB));
         }
 
         return legs;
@@ -863,10 +875,31 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 revert ZeroAmount();
             }
 
-            legs[i] = _applyOneFillPayingEffect(fill.orderId, fill.amountB, fill.maxAmountA);
+            legs[i] = _fillLegFromQuote(_applyOneFillPayingEffect(fill.orderId, fill.amountB, fill.maxAmountA));
         }
 
         return legs;
+    }
+
+    /// @notice Pulls tokenB and pays maker/taker for a single settled fill quote
+    /// @param quote Settled fill quote
+    function _settleFillQuote(
+        FillQuote memory quote
+    ) private {
+        Token tokenB = Token.wrap(quote.tokenB);
+        if (tokenB.isNative()) {
+            if (msg.value != quote.amountB) {
+                revert ETHAmountMismatch(quote.amountB, msg.value);
+            }
+        } else {
+            if (msg.value != 0) {
+                revert ETHAmountMismatch(0, msg.value);
+            }
+            _pullExactToken(tokenB, quote.amountB);
+        }
+
+        tokenB.safeTransfer(quote.maker, quote.amountB);
+        Token.wrap(quote.tokenA).safeTransfer(msg.sender, quote.amountA);
     }
 
     /// @notice Pulls tokenB and pays maker/taker for a single settled fill leg
@@ -1124,49 +1157,27 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         ModifyOrderParams calldata updatedOrder
     ) private returns (ModifyLeg memory) {
         Order storage order = _requireActiveOrder(orderId);
-        Order memory cached = order;
 
-        _requireMaker(orderId, cached.maker);
+        address maker = order.maker;
+        address tokenA = order.tokenA;
+        _requireMaker(orderId, maker);
 
-        if (
-            previousAmounts.amountA != cached.amountA || previousAmounts.amountB != cached.amountB
-                || previousAmounts.availableA != cached.availableA || previousAmounts.availableB != cached.availableB
-        ) {
-            revert OrderStateMismatch(
-                orderId,
-                previousAmounts.amountA,
-                previousAmounts.amountB,
-                previousAmounts.availableA,
-                previousAmounts.availableB,
-                cached.amountA,
-                cached.amountB,
-                cached.availableA,
-                cached.availableB
-            );
-        }
+        uint128 amountA = order.amountA;
+        uint128 amountB = order.amountB;
+        uint128 availableA = order.availableA;
+        uint128 availableB = order.availableB;
+        _requireOrderAmountsMatch(orderId, previousAmounts, amountA, amountB, availableA, availableB);
 
         uint128 newAvailableA = updatedOrder.availableA;
         uint128 newAvailableB = updatedOrder.availableB;
         if (newAvailableA == 0 || newAvailableB == 0) {
             revert ZeroAmount();
         }
-        if (newAvailableA == cached.availableA && newAvailableB == cached.availableB) {
+        if (newAvailableA == availableA && newAvailableB == availableB) {
             revert NoChange();
         }
 
-        uint256 topUp = 0;
-        uint256 refund = 0;
-        if (newAvailableA > cached.availableA) {
-            // Unchecked is safe: branch proves newAvailableA > cached.availableA.
-            unchecked {
-                topUp = uint256(newAvailableA - cached.availableA);
-            }
-        } else if (newAvailableA < cached.availableA) {
-            // Unchecked is safe: branch proves cached.availableA > newAvailableA.
-            unchecked {
-                refund = uint256(cached.availableA - newAvailableA);
-            }
-        }
+        EscrowADelta memory delta = _escrowADelta(newAvailableA, availableA);
 
         // Reset totals to the new remainings (filled history is not preserved in amount fields).
         order.amountA = newAvailableA;
@@ -1176,7 +1187,61 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         emit OrderModified(orderId, newAvailableA, newAvailableB);
 
-        return ModifyLeg({tokenA: cached.tokenA, topUp: topUp, refund: refund});
+        return ModifyLeg({tokenA: tokenA, topUp: delta.topUp, refund: delta.refund});
+    }
+
+    /// @notice Reverts when live amounts differ from the caller's previousAmounts snapshot
+    /// @param orderId Order id for the error payload
+    /// @param previousAmounts Expected amounts from the caller
+    /// @param amountA Live `amountA`
+    /// @param amountB Live `amountB`
+    /// @param availableA Live `availableA`
+    /// @param availableB Live `availableB`
+    function _requireOrderAmountsMatch(
+        uint256 orderId,
+        OrderAmounts calldata previousAmounts,
+        uint128 amountA,
+        uint128 amountB,
+        uint128 availableA,
+        uint128 availableB
+    ) private pure {
+        if (
+            previousAmounts.amountA != amountA || previousAmounts.amountB != amountB
+                || previousAmounts.availableA != availableA || previousAmounts.availableB != availableB
+        ) {
+            revert OrderStateMismatch(
+                orderId,
+                previousAmounts.amountA,
+                previousAmounts.amountB,
+                previousAmounts.availableA,
+                previousAmounts.availableB,
+                amountA,
+                amountB,
+                availableA,
+                availableB
+            );
+        }
+    }
+
+    /// @notice Computes tokenA escrow top-up or refund between new and current availableA
+    /// @param newAvailableA Desired remaining tokenA
+    /// @param availableA Current remaining tokenA
+    /// @return delta Top-up and/or refund amounts
+    function _escrowADelta(
+        uint128 newAvailableA,
+        uint128 availableA
+    ) private pure returns (EscrowADelta memory delta) {
+        if (newAvailableA > availableA) {
+            // Unchecked is safe: branch proves newAvailableA > availableA.
+            unchecked {
+                delta.topUp = uint256(newAvailableA - availableA);
+            }
+        } else if (newAvailableA < availableA) {
+            // Unchecked is safe: branch proves availableA > newAvailableA.
+            unchecked {
+                delta.refund = uint256(availableA - newAvailableA);
+            }
+        }
     }
 
     /// @notice Settles one modify leg's escrow top-up or refund
