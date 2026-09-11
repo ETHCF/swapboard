@@ -673,6 +673,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @dev `amountA == availableA` returns all remaining tokenB. Else branch implies
     ///      `amountA < availableA` so `availableA >= 1`; product of two uint128 values fits in
     ///      uint256; ceil result is <= `availableB`.
+    /// @param amountA Requested tokenA out
+    /// @param availableA Remaining tokenA in escrow
+    /// @param availableB Remaining tokenB required
+    /// @return Ceiled tokenB the taker must pay
     function _ceilB(
         uint128 amountA,
         uint128 availableA,
@@ -693,6 +697,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @dev `amountB == availableB` returns all remaining tokenA. Else branch implies
     ///      `amountB < availableB` so `availableB >= 1`; product of two uint128 values fits in
     ///      uint256; floor result is < `availableA`.
+    /// @param amountB Requested tokenB in
+    /// @param availableA Remaining tokenA in escrow
+    /// @param availableB Remaining tokenB required
+    /// @return Floored tokenA the taker receives
     function _floorA(
         uint128 amountB,
         uint128 availableA,
