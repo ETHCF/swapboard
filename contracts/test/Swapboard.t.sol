@@ -540,7 +540,7 @@ contract SwapboardTest is Test {
     }
 
     /// @notice Tests fillOrder revert orderNotActive
-    function test_fillOrder_revert_orderNotActive() public {
+    function test_fillOrder_revert_orderNotFound_afterFullFill() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
         uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
@@ -551,7 +551,7 @@ contract SwapboardTest is Test {
         _fillOrder(orderId, AMOUNT_A);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _fillOrderQuoted(order, orderId, AMOUNT_A);
         vm.stopPrank();
     }
@@ -1188,7 +1188,7 @@ contract SwapboardTest is Test {
     }
 
     /// @notice Tests fillOrder paying ETH reverts when order not active
-    function test_fillOrder_payEth_revert_orderNotActive() public {
+    function test_fillOrder_payEth_revert_orderNotFound_afterFullFill() public {
         vm.startPrank(_maker);
         _tokenB.approve(address(_board), AMOUNT_B);
         uint256 orderId = _board.createOrder(_order(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT));
@@ -1198,7 +1198,7 @@ contract SwapboardTest is Test {
         _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT, 0);
 
         vm.prank(_taker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT, 0);
     }
 
@@ -1399,7 +1399,7 @@ contract SwapboardTest is Test {
     }
 
     /// @notice Tests fillOrder receiving ETH reverts when order not active
-    function test_fillOrder_receiveEth_revert_orderNotActive() public {
+    function test_fillOrder_receiveEth_revert_orderNotFound_afterFullFill() public {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
 
@@ -1410,7 +1410,7 @@ contract SwapboardTest is Test {
 
         vm.prank(_taker);
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _fillOrderQuoted(order, orderId, ETH_AMOUNT);
     }
 
@@ -1930,7 +1930,7 @@ contract SwapboardTest is Test {
     }
 
     /// @notice Tests fillOrderPaying reverts when the order has already been fully filled
-    function test_fillOrderPaying_revert_orderNotActive() public {
+    function test_fillOrderPaying_revert_orderNotFound_afterFullFill() public {
         uint256 orderId = _createOrderAsMaker(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
 
         vm.startPrank(_taker);
@@ -1938,7 +1938,7 @@ contract SwapboardTest is Test {
         _fillOrderPaying(orderId, AMOUNT_B);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _fillOrderPayingQuoted(order, orderId, AMOUNT_B);
         vm.stopPrank();
 
@@ -2049,14 +2049,14 @@ contract SwapboardTest is Test {
     }
 
     /// @notice Tests fillOrderPaying paying ETH reverts when the order is already spent
-    function test_fillOrderPaying_payEth_revert_orderNotActive() public {
+    function test_fillOrderPaying_payEth_revert_orderNotFound_afterFullFill() public {
         uint256 orderId = _createOrderAsMaker(_order(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT));
 
         vm.prank(_taker);
         _fillOrderPayingEth(orderId, ETH_AMOUNT, AMOUNT_B);
 
         vm.prank(_taker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _fillOrderPayingEth(orderId, ETH_AMOUNT, AMOUNT_B);
     }
 
@@ -2179,9 +2179,8 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
         assertFalse(order.active);
-        assertEq(order.amountA, amountA);
-        assertEq(order.amountB, amountB);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
@@ -2386,9 +2385,8 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
         assertFalse(order.active);
-        assertEq(order.amountA, amountA);
-        assertEq(order.amountB, amountB);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
@@ -2782,8 +2780,8 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
     }
 
-    /// @notice Tests fillOrdersPaying reverts OrderNotActive when a later leg targets a spent order
-    function test_fillOrdersPaying_revert_orderNotActive_laterItem() public {
+    /// @notice Tests fillOrdersPaying reverts OrderNotFound when a later leg targets a spent order
+    function test_fillOrdersPaying_revert_orderNotFound_afterFullFill_laterItem() public {
         uint256 orderId = _createOrderAsMaker(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
 
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
@@ -2792,7 +2790,7 @@ contract SwapboardTest is Test {
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B + 1);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _board.fillOrdersPaying(fills, 0);
         vm.stopPrank();
 
@@ -3351,12 +3349,9 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
         assertFalse(order.active);
-        assertEq(order.amountA, 100);
-        assertEq(order.amountB, 1);
-        assertEq(order.availableB, 0);
-        // Dust remaining tokenA after amountB exhausted is expected (not worth gas to refund).
-        assertEq(order.availableA, 99);
+        // Dust remaining tokenA after amountB exhausted stays in escrow (not worth gas to refund).
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
         assertEq(_tokenA.balanceOf(address(_board)), 99);
@@ -3420,9 +3415,8 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
         assertFalse(order.active);
-        assertEq(order.amountA, amountA);
-        assertEq(order.amountB, amountB);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
@@ -3682,9 +3676,8 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
         assertFalse(order.active);
-        assertEq(order.amountA, amountA);
-        assertEq(order.amountB, amountB);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
@@ -4014,9 +4007,8 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
         assertFalse(order.active);
-        assertEq(order.amountA, amountA);
-        assertEq(order.amountB, amountB);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
         assertEq(fillA1 + fillA2, amountA);
@@ -4780,8 +4772,8 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
     }
 
-    /// @notice Tests cancelOrders reverts OrderNotActive when a filled order is included
-    function test_cancelOrders_revert_orderNotActive_laterItem() public {
+    /// @notice Tests cancelOrders reverts OrderNotFound when a filled order is included
+    function test_cancelOrders_revert_orderNotFound_afterFullFill_laterItem() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A * 2);
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
@@ -4801,7 +4793,7 @@ contract SwapboardTest is Test {
         cancelIds[1] = ids[0];
 
         vm.prank(_maker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, ids[0]));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, ids[0]));
         _board.cancelOrders(cancelIds);
 
         assertTrue(_board.canFill(ids[1]));
@@ -5303,8 +5295,8 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
     }
 
-    /// @notice Tests fillOrders reverts OrderNotActive when a later leg targets a spent order
-    function test_fillOrders_revert_orderNotActive_laterItem() public {
+    /// @notice Tests fillOrders reverts OrderNotFound when a later leg targets a spent order
+    function test_fillOrders_revert_orderNotFound_afterFullFill_laterItem() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
         uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
@@ -5316,7 +5308,7 @@ contract SwapboardTest is Test {
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B + 1);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _board.fillOrders(fills, 0);
         vm.stopPrank();
 
@@ -5977,8 +5969,8 @@ contract SwapboardTest is Test {
         _board.setPartialFillAllowed(999, true);
     }
 
-    /// @notice Tests setPartialFillAllowed reverts after a full fill (order is inactive)
-    function test_setPartialFillAllowed_reverts_orderNotActive_afterFill() public {
+    /// @notice Tests setPartialFillAllowed reverts after a full fill (order is deleted)
+    function test_setPartialFillAllowed_reverts_orderNotFound_afterFill() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
         uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
@@ -5990,7 +5982,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         vm.prank(_maker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _board.setPartialFillAllowed(orderId, true);
     }
 
@@ -6017,8 +6009,8 @@ contract SwapboardTest is Test {
         _board.modifyOrder(999, previous, _modify(1, 1));
     }
 
-    /// @notice Tests modifyOrder reverts after a full fill (order is inactive)
-    function test_modifyOrder_reverts_orderNotActive_afterFill() public {
+    /// @notice Tests modifyOrder reverts after a full fill (order is deleted)
+    function test_modifyOrder_reverts_orderNotFound_afterFill() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
         uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
@@ -6032,7 +6024,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         vm.prank(_maker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, AMOUNT_B));
     }
 
@@ -7697,8 +7689,8 @@ contract SwapboardTest is Test {
         assertEq(_board.getOrder(orderId).availableA, AMOUNT_A);
     }
 
-    /// @notice Tests modifyOrders reverts OrderNotActive when a filled order is included
-    function test_modifyOrders_revert_orderNotActive_laterItem() public {
+    /// @notice Tests modifyOrders reverts OrderNotFound when a filled order is included
+    function test_modifyOrders_revert_orderNotFound_afterFullFill_laterItem() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A * 2);
         uint256 order0 = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
@@ -7715,7 +7707,7 @@ contract SwapboardTest is Test {
         mods[1] = _modItem(order1, _board.getOrder(order1), AMOUNT_A / 2, AMOUNT_B);
 
         vm.prank(_maker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, order1));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, order1));
         _board.modifyOrders(mods);
 
         assertEq(_board.getOrder(order0).availableA, AMOUNT_A);

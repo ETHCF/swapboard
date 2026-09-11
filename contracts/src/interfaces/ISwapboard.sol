@@ -180,7 +180,9 @@ interface ISwapboard is ISemver {
     /// @param orderId The order ID that was not found
     error OrderNotFound(uint256 orderId);
 
-    /// @notice Thrown when attempting to fill or cancel an inactive order
+    /// @notice Thrown when attempting to operate on an inactive order that still exists
+    /// @dev Full fills and cancels `delete` storage, so those paths revert with `OrderNotFound`
+    ///      instead. `OrderNotActive` remains for any residual inactive-but-present shell.
     /// @param orderId The order ID that is not active
     error OrderNotActive(uint256 orderId);
 
@@ -279,6 +281,8 @@ interface ISwapboard is ISemver {
     ///      exceed it (e.g. rounding). Reverts with `FillAmountMismatch` when the quote is lower.
     ///      If tokenB is ETH, requires `msg.value` equal to the ceiled tokenB amount.
     ///      If tokenA is ETH, pays the taker in ETH.
+    ///      A fill that exhausts either remaining side `delete`s the order (subsequent reads look
+    ///      like `OrderNotFound`); partial fills keep originals and update availables only.
     /// @param orderId The unique identifier of the order to fill
     /// @param amountA Amount of tokenA to receive from the order
     /// @param minAmountB Minimum amount of tokenB the taker is willing to pay
@@ -312,6 +316,8 @@ interface ISwapboard is ISemver {
     ///      lower. Reverts with `FillReceiveTooHigh` when the quote is higher.
     ///      If tokenB is ETH, requires `msg.value == amountB`.
     ///      If tokenA is ETH, pays the taker in ETH.
+    ///      A fill that exhausts either remaining side `delete`s the order (subsequent reads look
+    ///      like `OrderNotFound`); partial fills keep originals and update availables only.
     /// @param orderId The unique identifier of the order to fill
     /// @param amountB Amount of tokenB to pay into the order
     /// @param maxAmountA Maximum amount of tokenA the taker is willing to receive

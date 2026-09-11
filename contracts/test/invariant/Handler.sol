@@ -1107,15 +1107,11 @@ contract SwapboardHandler is Test {
             assertEq(order.amountA, _ghostOriginalAmountA[i]);
             assertEq(order.amountB, _ghostOriginalAmountB[i]);
             assertTrue(order.amountA > 0 && order.amountB > 0);
-
             assertTrue(!(order.availableA > order.amountA));
             assertTrue(!(order.availableB > order.amountB));
-
-            if (order.active) {
-                assertTrue(order.availableA > 0 && order.availableB > 0);
-            } else {
-                assertTrue(order.availableA == 0 || order.availableB == 0);
-            }
+            assertTrue(order.active);
+            assertTrue(order.availableA > 0 && order.availableB > 0);
+            // Fully filled / cancelled orders are deleted (maker == 0) and skipped above.
         }
     }
 

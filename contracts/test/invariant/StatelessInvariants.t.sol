@@ -101,10 +101,20 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        uint128 remainingA = amountA - fillA;
+        // casting to 'uint128' is safe because amountBIn <= amountB
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 remainingB = amountB - uint128(amountBIn);
+        if (remainingA == 0 || remainingB == 0) {
+            assertEq(order.maker, address(0));
+            assertFalse(order.active);
+            return;
+        }
+
         assertEq(order.amountA, amountA);
         assertEq(order.amountB, amountB);
-        assertEq(order.availableA, amountA - fillA);
-        assertEq(order.availableB, amountB - amountBIn);
+        assertEq(order.availableA, remainingA);
+        assertEq(order.availableB, remainingB);
         assertTrue(!(order.availableA > order.amountA));
         assertTrue(!(order.availableB > order.amountB));
     }
@@ -142,15 +152,25 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        // casting to 'uint128' is safe because amountAOut <= amountA
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 remainingA = amountA - uint128(amountAOut);
+        uint128 remainingB = amountB - fillB;
+        if (remainingA == 0 || remainingB == 0) {
+            assertEq(order.maker, address(0));
+            assertFalse(order.active);
+            return;
+        }
+
         assertEq(order.amountA, amountA);
         assertEq(order.amountB, amountB);
-        assertEq(order.availableA, amountA - amountAOut);
-        assertEq(order.availableB, amountB - fillB);
+        assertEq(order.availableA, remainingA);
+        assertEq(order.availableB, remainingB);
         assertTrue(!(order.availableA > order.amountA));
         assertTrue(!(order.availableB > order.amountB));
     }
 
-    /// @notice Property: full fill zeroes available and preserves originals
+    /// @notice Property: full fill zeroes available and deletes the order
     function testFuzz_fillOrder_full_zeroesAvailableKeepsOriginals(
         uint256 amountASeed,
         uint256 amountBSeed
@@ -177,14 +197,13 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
         assertFalse(order.active);
-        assertEq(order.amountA, amountA);
-        assertEq(order.amountB, amountB);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
     }
 
-    /// @notice Property: full fillOrderPaying zeroes available and preserves originals
+    /// @notice Property: full fillOrderPaying zeroes available and deletes the order
     function testFuzz_fillOrderPaying_full_zeroesAvailableKeepsOriginals(
         uint256 amountASeed,
         uint256 amountBSeed
@@ -211,9 +230,8 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
         assertFalse(order.active);
-        assertEq(order.amountA, amountA);
-        assertEq(order.amountB, amountB);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
     }
@@ -299,6 +317,8 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory afterFirst = _board.getOrder(orderId);
+        vm.assume(afterFirst.active && afterFirst.availableA > 0 && afterFirst.availableB > 0);
+
         uint256 filledA1 = uint256(afterFirst.amountA) - uint256(afterFirst.availableA);
         uint256 filledB1 = uint256(afterFirst.amountB) - uint256(afterFirst.availableB);
         assertEq(filledA1, fillA1);
@@ -307,13 +327,17 @@ contract SwapboardStatelessInvariantTest is Test {
         assertEq(afterFirst.amountB, amountB);
 
         uint128 fillA2 = afterFirst.availableA;
-        vm.assume(fillA2 > 0 && afterFirst.availableB > 0);
 
         vm.startPrank(_taker);
         FillTestLib.fill(_board, orderId, fillA2);
         vm.stopPrank();
 
         ISwapboard.Order memory afterSecond = _board.getOrder(orderId);
+        if (afterSecond.maker == address(0)) {
+            assertFalse(afterSecond.active);
+            return;
+        }
+
         assertEq(afterSecond.amountA, amountA);
         assertEq(afterSecond.amountB, amountB);
         assertTrue(

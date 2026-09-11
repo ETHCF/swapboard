@@ -172,7 +172,7 @@ contract SwapboardIntegrationTest is Test {
         ISwapboard.Order memory orderBeforeCharlie = _board.getOrder(orderId);
         uint128 amountBCharlie = FillTestLib.quoteAmountB(orderBeforeCharlie, 10 ether);
         vm.startPrank(_charlie);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _board.fillOrder(orderId, 10 ether, amountBCharlie, 0);
         vm.stopPrank();
 
@@ -206,7 +206,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
 
         vm.prank(_alice);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _board.cancelOrder(orderId);
     }
 
