@@ -765,7 +765,7 @@ const ERROR_MESSAGES = {
   ZeroAmount: "Amount too small (check decimal places)",
   SameToken: "Offered and wanted tokens must be different",
   NotAContract: "Token address is not a contract",
-  BalanceMismatch: "Token transfer amount mismatch (fee-on-transfer tokens not supported)",
+  BalanceMismatch: "Token transfer amount mismatch (fee-on-transfer / phantom tokens not supported on deposits or tokenB payments)",
   OrderNotFound: (args) => `Order #${args[0]} not found`,
   OrderNotActive: (args) => `Order #${args[0]} is no longer active`,
   NotMaker: "You are not the maker of this order",

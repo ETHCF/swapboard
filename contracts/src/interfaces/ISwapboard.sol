@@ -171,7 +171,8 @@ interface ISwapboard is ISemver {
     error NotAContract(address token);
 
     /// @notice Thrown when the received token amount differs from expected
-    /// @dev Used to detect fee-on-transfer / mid-transfer rebase / phantom tokens
+    /// @dev Used to detect fee-on-transfer / mid-transfer rebase / phantom tokens on inbound
+    ///      pulls: tokenA deposits into escrow and ERC20 tokenB payments directly to the maker
     /// @param expected The amount that was expected to be received
     /// @param received The amount that was actually received
     error BalanceMismatch(uint256 expected, uint256 received);
@@ -279,7 +280,8 @@ interface ISwapboard is ISemver {
     ///      token is tokenB.
     ///      `minAmountB` is the minimum tokenB payment the taker accepts; the quoted ceiled payment may
     ///      exceed it (e.g. rounding). Reverts with `FillAmountMismatch` when the quote is lower.
-    ///      If tokenB is ETH, requires `msg.value` equal to the ceiled tokenB amount.
+    ///      ERC20 tokenB is `transferFrom` the taker straight to the maker with an exact-balance
+    ///      check (`BalanceMismatch`). ETH tokenB requires `msg.value` equal to the ceiled amount.
     ///      If tokenA is ETH, pays the taker in ETH.
     ///      A fill that exhausts either remaining side `delete`s the order (subsequent reads look
     ///      like `OrderNotFound`); partial fills keep originals and update availables only.
@@ -297,9 +299,9 @@ interface ISwapboard is ISemver {
     /// @notice Fills multiple orders in one call by tokenA received
     /// @dev The same `orderId` may appear more than once when the order allows partial fills and
     ///      still has remaining liquidity; otherwise later legs revert (`FillAmountTooHigh` /
-    ///      `OrderNotActive` / `PartialFillNotAllowed`). Repeated tokenB payments are aggregated
-    ///      into a single ERC20 pull per unique token (and one `msg.value` check for ETH). tokenA
-    ///      payouts to the taker and tokenB payouts to makers are similarly aggregated.
+    ///      `OrderNotActive` / `PartialFillNotAllowed`). ERC20 tokenB payments are aggregated per
+    ///      unique `(maker, token)` and pulled directly to each maker; ETH tokenB is summed into
+    ///      one `msg.value` check. tokenA payouts to the taker are aggregated.
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     function fillOrders(
@@ -314,7 +316,8 @@ interface ISwapboard is ISemver {
     ///      all remaining `availableA`.
     ///      `maxAmountA` is the maximum tokenA the taker accepts; the quoted floored receive may be
     ///      lower. Reverts with `FillReceiveTooHigh` when the quote is higher.
-    ///      If tokenB is ETH, requires `msg.value == amountB`.
+    ///      ERC20 tokenB is `transferFrom` the taker straight to the maker with an exact-balance
+    ///      check (`BalanceMismatch`). ETH tokenB requires `msg.value == amountB`.
     ///      If tokenA is ETH, pays the taker in ETH.
     ///      A fill that exhausts either remaining side `delete`s the order (subsequent reads look
     ///      like `OrderNotFound`); partial fills keep originals and update availables only.

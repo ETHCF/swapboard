@@ -419,7 +419,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `NoChange()` | `0xa88ee577` | Modification would leave the order unchanged (including any item in a `modifyOrders` batch) |
 | `SameToken()` | `0x201b580a` | tokenA and tokenB are identical |
 | `NotAContract(address)` | `0x8a8b41ec` | Address has no code |
-| `BalanceMismatch(uint256,uint256)` | `0x6e65ed84` | Inbound transfer mismatch (fee-on-transfer, mid-transfer rebase, or phantom token) |
+| `BalanceMismatch(uint256,uint256)` | `0x6e65ed84` | Transfer mismatch on tokenA deposit or ERC20 tokenB payment to maker (fee-on-transfer, mid-transfer rebase, or phantom token) |
 | `OrderNotFound(uint256)` | `0x4e90badc` | Order doesn't exist |
 | `OrderNotActive(uint256)` | `0xd2c02610` | Order already filled/cancelled |
 | `NotMaker(uint256,address,address)` | `0x98cd7222` | Caller is not order maker |
@@ -604,8 +604,8 @@ async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
 
 - All amounts are in base units (wei-style). Multiply by 10^decimals.
 - Orders can be front-run. Consider using Flashbots for fills.
-- Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and tokenB pulls (`BalanceMismatch`).
-- Outbound fee-on-transfer / mid-transfer rebase on maker payout remains possible after an exact tokenB pull.
+- Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and on ERC20 tokenB payments to the maker (`BalanceMismatch`). ERC20 tokenB is pulled taker → maker directly.
+- Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release. Self-fill ERC20 tokenB still routes through the board (see security-research tests).
 - Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
 - Self-fills are allowed (maker can fill own order).
 - No expiry. Orders remain active until filled or canceled.

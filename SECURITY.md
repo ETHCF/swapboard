@@ -73,7 +73,7 @@ The following are documented design decisions, not vulnerabilities:
 
 2. **Rebasing tokens**: Mid-transfer rebases on inbound pulls are rejected via `BalanceMismatch`. Post-deposit rebases (while tokenA sits in escrow) may leave the contract under-collateralized or lock surplus; positive rebases can strand excess. Users should not use rebasing tokens.
 
-3. **Fee-on-transfer and phantom tokens**: Inbound fee-on-transfer, mid-transfer rebase, and phantom transfers are rejected on tokenA deposits and tokenB pulls via balance checks. Outbound fee-on-transfer or mid-transfer rebase on maker payout remains possible after an exact tokenB pull; makers may receive less than quoted `amountB`.
+3. **Fee-on-transfer and phantom tokens**: Inbound fee-on-transfer, mid-transfer rebase, and phantom transfers are rejected via balance checks on tokenA deposits and on ERC20 tokenB payments (pulled directly taker → maker). Outbound fee-on-transfer or mid-transfer rebase on tokenA payout to the taker remains possible after escrow release. Self-fill ERC20 tokenB still routes through the board, so outbound-only FOT on that hop can still short the maker. See `contracts/test/security-research/`.
 
 4. **Malicious tokens**: The contract cannot detect malicious token implementations. Tokens with blacklists, pausability, or admin mint functions can disrupt trades.
 
