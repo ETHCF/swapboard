@@ -426,8 +426,43 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `ETHAmountMismatch(uint256,uint256)` | `0x8230dc8f` | `msg.value` does not match the required ETH amount |
 | `OrderStateMismatch(uint256,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128)` | `0xe796ec17` | `modifyOrder` / `modifyOrders` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` |
 | `DuplicateOrderId(uint256)` | `0x54b9c511` | Same `orderId` appears more than once in a `cancelOrders` or `modifyOrders` batch |
+| `FillAmountTooHigh(uint256,uint128,uint128)` | `0x535a34f0` | Requested fill amount exceeds remaining liquidity (`amountA` for `fillOrder`, `amountB` for `fillOrderPaying`) |
+| `FillAmountMismatch(uint256,uint128,uint128)` | `0x19113a72` | Quoted tokenB payment is below the taker's `minAmountB` (`fillOrder`) |
+| `FillReceiveTooHigh(uint256,uint128,uint128)` | `0x771534f7` | Quoted tokenA receive exceeds the taker's `maxAmountA` (`fillOrderPaying`) |
 
 ## Methods
+
+### `fillOrderPaying`
+
+Taker pays exact `amountB` of tokenB and receives floored proportional tokenA.
+
+```solidity
+struct FillOrderPayingParams {
+    uint256 orderId;
+    uint128 amountB;      // tokenB to pay
+    uint128 maxAmountA;   // maximum tokenA willing to receive
+}
+
+function fillOrderPaying(
+    uint256 orderId,
+    uint128 amountB,
+    uint128 maxAmountA,
+    uint256 deadline
+) external payable;
+
+function fillOrdersPaying(
+    FillOrderPayingParams[] calldata fills,
+    uint256 deadline
+) external payable;
+```
+
+Behavior:
+
+- tokenA out is floored: `amountB * availableA / availableB` (full remaining `amountB == availableB` returns all `availableA`).
+- Reverts with `FillReceiveTooHigh` when quoted tokenA exceeds `maxAmountA`.
+- Reverts with `FillAmountTooHigh` when `amountB` exceeds `availableB`.
+- Same ETH / aggregation / deadline rules as `fillOrder` / `fillOrders` (`msg.value` must equal paid tokenB when tokenB is ETH).
+- Empty `fillOrdersPaying` reverts with `ZeroAmount`.
 
 ### `modifyOrder`
 
