@@ -129,6 +129,9 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 amountBIn = amountAOut == amountA
             ? amountB
             : (amountAOut * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+        if (amountBIn == amountB) {
+            amountAOut = amountA;
+        }
 
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(
