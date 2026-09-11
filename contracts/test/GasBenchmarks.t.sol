@@ -87,7 +87,7 @@ contract GasBenchmarks is Test {
 
         vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        FillTestLib.fill(_board, orderId, ORDER_A);
+        _board.fillOrder(orderId, ORDER_B, ORDER_A, 0);
         uint256 gasUsed = gasBefore - gasleft();
         vm.stopPrank();
 
@@ -141,7 +141,7 @@ contract GasBenchmarks is Test {
 
         vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        FillTestLib.fillPaying(_board, orderId, ORDER_B);
+        _board.fillOrderPaying(orderId, ORDER_A, ORDER_B, 0);
         uint256 gasUsed = gasBefore - gasleft();
         vm.stopPrank();
 
