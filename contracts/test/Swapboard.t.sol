@@ -4040,9 +4040,12 @@ contract SwapboardTest is Test {
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 fillA1 = uint128(bound(fillA1Seed, 1, amountA - 1));
 
-        uint256 bIn1 = (uint256(fillA1) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+        ISwapboard.Order memory snapshot;
+        snapshot.availableA = amountA;
+        snapshot.availableB = amountB;
+        uint256 bIn1 = FillTestLib.quoteAmountB(snapshot, fillA1);
         vm.assume(bIn1 > 0 && bIn1 < amountB);
-        uint256 aOut1 = bIn1 == amountB ? amountA : (bIn1 * uint256(amountA)) / uint256(amountB);
+        uint256 aOut1 = FillTestLib.quoteFillAmountA(snapshot, fillA1);
         vm.assume(aOut1 < amountA);
 
         _tokenA.mint(_maker, amountA);
