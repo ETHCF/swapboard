@@ -483,15 +483,17 @@ contract SwapboardHandler is Test {
             return;
         }
 
+        uint128 amountAOut = FillTestLib.quoteFillAmountA(order, fillA128);
+
         ++_calls.fillOrder;
 
         if (order.tokenB == _ETH) {
-            _board.fillOrder{value: amountBIn}(loaded.orderId, fillA128, amountBIn, 0);
+            _board.fillOrder{value: amountBIn}(loaded.orderId, fillA128, fillA128, 0);
         } else {
-            _board.fillOrder(loaded.orderId, fillA128, amountBIn, 0);
+            _board.fillOrder(loaded.orderId, fillA128, fillA128, 0);
         }
 
-        _recordFillGhosts(order, loaded.orderId, fillA128);
+        _recordFillGhosts(order, loaded.orderId, amountAOut);
     }
 
     /// @notice Fills an existing order by paying amountB (full or partial when allowed)
@@ -516,16 +518,17 @@ contract SwapboardHandler is Test {
         }
 
         uint128 amountAOut = FillTestLib.quoteAmountA(order, fillB128);
-        if (amountAOut == 0 || !_actorCanPayTokenB(order.tokenB, fillB128)) {
+        uint128 amountBIn = FillTestLib.quoteFillPayingAmountB(order, fillB128);
+        if (amountAOut == 0 || !_actorCanPayTokenB(order.tokenB, amountBIn)) {
             return;
         }
 
         ++_calls.fillOrderPaying;
 
         if (order.tokenB == _ETH) {
-            _board.fillOrderPaying{value: fillB128}(loaded.orderId, fillB128, amountAOut, 0);
+            _board.fillOrderPaying{value: amountBIn}(loaded.orderId, fillB128, fillB128, 0);
         } else {
-            _board.fillOrderPaying(loaded.orderId, fillB128, amountAOut, 0);
+            _board.fillOrderPaying(loaded.orderId, fillB128, fillB128, 0);
         }
 
         _recordFillGhosts(order, loaded.orderId, amountAOut);
@@ -602,13 +605,14 @@ contract SwapboardHandler is Test {
         }
 
         uint128 fillA1 = uint128(order.availableA / 2);
-        uint128 fillA2 = uint128(order.availableA - fillA1);
-        uint256 amountBIn1 =
-            (uint256(fillA1) * uint256(order.availableB) + uint256(order.availableA) - 1) / uint256(order.availableA);
-        uint256 remA = order.availableA - fillA1;
-        uint256 remB = order.availableB - amountBIn1;
-        uint256 amountBIn2 = remA == 0 ? remB : (uint256(fillA2) * remB + remA - 1) / remA;
-        if (amountBIn1 == 0 || amountBIn2 == 0 || !_actorCanPayTokenB(order.tokenB, amountBIn1 + amountBIn2)) {
+        uint128 amountAOut1 = FillTestLib.quoteFillAmountA(order, fillA1);
+        uint128 amountBIn1 = FillTestLib.quoteAmountB(order, fillA1);
+        if (amountAOut1 > order.availableA - 1 || amountBIn1 == 0) {
+            return;
+        }
+        uint128 fillA2 = uint128(order.availableA - amountAOut1);
+        uint256 remB = uint256(order.availableB) - uint256(amountBIn1);
+        if (fillA2 == 0 || remB == 0 || !_actorCanPayTokenB(order.tokenB, uint256(amountBIn1) + remB)) {
             return;
         }
 
@@ -618,7 +622,7 @@ contract SwapboardHandler is Test {
         fills[1] = FillTestLib.fillParams(order, loaded.orderId, fillA2);
         _board.fillOrders(fills, 0);
 
-        _recordFillGhosts(order, loaded.orderId, uint256(fillA1) + uint256(fillA2));
+        _recordFillGhosts(order, loaded.orderId, uint256(amountAOut1) + uint256(fillA2));
     }
 
     /// @notice Fills one partial-fill order with two amountB-driven legs in one batch
@@ -637,27 +641,33 @@ contract SwapboardHandler is Test {
 
         uint128 fillB1 = uint128(order.availableB / 2);
         uint128 fillB2 = uint128(order.availableB - fillB1);
-        uint256 amountAOut1 = (uint256(fillB1) * uint256(order.availableA)) / uint256(order.availableB);
-        uint256 remA = order.availableA - amountAOut1;
-        uint256 remB = order.availableB - fillB1;
-        uint256 amountAOut2 = remB == 0 ? remA : (uint256(fillB2) * remA) / remB;
+        uint128 amountAOut1 = FillTestLib.quoteAmountA(order, fillB1);
+        uint128 amountBIn1 = FillTestLib.quoteFillPayingAmountB(order, fillB1);
+        if (amountAOut1 == 0 || amountBIn1 == 0 || amountBIn1 > order.availableB - 1) {
+            return;
+        }
+
+        ISwapboard.Order memory afterFirst = order;
+        unchecked {
+            afterFirst.availableA = uint128(uint256(order.availableA) - uint256(amountAOut1));
+            afterFirst.availableB = uint128(uint256(order.availableB) - uint256(amountBIn1));
+        }
+        uint128 amountAOut2 = FillTestLib.quoteAmountA(afterFirst, fillB2);
+        uint128 amountBIn2 = FillTestLib.quoteFillPayingAmountB(afterFirst, fillB2);
         if (
-            amountAOut1 == 0 || amountAOut2 == 0
-                || !_actorCanPayTokenB(order.tokenB, uint256(fillB1) + uint256(fillB2))
+            fillB2 > afterFirst.availableB || amountAOut2 == 0 || amountBIn2 == 0
+                || !_actorCanPayTokenB(order.tokenB, uint256(amountBIn1) + uint256(amountBIn2))
         ) {
             return;
         }
 
         ++_calls.fillOrdersPaying;
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
-        // Use availableA as maxAmountA so the second leg is not clipped by a stale floor quote.
-        fills[0] =
-            ISwapboard.FillOrderPayingParams({orderId: loaded.orderId, amountB: fillB1, maxAmountA: order.availableA});
-        fills[1] =
-            ISwapboard.FillOrderPayingParams({orderId: loaded.orderId, amountB: fillB2, maxAmountA: order.availableA});
+        fills[0] = ISwapboard.FillOrderPayingParams({orderId: loaded.orderId, amountB: fillB1, maxAmountB: fillB1});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: loaded.orderId, amountB: fillB2, maxAmountB: fillB2});
         _board.fillOrdersPaying(fills, 0);
 
-        _recordFillGhosts(order, loaded.orderId, amountAOut1 + amountAOut2);
+        _recordFillGhosts(order, loaded.orderId, uint256(amountAOut1) + uint256(amountAOut2));
     }
 
     /// @notice Returns whether the current actor can pay `amount` of `tokenB`

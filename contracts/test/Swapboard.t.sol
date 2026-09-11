@@ -152,8 +152,7 @@ contract SwapboardTest is Test {
         uint128 amountA,
         uint256 deadline
     ) private {
-        ISwapboard.Order memory order = _board.getOrder(orderId);
-        FillTestLib.fill(_board, orderId, amountA, FillTestLib.quoteAmountB(order, amountA), deadline);
+        FillTestLib.fill(_board, orderId, amountA, amountA, deadline);
     }
 
     function _fillOrderQuoted(
@@ -176,9 +175,9 @@ contract SwapboardTest is Test {
     function _fillOrderPayEth(
         uint256 orderId,
         uint128 amountA,
-        uint128 minAmountB
+        uint128 value
     ) private {
-        FillTestLib.fillPayEth(_board, orderId, amountA, minAmountB);
+        FillTestLib.fillPayEth(_board, orderId, amountA, value);
     }
 
     function _fillOrderPaying(
@@ -216,28 +215,26 @@ contract SwapboardTest is Test {
 
     function _fillOrderPayingEth(
         uint256 orderId,
-        uint128 amountB,
-        uint128 maxAmountA
+        uint128 amountB
     ) private {
-        FillTestLib.fillPayingEth(_board, orderId, amountB, maxAmountA);
+        FillTestLib.fillPayingEth(_board, orderId, amountB);
     }
 
     function _fillOrderPayingEth(
         uint256 orderId,
         uint128 amountB,
-        uint128 maxAmountA,
         uint256 deadline
     ) private {
-        FillTestLib.fillPayingEth(_board, orderId, amountB, maxAmountA, deadline);
+        FillTestLib.fillPayingEth(_board, orderId, amountB, deadline);
     }
 
     function _fillOrderPayEth(
         uint256 orderId,
         uint128 amountA,
-        uint128 minAmountB,
+        uint128 value,
         uint256 deadline
     ) private {
-        FillTestLib.fillPayEth(_board, orderId, amountA, minAmountB, deadline);
+        FillTestLib.fillPayEth(_board, orderId, amountA, value, deadline);
     }
 
     /// @notice Net amount after MockFOT's 5% fee (matches `transfer` / `transferFrom`)
@@ -1065,7 +1062,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_maker);
         _tokenB.approve(address(_board), AMOUNT_B);
         uint256 orderId = _board.createOrder(_order(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT));
-        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT, 0);
+        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
         vm.stopPrank();
 
         assertFalse(_board.canFill(orderId));
@@ -1110,7 +1107,7 @@ contract SwapboardTest is Test {
         uint256 takerTokenBefore = _tokenB.balanceOf(_taker);
 
         vm.prank(_taker);
-        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT, 0);
+        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertFalse(order.active);
@@ -1131,7 +1128,7 @@ contract SwapboardTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, ETH_AMOUNT, ETH_AMOUNT + 0.25 ether)
         );
-        _board.fillOrder{value: ETH_AMOUNT + 0.25 ether}(orderId, AMOUNT_B, ETH_AMOUNT, 0);
+        _board.fillOrder{value: ETH_AMOUNT + 0.25 ether}(orderId, AMOUNT_B, AMOUNT_B, 0);
     }
 
     /// @notice Tests fillOrder paying ETH emits OrderFilled
@@ -1145,7 +1142,7 @@ contract SwapboardTest is Test {
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: AMOUNT_B, amountB: ETH_AMOUNT});
 
         vm.prank(_taker);
-        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT, 0);
+        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
 
         assertFalse(_board.getOrder(orderId).active);
         assertEq(_board.getOrder(orderId).availableA, 0);
@@ -1160,10 +1157,10 @@ contract SwapboardTest is Test {
 
         vm.prank(_taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, ETH_AMOUNT, ETH_AMOUNT - 1));
-        _board.fillOrder{value: ETH_AMOUNT - 1}(orderId, AMOUNT_B, ETH_AMOUNT, 0);
+        _board.fillOrder{value: ETH_AMOUNT - 1}(orderId, AMOUNT_B, AMOUNT_B, 0);
     }
 
-    /// @notice Tests fillOrder paying ETH reverts when quoted payment is below the taker minimum
+    /// @notice Tests fillOrder paying ETH reverts when quoted receive is below the taker minimum
     function test_fillOrder_payEth_revert_fillAmountMismatch() public {
         vm.startPrank(_maker);
         _tokenB.approve(address(_board), AMOUNT_B);
@@ -1172,9 +1169,9 @@ contract SwapboardTest is Test {
 
         vm.startPrank(_taker);
         vm.expectRevert(
-            abi.encodeWithSelector(ISwapboard.FillAmountMismatch.selector, orderId, ETH_AMOUNT, ETH_AMOUNT + 1)
+            abi.encodeWithSelector(ISwapboard.FillAmountMismatch.selector, orderId, AMOUNT_B, AMOUNT_B + 1)
         );
-        _board.fillOrder{value: ETH_AMOUNT}(orderId, AMOUNT_B, ETH_AMOUNT + 1, 0);
+        _board.fillOrder{value: ETH_AMOUNT}(orderId, AMOUNT_B, AMOUNT_B + 1, 0);
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));
@@ -1184,7 +1181,7 @@ contract SwapboardTest is Test {
     function test_fillOrder_payEth_revert_orderNotFound() public {
         vm.prank(_taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
-        _fillOrderPayEth(999, ETH_AMOUNT, ETH_AMOUNT, 0);
+        _fillOrderPayEth(999, ETH_AMOUNT, ETH_AMOUNT);
     }
 
     /// @notice Tests fillOrder paying ETH reverts when order not active
@@ -1195,11 +1192,11 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         vm.prank(_taker);
-        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT, 0);
+        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
 
         vm.prank(_taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT, 0);
+        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
     }
 
     /// @notice Tests fillOrder paying ETH reverts after deadline
@@ -1244,7 +1241,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0, 0.1 ether));
-        _board.fillOrder{value: 0.1 ether}(orderId, AMOUNT_A, AMOUNT_B, 0);
+        _board.fillOrder{value: 0.1 ether}(orderId, AMOUNT_A, AMOUNT_A, 0);
         vm.stopPrank();
     }
 
@@ -1338,7 +1335,7 @@ contract SwapboardTest is Test {
 
         vm.prank(_taker);
         vm.expectRevert(ETHRejecter.RejectETH.selector);
-        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT, 0);
+        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
 
         assertTrue(_board.canFill(orderId));
         assertEq(_tokenB.balanceOf(address(_board)), boardTokenBefore);
@@ -1515,7 +1512,7 @@ contract SwapboardTest is Test {
         uint256 takerTokenBefore = _tokenB.balanceOf(_taker);
 
         vm.prank(_taker);
-        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT, 0);
+        _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
 
         assertFalse(_board.getOrder(orderId).active);
         assertEq(_board.getOrder(orderId).availableA, 0);
@@ -1618,7 +1615,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         vm.prank(_taker);
-        _fillOrderPayEth(orderId, tokenAmount, ethAmount, 0);
+        _fillOrderPayEth(orderId, tokenAmount, ethAmount);
 
         assertEq(_maker.balance, makerEthBefore + ethAmount);
         assertEq(_tokenB.balanceOf(_taker), takerTokenBefore + tokenAmount);
@@ -1709,7 +1706,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
-    /// @notice Tests fillOrder reverts when quoted payment is below the taker minimum
+    /// @notice Tests fillOrder reverts when quoted receive is below the taker minimum
     function test_fillOrder_revert_fillAmountMismatch() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
@@ -1719,9 +1716,9 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B);
         vm.expectRevert(
-            abi.encodeWithSelector(ISwapboard.FillAmountMismatch.selector, orderId, AMOUNT_B, AMOUNT_B + 1)
+            abi.encodeWithSelector(ISwapboard.FillAmountMismatch.selector, orderId, AMOUNT_A, AMOUNT_A + 1)
         );
-        _board.fillOrder(orderId, AMOUNT_A, AMOUNT_B + 1, 0);
+        _board.fillOrder(orderId, AMOUNT_A, AMOUNT_A + 1, 0);
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));
@@ -1773,37 +1770,38 @@ contract SwapboardTest is Test {
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + payB);
     }
 
-    /// @notice Tests fillOrderPaying reverts when quoted receive exceeds maxAmountA
-    function test_fillOrderPaying_revert_fillReceiveTooHigh() public {
+    /// @notice Tests fillOrderPaying reverts when quoted payment exceeds maxAmountB
+    function test_fillOrderPaying_revert_fillPayTooHigh() public {
         uint256 orderId = _createOrderAsMaker(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B);
-        vm.expectRevert(
-            abi.encodeWithSelector(ISwapboard.FillReceiveTooHigh.selector, orderId, AMOUNT_A, AMOUNT_A - 1)
-        );
-        _board.fillOrderPaying(orderId, AMOUNT_B, AMOUNT_A - 1, 0);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillPayTooHigh.selector, orderId, AMOUNT_B, AMOUNT_B - 1));
+        _board.fillOrderPaying(orderId, AMOUNT_B, AMOUNT_B - 1, 0);
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));
     }
 
-    /// @notice Tests fillOrderPaying succeeds when quoted receive is below maxAmountA
-    function test_fillOrderPaying_maxAmountA_acceptsLowerQuotedReceive() public {
-        uint256 orderId = _createOrderAsMaker(_orderPartial(address(_tokenA), 100, address(_tokenB), 3));
+    /// @notice Tests fillOrderPaying succeeds when quoted payment is below maxAmountB
+    function test_fillOrderPaying_maxAmountB_acceptsLowerQuotedPayment() public {
+        uint256 orderId = _createOrderAsMaker(_orderPartial(address(_tokenA), 10, address(_tokenB), 100));
 
-        uint128 payB = 1;
+        uint128 payB = 33;
         uint128 quotedA = FillTestLib.quoteAmountA(_board.getOrder(orderId), payB);
-        assertEq(quotedA, 33);
+        uint128 quotedB = FillTestLib.quoteFillPayingAmountB(_board.getOrder(orderId), payB);
+        assertEq(quotedA, 3);
+        assertEq(quotedB, 30);
+        assertLt(quotedB, payB);
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), payB);
-        _board.fillOrderPaying(orderId, payB, quotedA + 10, 0);
+        _board.fillOrderPaying(orderId, payB, payB, 0);
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertEq(order.availableA, 67);
-        assertEq(order.availableB, 2);
+        assertEq(order.availableA, 7);
+        assertEq(order.availableB, 70);
     }
 
     /// @notice Tests fillOrderPaying reverts when amountB exceeds availableB
@@ -1847,7 +1845,7 @@ contract SwapboardTest is Test {
         uint256 takerABefore = _tokenA.balanceOf(_taker);
 
         vm.startPrank(_taker);
-        _fillOrderPayingEth(orderId, ETH_AMOUNT, AMOUNT_A);
+        _fillOrderPayingEth(orderId, ETH_AMOUNT);
         vm.stopPrank();
 
         assertFalse(_board.canFill(orderId));
@@ -1997,7 +1995,7 @@ contract SwapboardTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, ETH_AMOUNT, ETH_AMOUNT + 0.25 ether)
         );
-        _board.fillOrderPaying{value: ETH_AMOUNT + 0.25 ether}(orderId, ETH_AMOUNT, AMOUNT_A, 0);
+        _board.fillOrderPaying{value: ETH_AMOUNT + 0.25 ether}(orderId, ETH_AMOUNT, ETH_AMOUNT, 0);
 
         assertTrue(_board.canFill(orderId));
     }
@@ -2008,7 +2006,7 @@ contract SwapboardTest is Test {
 
         vm.prank(_taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, ETH_AMOUNT, ETH_AMOUNT - 1));
-        _board.fillOrderPaying{value: ETH_AMOUNT - 1}(orderId, ETH_AMOUNT, AMOUNT_A, 0);
+        _board.fillOrderPaying{value: ETH_AMOUNT - 1}(orderId, ETH_AMOUNT, ETH_AMOUNT, 0);
 
         assertTrue(_board.canFill(orderId));
     }
@@ -2021,21 +2019,21 @@ contract SwapboardTest is Test {
         emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: AMOUNT_A, amountB: ETH_AMOUNT});
 
         vm.prank(_taker);
-        _fillOrderPayingEth(orderId, ETH_AMOUNT, AMOUNT_A);
+        _fillOrderPayingEth(orderId, ETH_AMOUNT);
 
         assertFalse(_board.getOrder(orderId).active);
         assertEq(_board.getOrder(orderId).availableA, 0);
     }
 
-    /// @notice Tests fillOrderPaying paying ETH reverts when the quoted receive exceeds maxAmountA
-    function test_fillOrderPaying_payEth_revert_fillReceiveTooHigh() public {
+    /// @notice Tests fillOrderPaying paying ETH reverts when the quoted payment exceeds maxAmountB
+    function test_fillOrderPaying_payEth_revert_fillPayTooHigh() public {
         uint256 orderId = _createOrderAsMaker(_order(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT));
 
         vm.prank(_taker);
         vm.expectRevert(
-            abi.encodeWithSelector(ISwapboard.FillReceiveTooHigh.selector, orderId, AMOUNT_B, AMOUNT_B - 1)
+            abi.encodeWithSelector(ISwapboard.FillPayTooHigh.selector, orderId, ETH_AMOUNT, ETH_AMOUNT - 1)
         );
-        _board.fillOrderPaying{value: ETH_AMOUNT}(orderId, ETH_AMOUNT, AMOUNT_B - 1, 0);
+        _board.fillOrderPaying{value: ETH_AMOUNT}(orderId, ETH_AMOUNT, ETH_AMOUNT - 1, 0);
 
         assertTrue(_board.canFill(orderId));
         assertEq(_board.getOrder(orderId).availableA, AMOUNT_B);
@@ -2045,7 +2043,7 @@ contract SwapboardTest is Test {
     function test_fillOrderPaying_payEth_revert_orderNotFound() public {
         vm.prank(_taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, 999));
-        _fillOrderPayingEth(999, ETH_AMOUNT, AMOUNT_A);
+        _fillOrderPayingEth(999, ETH_AMOUNT);
     }
 
     /// @notice Tests fillOrderPaying paying ETH reverts when the order is already spent
@@ -2053,11 +2051,11 @@ contract SwapboardTest is Test {
         uint256 orderId = _createOrderAsMaker(_order(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT));
 
         vm.prank(_taker);
-        _fillOrderPayingEth(orderId, ETH_AMOUNT, AMOUNT_B);
+        _fillOrderPayingEth(orderId, ETH_AMOUNT);
 
         vm.prank(_taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        _fillOrderPayingEth(orderId, ETH_AMOUNT, AMOUNT_B);
+        _fillOrderPayingEth(orderId, ETH_AMOUNT);
     }
 
     /// @notice Tests fillOrderPaying paying ETH reverts after the deadline
@@ -2068,7 +2066,7 @@ contract SwapboardTest is Test {
 
         vm.prank(_taker);
         vm.expectRevert(ISwapboard.DeadlineExpired.selector);
-        _fillOrderPayingEth(orderId, ETH_AMOUNT, AMOUNT_B, 999);
+        _fillOrderPayingEth(orderId, ETH_AMOUNT, 999);
 
         assertTrue(_board.canFill(orderId));
     }
@@ -2084,7 +2082,7 @@ contract SwapboardTest is Test {
         uint256 takerTokenBefore = _tokenB.balanceOf(_taker);
 
         vm.prank(_taker);
-        _fillOrderPayingEth(orderId, ETH_AMOUNT, AMOUNT_B, deadline);
+        _fillOrderPayingEth(orderId, ETH_AMOUNT, deadline);
 
         assertFalse(_board.canFill(orderId));
         assertEq(_board.getOrder(orderId).availableA, 0);
@@ -2100,7 +2098,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, 0, 0.1 ether));
-        _board.fillOrderPaying{value: 0.1 ether}(orderId, AMOUNT_B, AMOUNT_A, 0);
+        _board.fillOrderPaying{value: 0.1 ether}(orderId, AMOUNT_B, AMOUNT_B, 0);
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));
@@ -2311,7 +2309,7 @@ contract SwapboardTest is Test {
         uint256 takerTokenBefore = _tokenB.balanceOf(_taker);
 
         vm.prank(_taker);
-        _fillOrderPayingEth(orderId, payB, expectedAOut);
+        _fillOrderPayingEth(orderId, payB);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertTrue(order.active);
@@ -2334,7 +2332,7 @@ contract SwapboardTest is Test {
 
         vm.prank(_taker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, payB, payB - 1));
-        _board.fillOrderPaying{value: payB - 1}(orderId, payB, tokenAmount, 0);
+        _board.fillOrderPaying{value: payB - 1}(orderId, payB, payB, 0);
 
         assertTrue(_board.canFill(orderId));
         assertEq(_board.getOrder(orderId).availableA, tokenAmount);
@@ -2509,7 +2507,7 @@ contract SwapboardTest is Test {
 
         vm.prank(_taker);
         vm.expectRevert(ETHRejecter.RejectETH.selector);
-        _fillOrderPayingEth(orderId, ETH_AMOUNT, AMOUNT_B);
+        _fillOrderPayingEth(orderId, ETH_AMOUNT);
 
         assertTrue(_board.canFill(orderId));
         assertEq(_tokenB.balanceOf(address(_board)), boardTokenBefore);
@@ -2557,8 +2555,8 @@ contract SwapboardTest is Test {
 
         // Later legs quote against reduced liquidity, so both legs use the order total as the cap.
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
-        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB, maxAmountA: AMOUNT_A});
-        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB, maxAmountA: AMOUNT_A});
+        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB, maxAmountB: AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB, maxAmountB: AMOUNT_A});
 
         uint256 takerABefore = _tokenA.balanceOf(_taker);
         uint256 makerBBefore = _tokenB.balanceOf(_maker);
@@ -2582,13 +2580,58 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), order.availableA);
     }
 
+    /// @notice Tests two amountB legs when the first pays less than requested, leaving extra tokenB
+    function test_fillOrdersPaying_sameOrderId_firstLegPaysLessThanRequested() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), 3);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), 3, address(_tokenB), 10));
+        vm.stopPrank();
+
+        uint128 payB1 = 5;
+        uint128 payB2 = 5;
+        ISwapboard.Order memory before = _board.getOrder(orderId);
+        uint128 aOut1 = FillTestLib.quoteAmountA(before, payB1);
+        uint128 bIn1 = FillTestLib.quoteFillPayingAmountB(before, payB1);
+        assertEq(aOut1, 1);
+        assertEq(bIn1, 4);
+        assertLt(bIn1, payB1);
+
+        ISwapboard.Order memory afterFirst = before;
+        afterFirst.availableA = uint128(before.availableA - aOut1);
+        afterFirst.availableB = uint128(before.availableB - bIn1);
+        uint128 aOut2 = FillTestLib.quoteAmountA(afterFirst, payB2);
+        uint128 bIn2 = FillTestLib.quoteFillPayingAmountB(afterFirst, payB2);
+        assertEq(aOut2, 1);
+        assertEq(bIn2, 3);
+
+        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
+        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB1, maxAmountB: payB1});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB2, maxAmountB: payB2});
+
+        uint256 takerABefore = _tokenA.balanceOf(_taker);
+        uint256 makerBBefore = _tokenB.balanceOf(_maker);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), bIn1 + bIn2);
+        _board.fillOrdersPaying(fills, 0);
+        vm.stopPrank();
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertTrue(order.active);
+        assertEq(order.availableA, 1);
+        assertEq(order.availableB, 3);
+        assertEq(_tokenA.balanceOf(_taker), takerABefore + aOut1 + aOut2);
+        assertEq(_tokenB.balanceOf(_maker), makerBBefore + bIn1 + bIn2);
+        assertEq(_tokenA.balanceOf(address(_board)), order.availableA);
+    }
+
     /// @notice Tests the same orderId twice reverts when the second leg exceeds remaining amountB
     function test_fillOrdersPaying_revert_sameOrderId_insufficientRemaining() public {
         uint256 orderId = _createOrderAsMaker(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
 
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
-        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: AMOUNT_B / 2, maxAmountA: AMOUNT_A});
-        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: AMOUNT_B, maxAmountA: AMOUNT_A});
+        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: AMOUNT_B / 2, maxAmountB: AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: AMOUNT_B, maxAmountB: AMOUNT_A});
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B * 2);
@@ -2750,7 +2793,7 @@ contract SwapboardTest is Test {
 
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
         fills[0] = FillTestLib.fillPayingParams(_board.getOrder(orderId), orderId, AMOUNT_B);
-        fills[1] = ISwapboard.FillOrderPayingParams({orderId: 999, amountB: AMOUNT_B, maxAmountA: AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: 999, amountB: AMOUNT_B, maxAmountB: AMOUNT_A});
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B * 2);
@@ -2769,7 +2812,7 @@ contract SwapboardTest is Test {
 
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
         fills[0] = FillTestLib.fillPayingParams(_board.getOrder(orderId), orderId, AMOUNT_B);
-        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: 0, maxAmountA: AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: 0, maxAmountB: AMOUNT_A});
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B);
@@ -2788,7 +2831,7 @@ contract SwapboardTest is Test {
 
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
         fills[0] = FillTestLib.fillPayingParams(_board.getOrder(orderId), orderId, AMOUNT_B);
-        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: 1, maxAmountA: AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: 1, maxAmountB: AMOUNT_A});
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B + 1);
@@ -2806,8 +2849,8 @@ contract SwapboardTest is Test {
         uint256 orderId = _createOrderAsMaker(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
 
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
-        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: AMOUNT_B / 2, maxAmountA: AMOUNT_A});
-        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: AMOUNT_B / 2, maxAmountA: AMOUNT_A});
+        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: AMOUNT_B / 2, maxAmountB: AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: AMOUNT_B / 2, maxAmountB: AMOUNT_A});
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B);
@@ -2916,8 +2959,8 @@ contract SwapboardTest is Test {
         uint128 payB2 = AMOUNT_B - payB1;
 
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
-        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB1, maxAmountA: AMOUNT_A});
-        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB2, maxAmountA: AMOUNT_A});
+        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB1, maxAmountB: AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB2, maxAmountB: AMOUNT_A});
 
         uint256 takerABefore = _tokenA.balanceOf(_taker);
         uint256 tokenAPullsBefore = _tf(_tokenA);
@@ -3076,7 +3119,7 @@ contract SwapboardTest is Test {
 
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
         fills[0] = FillTestLib.fillPayingParams(_board.getOrder(ids.id0), ids.id0, AMOUNT_B);
-        fills[1] = ISwapboard.FillOrderPayingParams({orderId: ids.id1, amountB: AMOUNT_B + 1, maxAmountA: AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: ids.id1, amountB: AMOUNT_B + 1, maxAmountB: AMOUNT_A});
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B * 2);
@@ -3090,20 +3133,18 @@ contract SwapboardTest is Test {
         assertEq(_tf(_tokenB), 0);
     }
 
-    /// @notice Tests fillOrdersPaying reverts FillReceiveTooHigh on a later leg
-    function test_fillOrdersPaying_revert_fillReceiveTooHigh_laterItem() public {
+    /// @notice Tests fillOrdersPaying reverts FillPayTooHigh on a later leg
+    function test_fillOrdersPaying_revert_fillPayTooHigh_laterItem() public {
         OrderIdPair memory ids =
             _createTwoSameTokenBOrders(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
 
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
         fills[0] = FillTestLib.fillPayingParams(_board.getOrder(ids.id0), ids.id0, AMOUNT_B);
-        fills[1] = ISwapboard.FillOrderPayingParams({orderId: ids.id1, amountB: AMOUNT_B, maxAmountA: AMOUNT_A - 1});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: ids.id1, amountB: AMOUNT_B, maxAmountB: AMOUNT_B - 1});
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B * 2);
-        vm.expectRevert(
-            abi.encodeWithSelector(ISwapboard.FillReceiveTooHigh.selector, ids.id1, AMOUNT_A, AMOUNT_A - 1)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillPayTooHigh.selector, ids.id1, AMOUNT_B, AMOUNT_B - 1));
         _board.fillOrdersPaying(fills, 0);
         vm.stopPrank();
 
@@ -3146,43 +3187,48 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A * 2);
     }
 
-    /// @notice Tests fillOrdersPaying succeeds when a leg's quoted receive is below maxAmountA
-    function test_fillOrdersPaying_maxAmountA_acceptsLowerQuotedReceive() public {
-        uint256 orderId = _createOrderAsMaker(_orderPartial(address(_tokenA), 100, address(_tokenB), 3));
+    /// @notice Tests fillOrdersPaying succeeds when a leg's quoted payment is below maxAmountB
+    function test_fillOrdersPaying_maxAmountB_acceptsLowerQuotedPayment() public {
+        uint256 orderId = _createOrderAsMaker(_orderPartial(address(_tokenA), 10, address(_tokenB), 100));
 
-        uint128 payB = 1;
+        uint128 payB = 33;
         uint128 quotedA = FillTestLib.quoteAmountA(_board.getOrder(orderId), payB);
-        assertEq(quotedA, 33);
+        uint128 quotedB = FillTestLib.quoteFillPayingAmountB(_board.getOrder(orderId), payB);
+        assertEq(quotedA, 3);
+        assertEq(quotedB, 30);
 
         ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](1);
-        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB, maxAmountA: quotedA + 10});
+        fills[0] = ISwapboard.FillOrderPayingParams({orderId: orderId, amountB: payB, maxAmountB: payB});
 
         uint256 takerABefore = _tokenA.balanceOf(_taker);
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), payB);
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: quotedA, amountB: payB});
+        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: quotedA, amountB: quotedB});
         _board.fillOrdersPaying(fills, 0);
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertTrue(order.active);
-        assertEq(order.availableA, 67);
-        assertEq(order.availableB, 2);
+        assertEq(order.availableA, 7);
+        assertEq(order.availableB, 70);
         assertEq(_tokenA.balanceOf(_taker), takerABefore + quotedA);
     }
 
-    /// @notice Tests fillOrder succeeds when quoted payment exceeds the taker minimum
-    function test_fillOrder_minAmountB_acceptsHigherQuotedPayment() public {
+    /// @notice Tests fillOrder succeeds when quoted receive exceeds the taker minimum
+    function test_fillOrder_minAmountA_acceptsHigherQuotedReceive() public {
         vm.startPrank(_maker);
-        _tokenA.approve(address(_board), 3);
-        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), 3, address(_tokenB), 100));
+        _tokenA.approve(address(_board), 10);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), 10, address(_tokenB), 3));
         vm.stopPrank();
 
-        uint128 fillA = 1;
+        uint128 fillA = 4;
         uint128 quotedB = FillTestLib.quoteAmountB(_board.getOrder(orderId), fillA);
-        assertGt(quotedB, 1);
+        uint128 quotedA = FillTestLib.quoteFillAmountA(_board.getOrder(orderId), fillA);
+        assertEq(quotedB, 2);
+        assertEq(quotedA, 6);
+        assertGt(quotedA, fillA);
 
         uint256 makerBBefore = _tokenB.balanceOf(_maker);
         uint256 takerABefore = _tokenA.balanceOf(_taker);
@@ -3190,63 +3236,66 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), quotedB);
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: fillA, amountB: quotedB});
-        _board.fillOrder(orderId, fillA, quotedB - 1, 0);
+        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: quotedA, amountB: quotedB});
+        _board.fillOrder(orderId, fillA, fillA, 0);
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertTrue(order.active);
-        assertEq(order.availableA, 2);
-        assertEq(order.availableB, 100 - quotedB);
-        assertEq(_tokenA.balanceOf(_taker), takerABefore + fillA);
+        assertEq(order.availableA, 4);
+        assertEq(order.availableB, 1);
+        assertEq(_tokenA.balanceOf(_taker), takerABefore + quotedA);
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + quotedB);
     }
 
-    /// @notice Tests fillOrder paying ETH succeeds when quoted payment exceeds the taker minimum
-    function test_fillOrder_payEth_minAmountB_acceptsHigherQuotedPayment() public {
-        uint128 totalA = 3 ether;
-        uint128 totalEth = 100 ether;
+    /// @notice Tests fillOrder paying ETH succeeds when quoted receive exceeds the taker minimum
+    function test_fillOrder_payEth_minAmountA_acceptsHigherQuotedReceive() public {
+        uint128 totalA = 10;
+        uint128 totalEth = 3;
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), totalA);
         uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), totalA, _eth, totalEth));
         vm.stopPrank();
 
-        uint128 fillA = 1 ether;
+        uint128 fillA = 4;
         uint128 quotedEth = FillTestLib.quoteAmountB(_board.getOrder(orderId), fillA);
-        assertGt(quotedEth, 1 ether);
+        uint128 quotedA = FillTestLib.quoteFillAmountA(_board.getOrder(orderId), fillA);
+        assertEq(quotedEth, 2);
+        assertEq(quotedA, 6);
 
         uint256 makerEthBefore = _maker.balance;
         uint256 takerABefore = _tokenA.balanceOf(_taker);
 
         vm.startPrank(_taker);
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: fillA, amountB: quotedEth});
-        _board.fillOrder{value: quotedEth}(orderId, fillA, quotedEth - 1, 0);
+        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: quotedA, amountB: quotedEth});
+        _board.fillOrder{value: quotedEth}(orderId, fillA, fillA, 0);
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertTrue(order.active);
-        assertEq(order.availableA, 2 ether);
-        assertEq(order.availableB, totalEth - quotedEth);
-        assertEq(_tokenA.balanceOf(_taker), takerABefore + fillA);
+        assertEq(order.availableA, 4);
+        assertEq(order.availableB, 1);
+        assertEq(_tokenA.balanceOf(_taker), takerABefore + quotedA);
         assertEq(_maker.balance, makerEthBefore + quotedEth);
     }
 
-    /// @notice Tests fillOrders succeeds when quoted payment exceeds the taker minimum
-    function test_fillOrders_minAmountB_acceptsHigherQuotedPayment() public {
+    /// @notice Tests fillOrders succeeds when quoted receive exceeds the taker minimum
+    function test_fillOrders_minAmountA_acceptsHigherQuotedReceive() public {
         vm.startPrank(_maker);
-        _tokenA.approve(address(_board), 3);
-        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), 3, address(_tokenB), 100));
+        _tokenA.approve(address(_board), 10);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), 10, address(_tokenB), 3));
         vm.stopPrank();
 
-        uint128 fillA = 1;
+        uint128 fillA = 4;
         ISwapboard.Order memory order = _board.getOrder(orderId);
         uint128 quotedB = FillTestLib.quoteAmountB(order, fillA);
-        assertGt(quotedB, 1);
+        uint128 quotedA = FillTestLib.quoteFillAmountA(order, fillA);
+        assertGt(quotedA, fillA);
 
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
-        fills[0] = ISwapboard.FillOrderParams({orderId: orderId, amountA: fillA, minAmountB: quotedB - 1});
+        fills[0] = ISwapboard.FillOrderParams({orderId: orderId, amountA: fillA, minAmountA: fillA});
 
         uint256 makerBBefore = _tokenB.balanceOf(_maker);
         uint256 takerABefore = _tokenA.balanceOf(_taker);
@@ -3254,15 +3303,15 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), quotedB);
         vm.expectEmit(true, true, false, true);
-        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: fillA, amountB: quotedB});
+        emit ISwapboard.OrderFilled({orderId: orderId, taker: _taker, amountA: quotedA, amountB: quotedB});
         _board.fillOrders(fills, 0);
         vm.stopPrank();
 
         order = _board.getOrder(orderId);
         assertTrue(order.active);
-        assertEq(order.availableA, 2);
-        assertEq(order.availableB, 100 - quotedB);
-        assertEq(_tokenA.balanceOf(_taker), takerABefore + fillA);
+        assertEq(order.availableA, 4);
+        assertEq(order.availableB, 1);
+        assertEq(_tokenA.balanceOf(_taker), takerABefore + quotedA);
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + quotedB);
     }
 
@@ -3276,11 +3325,11 @@ contract SwapboardTest is Test {
 
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
         fills[0] = FillTestLib.fillParams(_board.getOrder(id0), id0, AMOUNT_A);
-        fills[1] = ISwapboard.FillOrderParams({orderId: id1, amountA: AMOUNT_A, minAmountB: AMOUNT_B + 1});
+        fills[1] = ISwapboard.FillOrderParams({orderId: id1, amountA: AMOUNT_A, minAmountA: AMOUNT_A + 1});
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B * 2);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillAmountMismatch.selector, id1, AMOUNT_B, AMOUNT_B + 1));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillAmountMismatch.selector, id1, AMOUNT_A, AMOUNT_A + 1));
         _board.fillOrders(fills, 0);
         vm.stopPrank();
 
@@ -3332,8 +3381,8 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
-    /// @notice Tests ceil payment can exhaust amountB while leaving tokenA dust
-    function test_fillOrder_partial_ceilExhaustsAmountBWithDust() public {
+    /// @notice Tests ceil payment that exhausts amountB pays out all remaining tokenA
+    function test_fillOrder_partial_ceilExhaustsAmountBPaysRemainingA() public {
         uint128 amountA = 100;
         uint128 amountB = 1;
 
@@ -3344,6 +3393,7 @@ contract SwapboardTest is Test {
 
         uint256 tokenAPullsBefore = _tf(_tokenA);
         uint256 tokenBPullsBefore = _tf(_tokenB);
+        uint256 takerABefore = _tokenA.balanceOf(_taker);
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), amountB);
@@ -3355,11 +3405,11 @@ contract SwapboardTest is Test {
         assertEq(order.amountA, 100);
         assertEq(order.amountB, 1);
         assertEq(order.availableB, 0);
-        // Dust remaining tokenA after amountB exhausted is expected (not worth gas to refund).
-        assertEq(order.availableA, 99);
+        assertEq(order.availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
-        assertEq(_tokenA.balanceOf(address(_board)), 99);
+        assertEq(_tokenA.balanceOf(_taker), takerABefore + amountA);
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
     }
 
     /// @notice Tests a single partial fill reduces remaining amounts and keeps the order active
@@ -3430,13 +3480,14 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), 0);
     }
 
-    /// @notice Tests ceil rounding can exhaust amountB while leaving tokenA dust (expected)
-    function test_fillOrder_partial_roundingLeavesDust() public {
+    /// @notice Tests ceil rounding pays out extra tokenA that the ceiled payment already bought
+    function test_fillOrder_partial_roundingPaysExtraA() public {
         uint128 amountA = 100;
         uint128 amountB = 3;
         uint128 fillA = 34;
-        // Exact B share would be 1.02; ceil charges 2.
+        // Exact B share would be 1.02; ceil charges 2, which buys 66 A.
         uint256 expectedBIn = 2;
+        uint128 expectedAOut = 66;
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), amountA);
@@ -3457,14 +3508,12 @@ contract SwapboardTest is Test {
         assertTrue(order.active);
         assertEq(order.amountA, amountA);
         assertEq(order.amountB, amountB);
-        assertEq(order.availableA, amountA - fillA);
+        assertEq(order.availableA, amountA - expectedAOut);
         assertEq(order.availableB, amountB - expectedBIn);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
-        assertEq(_tokenA.balanceOf(_taker), takerABefore + fillA);
-        // Ceil on tokenB can leave a richer residual A/B ratio; dust is not refunded (not worth
-        // the gas) and can be picked up when this token is tokenB on another order.
-        assertEq(_tokenA.balanceOf(address(_board)), amountA - fillA);
+        assertEq(_tokenA.balanceOf(_taker), takerABefore + expectedAOut);
+        assertEq(_tokenA.balanceOf(address(_board)), amountA - expectedAOut);
         assertEq(expectedBIn, 2);
     }
 
@@ -3630,7 +3679,7 @@ contract SwapboardTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ISwapboard.ETHAmountMismatch.selector, expectedEthIn, expectedEthIn - 1)
         );
-        _board.fillOrder{value: expectedEthIn - 1}(orderId, fillA, expectedEthIn, 0);
+        _board.fillOrder{value: expectedEthIn - 1}(orderId, fillA, fillA, 0);
     }
 
     /// @notice Tests FillAmountTooHigh uses remaining availableA after a prior partial fill
@@ -3880,6 +3929,7 @@ contract SwapboardTest is Test {
         uint256 amountBIn =
             fillA == amountA ? amountB : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
         vm.assume(amountBIn > 0);
+        uint256 amountAOut = amountBIn == amountB ? amountA : (amountBIn * uint256(amountA)) / uint256(amountB);
 
         _tokenA.mint(_maker, amountA);
         _tokenB.mint(_taker, amountBIn);
@@ -3903,13 +3953,13 @@ contract SwapboardTest is Test {
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.amountA, amountA);
         assertEq(order.amountB, amountB);
-        assertEq(order.availableA, amountA - fillA);
+        assertEq(order.availableA, amountA - amountAOut);
         assertEq(order.availableB, amountB - amountBIn);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
-        assertEq(_tokenA.balanceOf(_taker), takerABefore + fillA);
+        assertEq(_tokenA.balanceOf(_taker), takerABefore + amountAOut);
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + amountBIn);
-        assertEq(_tokenA.balanceOf(address(_board)), amountA - fillA);
+        assertEq(_tokenA.balanceOf(address(_board)), amountA - amountAOut);
 
         if (order.availableA == 0 || order.availableB == 0) {
             assertFalse(order.active);
@@ -3990,11 +4040,13 @@ contract SwapboardTest is Test {
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 fillA1 = uint128(bound(fillA1Seed, 1, amountA - 1));
 
-        uint256 bIn1 = (uint256(fillA1) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+        ISwapboard.Order memory snapshot;
+        snapshot.availableA = amountA;
+        snapshot.availableB = amountB;
+        uint256 bIn1 = FillTestLib.quoteAmountB(snapshot, fillA1);
         vm.assume(bIn1 > 0 && bIn1 < amountB);
-
-        uint128 fillA2 = amountA - fillA1;
-        uint256 bIn2 = amountB - bIn1;
+        uint256 aOut1 = FillTestLib.quoteFillAmountA(snapshot, fillA1);
+        vm.assume(aOut1 < amountA);
 
         _tokenA.mint(_maker, amountA);
         _tokenB.mint(_taker, amountB);
@@ -4010,7 +4062,12 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), amountB);
         _fillOrder(orderId, fillA1);
-        _fillOrder(orderId, fillA2);
+        uint128 remainingA = _board.getOrder(orderId).availableA;
+        uint256 pulls = 1;
+        if (remainingA > 0) {
+            _fillOrder(orderId, remainingA);
+            pulls = 2;
+        }
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
@@ -4019,10 +4076,8 @@ contract SwapboardTest is Test {
         assertEq(order.amountB, amountB);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
-        assertEq(fillA1 + fillA2, amountA);
-        assertEq(bIn1 + bIn2, amountB);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
-        assertEq(_tf(_tokenB), tokenBPullsBefore + 2);
+        assertEq(_tf(_tokenB), tokenBPullsBefore + pulls);
         assertEq(_tokenA.balanceOf(address(_board)), 0);
     }
 

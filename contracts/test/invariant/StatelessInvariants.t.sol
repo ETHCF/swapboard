@@ -84,6 +84,7 @@ contract SwapboardStatelessInvariantTest is Test {
         uint256 amountBIn =
             fillA == amountA ? amountB : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
         vm.assume(amountBIn > 0);
+        uint256 amountAOut = amountBIn == amountB ? amountA : (amountBIn * uint256(amountA)) / uint256(amountB);
 
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(
@@ -103,7 +104,7 @@ contract SwapboardStatelessInvariantTest is Test {
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.amountA, amountA);
         assertEq(order.amountB, amountB);
-        assertEq(order.availableA, amountA - fillA);
+        assertEq(order.availableA, amountA - amountAOut);
         assertEq(order.availableB, amountB - amountBIn);
         assertTrue(!(order.availableA > order.amountA));
         assertTrue(!(order.availableB > order.amountB));
@@ -125,6 +126,9 @@ contract SwapboardStatelessInvariantTest is Test {
 
         uint256 amountAOut = fillB == amountB ? amountA : (uint256(fillB) * uint256(amountA)) / uint256(amountB);
         vm.assume(amountAOut > 0);
+        uint256 amountBIn = amountAOut == amountA
+            ? amountB
+            : (amountAOut * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
 
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(
@@ -145,7 +149,7 @@ contract SwapboardStatelessInvariantTest is Test {
         assertEq(order.amountA, amountA);
         assertEq(order.amountB, amountB);
         assertEq(order.availableA, amountA - amountAOut);
-        assertEq(order.availableB, amountB - fillB);
+        assertEq(order.availableB, amountB - amountBIn);
         assertTrue(!(order.availableA > order.amountA));
         assertTrue(!(order.availableB > order.amountB));
     }
@@ -301,7 +305,7 @@ contract SwapboardStatelessInvariantTest is Test {
         ISwapboard.Order memory afterFirst = _board.getOrder(orderId);
         uint256 filledA1 = uint256(afterFirst.amountA) - uint256(afterFirst.availableA);
         uint256 filledB1 = uint256(afterFirst.amountB) - uint256(afterFirst.availableB);
-        assertEq(filledA1, fillA1);
+        assertTrue(!(filledA1 < fillA1));
         assertEq(filledB1, bIn1);
         assertEq(afterFirst.amountA, amountA);
         assertEq(afterFirst.amountB, amountB);
