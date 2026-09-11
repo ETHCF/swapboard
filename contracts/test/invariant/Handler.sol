@@ -607,7 +607,7 @@ contract SwapboardHandler is Test {
         uint128 fillA1 = uint128(order.availableA / 2);
         uint128 amountAOut1 = FillTestLib.quoteFillAmountA(order, fillA1);
         uint128 amountBIn1 = FillTestLib.quoteAmountB(order, fillA1);
-        if (amountAOut1 >= order.availableA || amountBIn1 == 0) {
+        if (amountAOut1 > order.availableA - 1 || amountBIn1 == 0) {
             return;
         }
         uint128 fillA2 = uint128(order.availableA - amountAOut1);
@@ -643,7 +643,7 @@ contract SwapboardHandler is Test {
         uint128 fillB2 = uint128(order.availableB - fillB1);
         uint128 amountAOut1 = FillTestLib.quoteAmountA(order, fillB1);
         uint128 amountBIn1 = FillTestLib.quoteFillPayingAmountB(order, fillB1);
-        if (amountAOut1 == 0 || amountBIn1 == 0 || amountBIn1 >= order.availableB) {
+        if (amountAOut1 == 0 || amountBIn1 == 0 || amountBIn1 > order.availableB - 1) {
             return;
         }
 
