@@ -85,10 +85,9 @@ contract GasBenchmarks is Test {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_order());
 
-        uint128 amountB = FillTestLib.quoteAmountB(_board.getOrder(orderId), ORDER_A);
         vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        FillTestLib.fill(_board, orderId, ORDER_A, amountB, 0);
+        FillTestLib.fill(_board, orderId, ORDER_A);
         uint256 gasUsed = gasBefore - gasleft();
         vm.stopPrank();
 
@@ -101,10 +100,9 @@ contract GasBenchmarks is Test {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_orderPartial());
 
-        uint128 amountB = FillTestLib.quoteAmountB(_board.getOrder(orderId), 40 ether);
         vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        _board.fillOrder(orderId, 40 ether, amountB, 0);
+        _board.fillOrder(orderId, 40 ether, 40 ether, 0);
         uint256 gasUsed = gasBefore - gasleft();
         vm.stopPrank();
 
@@ -141,10 +139,9 @@ contract GasBenchmarks is Test {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_order());
 
-        uint128 amountA = FillTestLib.quoteAmountA(_board.getOrder(orderId), ORDER_B);
         vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        FillTestLib.fillPaying(_board, orderId, ORDER_B, amountA, 0);
+        FillTestLib.fillPaying(_board, orderId, ORDER_B);
         uint256 gasUsed = gasBefore - gasleft();
         vm.stopPrank();
 
@@ -158,10 +155,9 @@ contract GasBenchmarks is Test {
         uint256 orderId = _board.createOrder(_orderPartial());
 
         uint128 payB = 40 ether;
-        uint128 amountA = FillTestLib.quoteAmountA(_board.getOrder(orderId), payB);
         vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        _board.fillOrderPaying(orderId, payB, amountA, 0);
+        _board.fillOrderPaying(orderId, payB, payB, 0);
         uint256 gasUsed = gasBefore - gasleft();
         vm.stopPrank();
 

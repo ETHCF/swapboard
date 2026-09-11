@@ -60,13 +60,13 @@ contract EthReentrantReceiver {
             try _BOARD.fillOrder(_orderId, 1, 1, 0) {} catch {}
         } else if (_attack == Attack.FillOrders) {
             ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
-            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountA: 1, minAmountB: 1});
+            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountA: 1, minAmountA: 1});
             try _BOARD.fillOrders(fills, 0) {} catch {}
         } else if (_attack == Attack.FillPaying) {
             try _BOARD.fillOrderPaying(_orderId, 1, 1, 0) {} catch {}
         } else if (_attack == Attack.FillOrdersPaying) {
             ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](1);
-            fills[0] = ISwapboard.FillOrderPayingParams({orderId: _orderId, amountB: 1, maxAmountA: 1});
+            fills[0] = ISwapboard.FillOrderPayingParams({orderId: _orderId, amountB: 1, maxAmountB: 1});
             try _BOARD.fillOrdersPaying(fills, 0) {} catch {}
         } else if (_attack == Attack.Cancel) {
             try _BOARD.cancelOrder(_orderId) {} catch {}

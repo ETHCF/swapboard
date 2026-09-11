@@ -427,26 +427,26 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `OrderStateMismatch(uint256,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128)` | `0xe796ec17` | `modifyOrder` / `modifyOrders` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` |
 | `DuplicateOrderId(uint256)` | `0x54b9c511` | Same `orderId` appears more than once in a `cancelOrders` or `modifyOrders` batch |
 | `FillAmountTooHigh(uint256,uint128,uint128)` | `0x535a34f0` | Requested fill amount exceeds remaining liquidity (`amountA` for `fillOrder`, `amountB` for `fillOrderPaying`) |
-| `FillAmountMismatch(uint256,uint128,uint128)` | `0x19113a72` | Quoted tokenB payment is below the taker's `minAmountB` (`fillOrder`) |
-| `FillReceiveTooHigh(uint256,uint128,uint128)` | `0x771534f7` | Quoted tokenA receive exceeds the taker's `maxAmountA` (`fillOrderPaying`) |
+| `FillAmountMismatch(uint256,uint128,uint128)` | `0x19113a72` | Quoted tokenA receive is below the taker's `minAmountA` (`fillOrder`) |
+| `FillPayTooHigh(uint256,uint128,uint128)` | `0x489a6af8` | Quoted tokenB payment exceeds the taker's `maxAmountB` (`fillOrderPaying`) |
 
 ## Methods
 
 ### `fillOrderPaying`
 
-Taker pays exact `amountB` of tokenB and receives floored proportional tokenA.
+Taker requests to pay `amountB` of tokenB and receives floored proportional tokenA. The floored receive may cost less tokenB than requested; only that lesser payment is pulled.
 
 ```solidity
 struct FillOrderPayingParams {
     uint256 orderId;
-    uint128 amountB;      // tokenB to pay
-    uint128 maxAmountA;   // maximum tokenA willing to receive
+    uint128 amountB;      // tokenB requested to pay
+    uint128 maxAmountB;   // maximum tokenB willing to send
 }
 
 function fillOrderPaying(
     uint256 orderId,
     uint128 amountB,
-    uint128 maxAmountA,
+    uint128 maxAmountB,
     uint256 deadline
 ) external payable;
 
@@ -459,9 +459,10 @@ function fillOrdersPaying(
 Behavior:
 
 - tokenA out is floored: `amountB * availableA / availableB` (full remaining `amountB == availableB` returns all `availableA`).
-- Reverts with `FillReceiveTooHigh` when quoted tokenA exceeds `maxAmountA`.
+- tokenB in is the ceiled cost of that tokenA (`<= amountB`).
+- Reverts with `FillPayTooHigh` when quoted tokenB exceeds `maxAmountB`.
 - Reverts with `FillAmountTooHigh` when `amountB` exceeds `availableB`.
-- Same ETH / aggregation / deadline rules as `fillOrder` / `fillOrders` (`msg.value` must equal paid tokenB when tokenB is ETH).
+- Same ETH / aggregation / deadline rules as `fillOrder` / `fillOrders` (`msg.value` must equal the quoted tokenB payment when tokenB is ETH).
 - Empty `fillOrdersPaying` reverts with `ZeroAmount`.
 
 ### `modifyOrder`
