@@ -304,8 +304,6 @@ function installEthers(over = {}) {
 
 const WALLET_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
-/** The maxAmountA every v2 fill is sent with: no cap on what the taker receives. */
-const NO_RECEIVE_CAP = (1n << 128n) - 1n;
 const SWAPBOARD_ADDRESS = "0x000000fF3D7A2d373615141d7489Ca66683DbecF";
 
 /**
@@ -1578,7 +1576,7 @@ describe("buildPartialFillControls", () => {
     const v2 = loadApp({ search: "?v=2" });
     const onChange = jest.fn();
     const el = v2.buildPartialFillControls(partialOrder(), onChange);
-    // What the taker types is the wanted token: that is what fillOrderPaying takes.
+    // What the taker types is the wanted token: that is what fillOrder takes.
     expect(el.querySelector("label").textContent).toBe("Pay (USDC):");
     expect(el.querySelector("input").value).toBe("3,000");
     expect(el.querySelector(".partial-fill-quote").textContent).toBe("You receive: 1 WETH");
@@ -3718,7 +3716,7 @@ describe("v2 create and batch entry points", () => {
     expect(document.querySelector("#toast").className).toMatch(/error/);
   }, 20000);
 
-  test("batch fill of several orders pays each whole in one fillOrdersPaying", async () => {
+  test("batch fill of several orders pays each whole in one fillOrders", async () => {
     const { mod, h } = await v2();
     routeFetch({ orders: [makeOrder({ orderId: "1" }), makeOrder({ orderId: "2" })] });
     await mod.loadOrders();
@@ -3729,16 +3727,17 @@ describe("v2 create and batch entry points", () => {
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/Filled 2 orders/);
     // Selection order follows the table (newest first), which is not the point here.
-    const whole = { amountB: 3000000000n, maxAmountA: NO_RECEIVE_CAP };
-    expect(h.swap.fillOrdersPaying).toHaveBeenCalledWith(
+    // Each leg pays its whole remainder and is held to receiving all of it.
+    const whole = { amountB: 3000000000n, minAmountA: 10n ** 18n };
+    expect(h.swap.fillOrders).toHaveBeenCalledWith(
       expect.arrayContaining([
         { orderId: "1", ...whole },
         { orderId: "2", ...whole },
       ]),
       expect.any(Number)
     );
-    expect(h.swap.fillOrdersPaying.mock.calls[0][0]).toHaveLength(2);
-    expect(h.swap.fillOrders).not.toHaveBeenCalled();
+    expect(h.swap.fillOrders.mock.calls[0][0]).toHaveLength(2);
+    expect(h.swap.fillOrdersPaying).not.toHaveBeenCalled();
   }, 20000);
 
   test("batch fill paying in ETH skips the approval", async () => {
@@ -3763,7 +3762,7 @@ describe("v2 create and batch entry points", () => {
     expect(document.querySelector("#toast").textContent).toMatch(/Filled 2 orders/);
     expect(h.token.approve).not.toHaveBeenCalled();
     // The exact sum of both remaining payments, since v2 refunds nothing.
-    expect(h.swap.fillOrdersPaying).toHaveBeenCalledWith(expect.any(Array), expect.any(Number), {
+    expect(h.swap.fillOrders).toHaveBeenCalledWith(expect.any(Array), expect.any(Number), {
       value: 6000000000n,
     });
   }, 20000);
@@ -3798,7 +3797,7 @@ describe("v2 create and batch entry points", () => {
     );
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/Filled 20 orders/);
-    expect(h.swap.fillOrdersPaying.mock.calls.map(([fills]) => fills.length)).toEqual([15, 5]);
+    expect(h.swap.fillOrders.mock.calls.map(([fills]) => fills.length)).toEqual([15, 5]);
   }, 30000);
 
   test("a failed batch reports the error", async () => {
@@ -3809,7 +3808,7 @@ describe("v2 create and batch entry points", () => {
     await mod.fillSelectedOrders();
 
     // An order taken by someone else between selection and landing.
-    h.swap.fillOrdersPaying.mockRejectedValue({
+    h.swap.fillOrders.mockRejectedValue({
       data: "0xd2c02610" + (1).toString(16).padStart(64, "0"),
     });
     await confirmModal(V2_SETTLE);
@@ -4362,15 +4361,10 @@ describe("v2 single-order entry points", () => {
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/filled/i);
     // v2 treats WETH as an ordinary ERC20: approve exactly the payment, then
-    // fill by payment. The old fillOrder path is never taken.
+    // fill by payment, holding the receive to what the modal quoted.
     expect(h.token.approve).toHaveBeenCalledWith(expect.any(String), 3000000000n);
-    expect(h.swap.fillOrderPaying).toHaveBeenCalledWith(
-      "1",
-      3000000000n,
-      NO_RECEIVE_CAP,
-      expect.any(Number)
-    );
-    expect(h.swap.fillOrder).not.toHaveBeenCalled();
+    expect(h.swap.fillOrder).toHaveBeenCalledWith("1", 3000000000n, 10n ** 18n, expect.any(Number));
+    expect(h.swap.fillOrderPaying).not.toHaveBeenCalled();
   }, 20000);
 
   test("a partial fill pays exactly the chosen amount", async () => {
@@ -4384,10 +4378,11 @@ describe("v2 single-order entry points", () => {
     );
     await confirmModal(V2_SETTLE);
     expect(h.token.approve).toHaveBeenCalledWith(expect.any(String), 1500000000n);
-    expect(h.swap.fillOrderPaying).toHaveBeenCalledWith(
+    // The 0.5 WETH shown is the minAmountA the fill is held to.
+    expect(h.swap.fillOrder).toHaveBeenCalledWith(
       "1",
       1500000000n,
-      NO_RECEIVE_CAP,
+      5n * 10n ** 17n,
       expect.any(Number)
     );
   }, 20000);
@@ -4403,10 +4398,10 @@ describe("v2 single-order entry points", () => {
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/filled/i);
     expect(h.token.approve).not.toHaveBeenCalled();
-    expect(h.swap.fillOrderPaying).toHaveBeenCalledWith(
+    expect(h.swap.fillOrder).toHaveBeenCalledWith(
       "1",
       3000000000n,
-      NO_RECEIVE_CAP,
+      10n ** 18n,
       expect.any(Number),
       { value: 3000000000n }
     );
@@ -4423,10 +4418,10 @@ describe("v2 single-order entry points", () => {
   test("v2 prices the fill it will send", async () => {
     const { mod, h } = await v2();
     await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
-    expect(h.swap.interface.encodeFunctionData).toHaveBeenCalledWith("fillOrderPaying", [
+    expect(h.swap.interface.encodeFunctionData).toHaveBeenCalledWith("fillOrder", [
       "1",
       3000000000n,
-      NO_RECEIVE_CAP,
+      10n ** 18n,
       expect.any(Number),
     ]);
     expect(document.querySelector("#modal-body .gas-estimate")).not.toBeNull();
@@ -4442,7 +4437,22 @@ describe("v2 single-order entry points", () => {
       "Fill failed: Swapboard v2 is not deployed yet"
     );
     expect(h.token.approve).not.toHaveBeenCalled();
-    expect(h.swap.fillOrderPaying).not.toHaveBeenCalled();
+    expect(h.swap.fillOrder).not.toHaveBeenCalled();
+  }, 20000);
+
+  test("a reprice between quote and fill is reported, not absorbed", async () => {
+    const { mod, h } = await v2();
+    const word = (n) => n.toString(16).padStart(64, "0");
+    // The maker halved the payout before the fill landed: the chain now quotes
+    // 0.25 WETH against the 1 WETH minimum the fill was sent with.
+    h.swap.fillOrder.mockRejectedValue({
+      data: "0x19113a72" + word(1n) + word(25n * 10n ** 16n) + word(10n ** 18n),
+    });
+    await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
+    await confirmModal(V2_SETTLE);
+    expect(document.querySelector("#toast").textContent).toBe(
+      "Fill failed: Order #1 repriced while you were confirming. Refresh and try again."
+    );
   }, 20000);
 
   test("two ETH-offering orders batch into one createOrders carrying their total", async () => {
@@ -4665,10 +4675,10 @@ describe("connector adapters", () => {
       );
     });
 
-    test("fillCall fills by payment, with no cap on what is received", () => {
+    test("fillCall pays exactly amountB and holds the receive to the quote", () => {
       expect(v2.V2.fillCall(pair(A, B), 3n, 4n, 99)).toEqual({
-        method: "fillOrderPaying",
-        args: ["1", 4n, NO_RECEIVE_CAP, 99],
+        method: "fillOrder",
+        args: ["1", 4n, 3n, 99],
         value: 0n,
       });
     });
@@ -4680,7 +4690,7 @@ describe("connector adapters", () => {
     test("fillCall treats WETH as an ordinary ERC20 on either side", () => {
       for (const order of [pair(WETH, B), pair(A, WETH)]) {
         expect(v2.V2.fillCall(order, 3n, 4n, 99)).toMatchObject({
-          method: "fillOrderPaying",
+          method: "fillOrder",
           value: 0n,
         });
       }
@@ -4688,9 +4698,7 @@ describe("connector adapters", () => {
 
     test("send forwards a described fill", async () => {
       await v2.V2.send(v2.V2.fillCall(pair(A, NATIVE), 3n, 4n, 99));
-      expect(h.swap.fillOrderPaying).toHaveBeenCalledWith("1", 4n, NO_RECEIVE_CAP, 99, {
-        value: 4n,
-      });
+      expect(h.swap.fillOrder).toHaveBeenCalledWith("1", 4n, 3n, 99, { value: 4n });
     });
 
     test("fillOrders takes each order whole at its exact remaining payment", async () => {
@@ -4701,10 +4709,10 @@ describe("connector adapters", () => {
         ],
         99
       );
-      expect(h.swap.fillOrdersPaying).toHaveBeenCalledWith(
+      expect(h.swap.fillOrders).toHaveBeenCalledWith(
         [
-          { orderId: "1", amountB: 20n, maxAmountA: NO_RECEIVE_CAP },
-          { orderId: "2", amountB: 40n, maxAmountA: NO_RECEIVE_CAP },
+          { orderId: "1", amountB: 20n, minAmountA: 10n },
+          { orderId: "2", amountB: 40n, minAmountA: 30n },
         ],
         99,
         { value: 60n }
@@ -4713,8 +4721,8 @@ describe("connector adapters", () => {
 
     test("fillOrders sends no value when the wanted token is an ERC20", async () => {
       await v2.V2.fillOrders([pair(A, B)], 99);
-      expect(h.swap.fillOrdersPaying).toHaveBeenCalledWith(
-        [{ orderId: "1", amountB: 3000000000n, maxAmountA: NO_RECEIVE_CAP }],
+      expect(h.swap.fillOrders).toHaveBeenCalledWith(
+        [{ orderId: "1", amountB: 3000000000n, minAmountA: 10n ** 18n }],
         99
       );
     });

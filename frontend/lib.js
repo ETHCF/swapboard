@@ -804,7 +804,7 @@ const ERROR_SIGNATURES = {
   "0xed38596f": "PartialFillNotAllowed",
   "0x535a34f0": "FillAmountTooHigh",
   "0x19113a72": "FillAmountMismatch",
-  "0x771534f7": "FillReceiveTooHigh",
+  "0x489a6af8": "FillPayTooHigh",
   "0x54b9c511": "DuplicateOrderId",
   "0xa88ee577": "NoChange",
   "0xe796ec17": "OrderStateMismatch",
@@ -845,7 +845,7 @@ const ERROR_MESSAGES = {
     `Order #${args[0]} has less left than you asked for. Refresh and try again.`,
   FillAmountMismatch: (args) =>
     `Order #${args[0]} repriced while you were confirming. Refresh and try again.`,
-  FillReceiveTooHigh: (args) =>
+  FillPayTooHigh: (args) =>
     `Order #${args[0]} repriced while you were confirming. Refresh and try again.`,
   DuplicateOrderId: (args) => `Order #${args[0]} appears twice in this batch`,
   NoChange: "Nothing to change: the order already has these values",
@@ -1590,17 +1590,19 @@ function getShiftRangeIds(sortedOrders, anchorId, targetId, firstSelected, userA
 // ETH, so a formula that disagrees with the contract by one base unit is a
 // reverted transaction rather than a rounding artifact.
 //
-// The UI fills by payment (`fillOrderPaying`): the taker names the tokenB they
-// pay, which is exactly what leaves their wallet, and the tokenA they receive
-// is derived from it, floored in the maker's favour (computeFillFromPayment).
-// The receive-driven pair, quoteFill / computeFillFromReceive, mirrors
-// `fillOrder`, where the payment is derived instead and ceiled.
+// The UI fills by payment (`fillOrder`): the taker names the tokenB they pay,
+// which is exactly what leaves their wallet, and the tokenA they receive is
+// derived from it, floored in the maker's favour (computeFillFromPayment). That
+// derived receive is also sent as the fill's `minAmountA`, so it has to agree
+// with the chain to the base unit. The receive-driven pair, quoteFill /
+// computeFillFromReceive, mirrors `fillOrderPaying`, where the payment is
+// derived instead and ceiled.
 // ============================================================================
 
 /**
  * The tokenB payment for taking `amountA` of an order's offered token.
  *
- * Mirrors `Swapboard._quoteFill`: taking the whole remainder pays exactly the
+ * Mirrors `Swapboard._quoteFillPaying`: taking the whole remainder pays exactly the
  * remaining tokenB (no rounding at all), and anything less ceils the
  * proportion. Ceiling rather than flooring is what keeps a sequence of small
  * fills from underpaying the maker.
@@ -1623,7 +1625,7 @@ function quoteFill(order, amountA) {
 /**
  * The tokenA a payment of `amountB` receives.
  *
- * Mirrors `Swapboard._quoteFillPaying`: paying the whole remainder receives
+ * Mirrors `Swapboard._quoteFill`: paying the whole remainder receives
  * exactly the remaining tokenA, and anything less floors the proportion, so
  * the taker never receives more than the escrow ratio allows.
  *
@@ -1651,7 +1653,7 @@ function computeReceiveFromFill(order, amountB) {
  *
  * @param {Object} order - Order with availableA/availableB in base units
  * @param {string|bigint} receiveAmountA - Desired amount of the offered token
- * @returns {{amountA: bigint, amountB: bigint}} Arguments for fillOrder
+ * @returns {{amountA: bigint, amountB: bigint}} Arguments for fillOrderPaying
  */
 function computeFillFromReceive(order, receiveAmountA) {
   const availableA = BigInt(order.availableA);
@@ -1671,8 +1673,8 @@ function computeFillFromReceive(order, receiveAmountA) {
  *
  * @param {Object} order - Order with availableA/availableB in base units
  * @param {string|bigint} payAmountB - Wanted token the taker pays
- * @returns {{amountA: bigint, amountB: bigint}} Receive, and the exact payment
- *   fillOrderPaying is sent with
+ * @returns {{amountA: bigint, amountB: bigint}} The receive, sent as fillOrder's
+ *   minAmountA, and the exact payment, sent as its amountB
  */
 function computeFillFromPayment(order, payAmountB) {
   const availableB = BigInt(order.availableB);

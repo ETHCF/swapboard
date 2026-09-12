@@ -331,10 +331,10 @@
   const CONTRACT_ABI_V2 = [
     "function createOrder(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed) order) external payable returns (uint256)",
     "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders) external payable returns (uint256[])",
-    "function fillOrder(uint256 orderId, uint128 amountA, uint128 minAmountB, uint256 deadline) external payable",
-    "function fillOrders(tuple(uint256 orderId, uint128 amountA, uint128 minAmountB)[] fills, uint256 deadline) external payable",
-    "function fillOrderPaying(uint256 orderId, uint128 amountB, uint128 maxAmountA, uint256 deadline) external payable",
-    "function fillOrdersPaying(tuple(uint256 orderId, uint128 amountB, uint128 maxAmountA)[] fills, uint256 deadline) external payable",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline) external payable",
+    "function fillOrderPaying(uint256 orderId, uint128 amountA, uint128 maxAmountB, uint256 deadline) external payable",
+    "function fillOrdersPaying(tuple(uint256 orderId, uint128 amountA, uint128 maxAmountB)[] fills, uint256 deadline) external payable",
     "function cancelOrder(uint256 orderId) external",
     "function cancelOrders(uint256[] orderIds) external",
     "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder) external payable",
@@ -365,7 +365,7 @@
     "error PartialFillNotAllowed(uint256 orderId)",
     "error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining)",
     "error FillAmountMismatch(uint256 orderId, uint128 quoted, uint128 minimum)",
-    "error FillReceiveTooHigh(uint256 orderId, uint128 quoted, uint128 maximum)",
+    "error FillPayTooHigh(uint256 orderId, uint128 quoted, uint128 maximum)",
     "error OrderStateMismatch(uint256 orderId, uint128 expectedAmountA, uint128 expectedAmountB, uint128 expectedAvailableA, uint128 expectedAvailableB, uint128 actualAmountA, uint128 actualAmountB, uint128 actualAvailableA, uint128 actualAvailableB)",
     "error DuplicateOrderId(uint256 orderId)",
     "error FailedCall()",
@@ -2713,24 +2713,16 @@ ${orderFields}
   //     contract refunds nothing; over or under reverts ETHAmountMismatch.
   //   * createOrders nets ETH and ERC20 orders in one call, so a mixed batch is
   //     one transaction, not one per settlement type.
-  //   * A fill is keyed on `amountB` — the payment — through fillOrderPaying,
-  //     so the taker's spend is exact: an ERC20 is pulled for exactly that much
+  //   * A fill is keyed on `amountB` — the payment — through fillOrder, so the
+  //     taker's spend is exact: an ERC20 is pulled for exactly that much
   //     whatever allowance stands, and ETH is the exact msg.value. The tokenA
-  //     out is floored on chain; lib.js computeFillFromPayment() mirrors
-  //     _quoteFillPaying. Paying the whole remainder receives exactly availableA.
+  //     out is floored on chain and must reach `minAmountA`, the receive the
+  //     modal quoted (lib.js computeFillFromPayment() mirrors _quoteFill), so a
+  //     maker repricing between quote and fill reverts it rather than shorting
+  //     it. Paying the whole remainder receives exactly availableA.
   //   * fillOrders and cancelOrders are all-or-nothing: one bad leg reverts the
   //     whole call. There is no skip-and-continue variant.
   // ============================================================================
-
-  /**
-   * The `maxAmountA` every v2 fill is sent with: no cap.
-   *
-   * fillOrderPaying takes exactly `amountB` and floors the tokenA it pays out;
-   * maxAmountA only bounds that payout from above. A taker never wants a fill
-   * to revert for receiving *more* than was quoted — a price improvement, or
-   * rounding after another partial fill — so the UI leaves it open.
-   */
-  const NO_RECEIVE_CAP = (1n << 128n) - 1n;
 
   const V2 = {
     /** @see ISwapboard.createOrder — tokenA may be the native-ETH sentinel */
@@ -2752,18 +2744,19 @@ ${orderFields}
     },
 
     /**
-     * Describes a fill paying exactly `amountB` of the wanted token.
-     * @see ISwapboard.fillOrderPaying
+     * Describes a fill paying exactly `amountB` of the wanted token, which
+     * reverts unless it pays out at least the quoted `amountA`.
+     * @see ISwapboard.fillOrder
      * @param {Object} order - Order being filled
-     * @param {bigint} amountA - Quoted receive; the contract derives the real one
+     * @param {bigint} amountA - Quoted receive, sent as minAmountA
      * @param {bigint} amountB - Exact payment
      * @param {number} deadline - Unix timestamp the fill must land by
      * @returns {{method: string, args: Array, value: bigint}}
      */
     fillCall(order, amountA, amountB, deadline) {
       return {
-        method: "fillOrderPaying",
-        args: [order.orderId, amountB, NO_RECEIVE_CAP, deadline],
+        method: "fillOrder",
+        args: [order.orderId, amountB, amountA, deadline],
         value: nativeEthTotal([{ token: order.tokenB.address, amount: amountB }]),
       };
     },
@@ -2777,10 +2770,11 @@ ${orderFields}
      * Takes every order in `orders` whole.
      *
      * Paying the full remainder is the one fill whose outcome is known without
-     * asking the chain: _quoteFillPaying pays out exactly availableA for
-     * exactly availableB, with no rounding.
+     * asking the chain: _quoteFill pays out exactly availableA for exactly
+     * availableB, with no rounding — so that is the minAmountA each leg is
+     * held to.
      *
-     * @see ISwapboard.fillOrdersPaying
+     * @see ISwapboard.fillOrders
      * @param {Object[]} orders - Orders to take, as indexed
      * @param {number} deadline - Unix timestamp the batch must land by
      */
@@ -2788,10 +2782,10 @@ ${orderFields}
       const fills = orders.map((o) => ({
         orderId: o.orderId,
         amountB: BigInt(o.availableB),
-        maxAmountA: NO_RECEIVE_CAP,
+        minAmountA: BigInt(o.availableA),
       }));
       const legs = orders.map((o) => ({ token: o.tokenB.address, amount: o.availableB }));
-      return v2Send("fillOrdersPaying", [fills, deadline], nativeEthTotal(legs));
+      return v2Send("fillOrders", [fills, deadline], nativeEthTotal(legs));
     },
 
     /** @see ISwapboard.cancelOrder — native ETH escrow is refunded as ETH */
@@ -2941,9 +2935,9 @@ ${orderFields}
    * Builds the partial-fill controls for the fill confirmation.
    *
    * The user types how much of the wanted token they will pay. v2 fills by
-   * payment (fillOrderPaying), so that figure is exactly what leaves their
-   * wallet, and what they receive is derived from it, floored as the contract
-   * floors it. Presets are percentages of what is *left* on the order, so they
+   * payment (fillOrder), so that figure is exactly what leaves their wallet,
+   * and what they receive is derived from it, floored as the contract floors
+   * it. That receive is also the minimum the fill will accept on chain. Presets are percentages of what is *left* on the order, so they
    * stay meaningful on a partly filled order.
    *
    * @param {Object} order - Order being filled
@@ -3026,7 +3020,7 @@ ${orderFields}
    *
    * Which contract call that is belongs to the connector (SB.fillCall): v1
    * routes WETH sides through its wrap/unwrap entry points, v2 fills by
-   * payment through fillOrderPaying. What stays here is the one thing both
+   * payment through fillOrder. What stays here is the one thing both
    * agree on — paying in ETH (native, or v1's WETH) rides in msg.value and
    * needs no approval.
    *
@@ -3093,8 +3087,9 @@ ${orderFields}
 
           // Submitted as-is: v2 fills by payment, so fillAmountB is exactly what
           // the taker spends — pulled exactly for an ERC20 whatever allowance
-          // stands, and the exact msg.value for ETH. The receive is derived on
-          // chain from the live order.
+          // stands, and the exact msg.value for ETH. fillAmountA, the receive
+          // quoted above, is the least the chain may pay out: a maker repricing
+          // between quote and fill reverts the fill instead of shorting it.
           showToast("Confirm fill in wallet...", "info", true);
           const tx = await SB.send(SB.fillCall(order, fillAmountA, fillAmountB, deadline));
 
@@ -3321,8 +3316,8 @@ ${orderFields}
       body.appendChild(note);
     }
 
-    // fillOrdersPaying has no skip-and-continue mode: one leg the order can no
-    // longer take as selected reverts the whole call.
+    // fillOrders has no skip-and-continue mode: one leg the order can no longer
+    // take as selected reverts the whole call.
     const atomicNote = document.createElement("div");
     atomicNote.className = "batch-summary-note";
     atomicNote.textContent =

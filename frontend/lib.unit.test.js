@@ -1888,11 +1888,11 @@ describe("decodeContractError", () => {
     });
   });
 
-  // MUTATION: Leave out the fill-by-payment bound
-  // BREAKS: a fillOrderPaying revert would report a generic failure
-  test("recognizes FillReceiveTooHigh", () => {
-    expect(decodeContractError("0x771534f7" + pad(4) + pad(9) + pad(8))).toEqual({
-      name: "FillReceiveTooHigh",
+  // MUTATION: Leave out the fill-by-receive bound
+  // BREAKS: a fillOrderPaying that would overcharge reports a generic failure
+  test("recognizes FillPayTooHigh", () => {
+    expect(decodeContractError("0x489a6af8" + pad(4) + pad(9) + pad(8))).toEqual({
+      name: "FillPayTooHigh",
       message: "Order #4 repriced while you were confirming. Refresh and try again.",
     });
   });
