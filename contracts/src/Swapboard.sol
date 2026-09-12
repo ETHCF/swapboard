@@ -22,7 +22,6 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      - Fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on inbound
 ///        tokenA deposits (`_pullExactToken`) and on ERC20 tokenB payments to the maker
 ///        (`_pullExactTokenTo` / `BalanceMismatch`). ETH tokenB uses `msg.value` then `sendValue`.
-///        See `contracts/test/security-research/` for FOT defense and remaining limitation tests.
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
 ///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
 ///        remaining amounts are packed separately so fill % is readable on-chain
@@ -31,7 +30,9 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///
 ///      Security considerations:
 ///      - Front-running is possible on `fillOrder` / `fillOrders` (inherent to on-chain orderbooks)
-///      - Rebasing tokens may cause unexpected behavior
+///      - Inbound mid-transfer rebase is rejected via `BalanceMismatch`. Post-deposit rebase of
+///        escrowed tokenA is not: a negative rebase can lock fill/cancel; a positive rebase can
+///        strand surplus
 ///      - Malicious tokens can cause fund loss - users must verify token contracts
 ///      - Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains
 ///        possible after escrow release

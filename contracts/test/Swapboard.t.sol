@@ -17,6 +17,10 @@ import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFOT} from "./mocks/MockFOT.sol";
+import {MockRebaseOnTransfer} from "./mocks/MockRebaseOnTransfer.sol";
+import {OutboundFotToken} from "./mocks/OutboundFotToken.sol";
+import {PhantomToken} from "./mocks/PhantomToken.sol";
+import {UpgradeableToken} from "./mocks/UpgradeableToken.sol";
 import {MockRevertOnZeroERC20} from "./mocks/MockRevertOnZeroERC20.sol";
 import {ETHRejecter} from "./mocks/ETHRejecter.sol";
 import {FillTestLib} from "./helpers/FillTestLib.sol";
@@ -245,6 +249,13 @@ contract SwapboardTest is Test {
         uint256 gross
     ) private pure returns (uint256) {
         return gross - (gross * 5) / 100;
+    }
+
+    /// @notice Net amount after MockRebaseOnTransfer's 5% mid-transfer rebase
+    function _rebaseOnTransferNet(
+        uint256 gross
+    ) private pure returns (uint256) {
+        return (gross * 95) / 100;
     }
 
     function _tf(
@@ -502,6 +513,32 @@ contract SwapboardTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, 100 ether, 95 ether));
         _board.createOrder(_order(address(fot), 100 ether, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests createOrder revert when tokenA rebases during transferFrom
+    function test_createOrder_revert_midTransferRebase() public {
+        MockRebaseOnTransfer rebase = new MockRebaseOnTransfer();
+        rebase.mint(_maker, 1000 ether);
+
+        vm.startPrank(_maker);
+        rebase.approve(address(_board), 100 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, 100 ether, 95 ether));
+        _board.createOrder(_order(address(rebase), 100 ether, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+    }
+
+    /// @notice Tests createOrder revert when tokenA transferFrom is a no-op (phantom)
+    function test_createOrder_revert_phantom() public {
+        PhantomToken phantom = new PhantomToken();
+        phantom.mint(_maker, 1000 ether);
+
+        vm.startPrank(_maker);
+        phantom.approve(address(_board), 100 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, 100 ether, 0));
+        _board.createOrder(_order(address(phantom), 100 ether, address(_tokenB), AMOUNT_B));
         vm.stopPrank();
     }
 
@@ -2509,6 +2546,44 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), amountA);
     }
 
+    /// @notice Tests mid-transfer rebase tokenB on an amountB-driven partial fill reverts BalanceMismatch
+    function test_fillOrderPaying_partial_midTransferRebaseTokenB_revert_balanceMismatch() public {
+        MockRebaseOnTransfer rebaseB = new MockRebaseOnTransfer();
+        uint128 amountA = 100 ether;
+        uint128 amountB = 100 ether;
+        uint128 payB = 40 ether;
+
+        rebaseB.mint(_taker, 1000 ether);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), amountA);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), amountA, address(rebaseB), amountB));
+        vm.stopPrank();
+
+        uint256 makerRebaseBefore = rebaseB.balanceOf(_maker);
+        uint256 takerABefore = _tokenA.balanceOf(_taker);
+        uint256 takerRebaseBefore = rebaseB.balanceOf(_taker);
+
+        vm.startPrank(_taker);
+        rebaseB.approve(address(_board), payB);
+        ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, payB, _rebaseOnTransferNet(payB))
+        );
+        _fillOrderPayingQuoted(orderBefore, orderId, payB);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.availableA, amountA);
+        assertEq(order.availableB, amountB);
+        assertEq(rebaseB.balanceOf(address(_board)), 0);
+        assertEq(rebaseB.balanceOf(_maker), makerRebaseBefore);
+        assertEq(rebaseB.balanceOf(_taker), takerRebaseBefore);
+        assertEq(_tokenA.balanceOf(_taker), takerABefore);
+        assertEq(_tokenA.balanceOf(address(_board)), amountA);
+    }
+
     /// @notice Tests FOT tokenB on an amountB-driven full fill reverts BalanceMismatch
     function test_fillOrderPaying_fotTokenB_revert_balanceMismatch() public {
         MockFOT fotB = new MockFOT();
@@ -2532,6 +2607,34 @@ contract SwapboardTest is Test {
         assertEq(order.availableA, AMOUNT_A);
         assertEq(order.availableB, AMOUNT_B);
         assertEq(fotB.balanceOf(address(_board)), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
+    }
+
+    /// @notice Tests mid-transfer rebase tokenB on an amountB-driven full fill reverts BalanceMismatch
+    function test_fillOrderPaying_midTransferRebaseTokenB_revert_balanceMismatch() public {
+        MockRebaseOnTransfer rebaseB = new MockRebaseOnTransfer();
+        rebaseB.mint(_taker, 1000 ether);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(rebaseB), AMOUNT_B));
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        rebaseB.approve(address(_board), AMOUNT_B);
+        ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_B, _rebaseOnTransferNet(AMOUNT_B))
+        );
+        _fillOrderPayingQuoted(orderBefore, orderId, AMOUNT_B);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertTrue(order.active);
+        assertEq(order.availableA, AMOUNT_A);
+        assertEq(order.availableB, AMOUNT_B);
+        assertEq(rebaseB.balanceOf(address(_board)), 0);
         assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
     }
 
@@ -3246,6 +3349,43 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A * 2);
     }
 
+    /// @notice Tests the aggregated mid-transfer rebase tokenB pull on fillOrdersPaying reverts BalanceMismatch
+    function test_fillOrdersPaying_midTransferRebaseTokenB_revert_balanceMismatch() public {
+        MockRebaseOnTransfer rebaseB = new MockRebaseOnTransfer();
+        rebaseB.mint(_taker, 1000 ether);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), AMOUNT_A, address(rebaseB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), AMOUNT_A, address(rebaseB), AMOUNT_B);
+        uint256[] memory ids = _board.createOrders(orders);
+        vm.stopPrank();
+
+        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
+        fills[0] = FillTestLib.fillPayingParams(_board.getOrder(ids[0]), ids[0], AMOUNT_B);
+        fills[1] = FillTestLib.fillPayingParams(_board.getOrder(ids[1]), ids[1], AMOUNT_B);
+
+        uint256 expectedBIn = uint256(AMOUNT_B) * 2;
+
+        vm.startPrank(_taker);
+        rebaseB.approve(address(_board), expectedBIn);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.BalanceMismatch.selector, expectedBIn, _rebaseOnTransferNet(expectedBIn)
+            )
+        );
+        _board.fillOrdersPaying(fills, 0);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(ids[0]));
+        assertTrue(_board.canFill(ids[1]));
+        assertEq(_board.getOrder(ids[0]).availableA, AMOUNT_A);
+        assertEq(_board.getOrder(ids[1]).availableA, AMOUNT_A);
+        assertEq(rebaseB.balanceOf(address(_board)), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A * 2);
+    }
+
     /// @notice Tests fillOrdersPaying succeeds when a leg's quoted payment is below maxAmountB
     function test_fillOrdersPaying_maxAmountB_acceptsLowerQuotedPayment() public {
         uint256 orderId = _createOrderAsMaker(_orderPartial(address(_tokenA), 10, address(_tokenB), 100));
@@ -3852,6 +3992,48 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), amountA);
     }
 
+    /// @notice Tests mid-transfer rebase tokenB on a partial fill reverts BalanceMismatch; order unchanged
+    function test_fillOrder_partial_midTransferRebaseTokenB_revert_balanceMismatch() public {
+        MockRebaseOnTransfer rebaseB = new MockRebaseOnTransfer();
+        uint128 amountA = 100 ether;
+        uint128 amountB = 100 ether;
+        uint128 fillA = 40 ether;
+        uint256 expectedBIn = (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+
+        rebaseB.mint(_taker, 1000 ether);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), amountA);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), amountA, address(rebaseB), amountB));
+        vm.stopPrank();
+
+        uint256 makerRebaseBefore = rebaseB.balanceOf(_maker);
+        uint256 takerABefore = _tokenA.balanceOf(_taker);
+        uint256 takerRebaseBefore = rebaseB.balanceOf(_taker);
+
+        vm.startPrank(_taker);
+        rebaseB.approve(address(_board), expectedBIn);
+        ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.BalanceMismatch.selector, expectedBIn, _rebaseOnTransferNet(expectedBIn)
+            )
+        );
+        _fillOrderQuoted(orderBefore, orderId, fillA);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertTrue(order.active);
+        assertEq(order.availableA, amountA);
+        assertEq(order.availableB, amountB);
+        assertEq(rebaseB.balanceOf(address(_board)), 0);
+        assertEq(rebaseB.balanceOf(_maker), makerRebaseBefore);
+        assertEq(rebaseB.balanceOf(_taker), takerRebaseBefore);
+        assertEq(_tokenA.balanceOf(_taker), takerABefore);
+        assertEq(_tokenA.balanceOf(address(_board)), amountA);
+    }
+
     /// @notice Tests FOT tokenB on a full fill reverts BalanceMismatch; order unchanged
     function test_fillOrder_fotTokenB_revert_balanceMismatch() public {
         MockFOT fotB = new MockFOT();
@@ -3876,6 +4058,108 @@ contract SwapboardTest is Test {
         assertEq(order.availableB, AMOUNT_B);
         assertEq(fotB.balanceOf(address(_board)), 0);
         assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
+    }
+
+    /// @notice Tests mid-transfer rebase tokenB on a full fill reverts BalanceMismatch; order unchanged
+    function test_fillOrder_midTransferRebaseTokenB_revert_balanceMismatch() public {
+        MockRebaseOnTransfer rebaseB = new MockRebaseOnTransfer();
+        rebaseB.mint(_taker, 1000 ether);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(rebaseB), AMOUNT_B));
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        rebaseB.approve(address(_board), AMOUNT_B);
+        ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_B, _rebaseOnTransferNet(AMOUNT_B))
+        );
+        _fillOrderQuoted(orderBefore, orderId, AMOUNT_A);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertTrue(order.active);
+        assertEq(order.availableA, AMOUNT_A);
+        assertEq(order.availableB, AMOUNT_B);
+        assertEq(rebaseB.balanceOf(address(_board)), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
+    }
+
+    /// @notice Tests phantom tokenB fill reverts BalanceMismatch (received 0)
+    function test_fillOrder_phantomTokenB_revert_balanceMismatch() public {
+        PhantomToken phantomB = new PhantomToken();
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(phantomB), AMOUNT_B));
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        phantomB.approve(address(_board), type(uint256).max);
+        ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_B, 0));
+        _fillOrderQuoted(orderBefore, orderId, AMOUNT_A);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenA.balanceOf(_taker), AMOUNT_A * 10);
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
+        assertEq(phantomB.balanceOf(_maker), 0);
+        assertEq(phantomB.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Tests upgradeable tokenB that becomes FOT is rejected on fill pull
+    function test_fillOrder_upgradeableTokenB_becomesFOT_revert_balanceMismatch() public {
+        UpgradeableToken upgradeableB = new UpgradeableToken();
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(upgradeableB), AMOUNT_B));
+        vm.stopPrank();
+
+        upgradeableB.setFeeOnTransfer(true);
+        upgradeableB.mint(_taker, AMOUNT_B * 2);
+
+        vm.startPrank(_taker);
+        upgradeableB.approve(address(_board), AMOUNT_B);
+        ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_B, _fotNet(AMOUNT_B)));
+        _fillOrderQuoted(orderBefore, orderId, AMOUNT_A);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenA.balanceOf(_taker), AMOUNT_A * 10);
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
+        assertEq(upgradeableB.balanceOf(_maker), 0);
+        assertEq(upgradeableB.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Tests outbound-only FOT tokenB: transferFrom is exact, so the maker receives full amountB
+    function test_fillOrder_outboundFotTokenB_makerReceivesFull() public {
+        OutboundFotToken fotB = new OutboundFotToken();
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(fotB), AMOUNT_B));
+        vm.stopPrank();
+
+        fotB.mint(_taker, AMOUNT_B);
+
+        vm.startPrank(_taker);
+        fotB.approve(address(_board), AMOUNT_B);
+        _fillOrder(orderId, AMOUNT_A);
+        vm.stopPrank();
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertFalse(order.active);
+        assertEq(order.availableA, 0);
+        assertEq(_tokenA.balanceOf(_taker), AMOUNT_A * 10 + AMOUNT_A);
+        assertEq(_tokenA.balanceOf(address(_board)), 0);
+        assertEq(fotB.balanceOf(_maker), AMOUNT_B);
+        assertEq(fotB.balanceOf(address(_board)), 0);
     }
 
     /// @notice Tests aggregated FOT tokenB pull on fillOrders reverts BalanceMismatch
@@ -3908,6 +4192,43 @@ contract SwapboardTest is Test {
         assertEq(_board.getOrder(ids[0]).availableA, AMOUNT_A);
         assertEq(_board.getOrder(ids[1]).availableA, AMOUNT_A);
         assertEq(fotB.balanceOf(address(_board)), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A * 2);
+    }
+
+    /// @notice Tests aggregated mid-transfer rebase tokenB pull on fillOrders reverts BalanceMismatch
+    function test_fillOrders_midTransferRebaseTokenB_revert_balanceMismatch() public {
+        MockRebaseOnTransfer rebaseB = new MockRebaseOnTransfer();
+        rebaseB.mint(_taker, 1000 ether);
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A * 2);
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(_tokenA), AMOUNT_A, address(rebaseB), AMOUNT_B);
+        orders[1] = _order(address(_tokenA), AMOUNT_A, address(rebaseB), AMOUNT_B);
+        uint256[] memory ids = _board.createOrders(orders);
+        vm.stopPrank();
+
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
+        fills[0] = FillTestLib.fillParams(_board.getOrder(ids[0]), ids[0], AMOUNT_A);
+        fills[1] = FillTestLib.fillParams(_board.getOrder(ids[1]), ids[1], AMOUNT_A);
+
+        uint256 expectedBIn = uint256(AMOUNT_B) * 2;
+
+        vm.startPrank(_taker);
+        rebaseB.approve(address(_board), expectedBIn);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISwapboard.BalanceMismatch.selector, expectedBIn, _rebaseOnTransferNet(expectedBIn)
+            )
+        );
+        _board.fillOrders(fills, 0);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(ids[0]));
+        assertTrue(_board.canFill(ids[1]));
+        assertEq(_board.getOrder(ids[0]).availableA, AMOUNT_A);
+        assertEq(_board.getOrder(ids[1]).availableA, AMOUNT_A);
+        assertEq(rebaseB.balanceOf(address(_board)), 0);
         assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A * 2);
     }
 
@@ -4371,6 +4692,25 @@ contract SwapboardTest is Test {
 
         assertEq(fot.balanceOf(address(_board)), 0);
         assertEq(fot.balanceOf(_maker), 100 ether);
+    }
+
+    /// @notice Tests aggregated mid-transfer rebase pull rejects the combined amount
+    function test_createOrders_revert_midTransferRebaseAggregated() public {
+        MockRebaseOnTransfer rebase = new MockRebaseOnTransfer();
+        rebase.mint(_maker, 100 ether);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(rebase), 40 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(rebase), 60 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        rebase.approve(address(_board), 100 ether);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, 100 ether, 95 ether));
+        _board.createOrders(orders);
+        vm.stopPrank();
+
+        assertEq(rebase.balanceOf(address(_board)), 0);
+        assertEq(rebase.balanceOf(_maker), 100 ether);
     }
 
     /// @notice Tests createOrders emits OrderCreated for each order
@@ -6423,6 +6763,31 @@ contract SwapboardTest is Test {
         assertEq(fot.balanceOf(address(_board)), 100 ether);
     }
 
+    /// @notice Tests modifyOrder top-up rejects mid-transfer rebase tokenA via BalanceMismatch
+    function test_modifyOrder_revert_midTransferRebase_topUp() public {
+        MockRebaseOnTransfer rebase = new MockRebaseOnTransfer();
+        rebase.setRebaseOnTransfer(false);
+        rebase.mint(_maker, 1000 ether);
+
+        vm.startPrank(_maker);
+        rebase.approve(address(_board), type(uint256).max);
+        uint256 orderId = _board.createOrder(_order(address(rebase), 100 ether, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        vm.stopPrank();
+
+        rebase.setRebaseOnTransfer(true);
+
+        uint256 boardBefore = rebase.balanceOf(address(_board));
+        uint256 expectedReceived = ((boardBefore + 50 ether) * 95) / 100 - boardBefore;
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, 50 ether, expectedReceived));
+        _board.modifyOrder(orderId, _amounts(snapshot), _modify(150 ether, AMOUNT_B));
+
+        assertEq(_board.getOrder(orderId).availableA, 100 ether);
+        assertEq(rebase.balanceOf(address(_board)), 100 ether);
+    }
+
     /// @notice Tests fillOrder still works after modify changes remaining size and price
     function test_modifyOrder_thenFill() public {
         vm.startPrank(_maker);
@@ -8120,6 +8485,40 @@ contract SwapboardTest is Test {
         assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
         assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
         assertEq(fot.balanceOf(address(_board)), 50 ether);
+    }
+
+    /// @notice Tests mid-transfer rebase tokenA rejects the netted pull amount (not the gross top-up)
+    function test_modifyOrders_revert_midTransferRebase_nettedTopUp() public {
+        MockRebaseOnTransfer rebase = new MockRebaseOnTransfer();
+        rebase.setRebaseOnTransfer(false);
+        rebase.mint(_maker, 1000 ether);
+
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(rebase), 10 ether, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(rebase), 40 ether, address(_tokenB), AMOUNT_B);
+
+        vm.startPrank(_maker);
+        rebase.approve(address(_board), type(uint256).max);
+        uint256[] memory ids = _board.createOrders(orders);
+        vm.stopPrank();
+
+        rebase.setRebaseOnTransfer(true);
+
+        // +20 / -10 => net pull 10; rebase also scales existing escrow, so received < 95% of 10
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = _modItem(ids[0], _board.getOrder(ids[0]), 30 ether, AMOUNT_B);
+        mods[1] = _modItem(ids[1], _board.getOrder(ids[1]), 30 ether, AMOUNT_B);
+
+        uint256 boardBefore = rebase.balanceOf(address(_board));
+        uint256 expectedReceived = ((boardBefore + 10 ether) * 95) / 100 - boardBefore;
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, 10 ether, expectedReceived));
+        _board.modifyOrders(mods);
+
+        assertEq(_board.getOrder(ids[0]).availableA, 10 ether);
+        assertEq(_board.getOrder(ids[1]).availableA, 40 ether);
+        assertEq(rebase.balanceOf(address(_board)), 50 ether);
     }
 
     /// @notice Tests ERC20-only batch reverts when msg.value is non-zero

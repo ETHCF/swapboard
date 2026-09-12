@@ -3,12 +3,10 @@ pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
-import {MockERC20} from "../../mocks/MockERC20.sol";
+import {MockERC20} from "./MockERC20.sol";
 
 /// @title OutboundFotToken
 /// @notice Exact `transferFrom` (no fee); 5% fee only on `transfer`
-/// @dev Used to show that ERC20 tokenB maker payment is defended (direct `transferFrom` to maker)
-///      while outbound-only FOT on tokenA payout to the taker remains an accepted limitation.
 contract OutboundFotToken is MockERC20 {
     uint256 private _feePercent = 5;
 
