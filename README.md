@@ -135,7 +135,8 @@ After IPFS deployment, update ENS contenthash via the ENS manager UI to `ipfs://
 The Swapboard contract allows:
 
 - **createOrder**: Deposit tokenA, specify tokenB amount wanted
-- **fillOrder**: Pay tokenB, receive tokenA
+- **fillOrder** / **fillOrders**: Send exact tokenB (`amountB`), with `minAmountA`
+- **fillOrderPaying** / **fillOrdersPaying**: Receive exact tokenA (`amountA`), with `maxAmountB`
 - **modifyOrder** / **modifyOrders**: Maker updates remaining liquidity (cannot set remaining to 0 — cancel instead)
 - **setPartialFillAllowed**: Maker enables or disables partial fills (amounts unchanged)
 - **cancelOrder**: Maker reclaims tokenA
