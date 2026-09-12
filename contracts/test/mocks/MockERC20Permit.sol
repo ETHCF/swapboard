@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
+// solhint-disable gas-small-strings
 
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {MockERC20} from "./MockERC20.sol";
@@ -59,11 +60,13 @@ contract MockERC20Permit is MockERC20, IERC20Permit {
             revert PermitExpired();
         }
 
+        uint256 nonce = _nonces[owner];
+        ++_nonces[owner];
         bytes32 digest = keccak256(
             abi.encodePacked(
                 "\x19\x01",
                 DOMAIN_SEPARATOR(),
-                keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, _nonces[owner]++, deadline))
+                keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonce, deadline))
             )
         );
         // Mock permit: EIP-2612 does not require s-malleability checks.
