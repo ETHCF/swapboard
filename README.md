@@ -10,11 +10,15 @@ No admin. No fees. No upgrades. No keys. No backend.
 
 ```
 contracts/     Solidity smart contract (Foundry)
-subgraph/      The Graph indexer
+subgraph/v1/   The Graph indexer for the deployed v1 contract
+subgraph/v2/   The Graph indexer for the v2 contract, consumed by the v2 UI
 frontend/      Static HTML/CSS/JS
-e2e/           Full stack integration tests
+e2e/           Full stack integration tests (still on the v1 pipeline)
 docs/          API documentation
 ```
+
+Subgraph targets are versioned per contract release. `make` and `test.sh` build and
+test `subgraph/v2` by default; pass `SUBGRAPH=v1` to work on the v1 indexer instead.
 
 ## Quick Start
 
@@ -54,7 +58,8 @@ make lint
 ./test.sh --all
 
 # Make targets
-make test            # contract + subgraph tests
+make test            # contract + subgraph tests (v2 subgraph)
+SUBGRAPH=v1 make test # same, against the v1 subgraph
 make test-contracts  # Foundry tests only
 make test-e2e        # full Docker e2e (setup + test + teardown)
 ```
@@ -107,7 +112,7 @@ cp .env.example .env
 The script will:
 
 1. Deploy the contract and verify on Etherscan
-2. Update subgraph config with contract address and start block
+2. Update subgraph config with contract address and start block (`SUBGRAPH_VERSION`, default `v2`)
 3. Build and deploy subgraph to The Graph Studio
 4. Update frontend config with contract address and subgraph URL
 5. Upload frontend to IPFS (if ipfs CLI available)

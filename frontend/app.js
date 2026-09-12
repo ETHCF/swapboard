@@ -10,7 +10,8 @@
  * - The Graph subgraph for order indexing
  *
  * Configuration:
- * - Update CONFIG.CONTRACT_ADDRESS and CONFIG.SUBGRAPH_URL before deployment
+ * - Update the active version's contractAddress/subgraphUrl in VERSION_CAPS
+ *   (lib.js) before deployment; deploy.sh patches them in place
  * - Local development skips config validation (localhost/file://)
  */
 
@@ -47,6 +48,7 @@
     SUPPORTED_VERSIONS,
     resolveVersion,
     capsFor,
+    deploymentFor,
     orderQueryFields,
     normalizeOrder,
     offersEthDirectly,
@@ -65,7 +67,10 @@
   // Configuration
   // ============================================================================
 
-  // CONFIG and EXPECTED_CHAIN_ID come from lib.js, which is what deploy.sh patches.
+  // CONFIG and EXPECTED_CHAIN_ID come from lib.js. The per-version deployment
+  // coordinates live there too, on VERSION_CAPS, and are what deploy.sh patches;
+  // they are resolved to CONTRACT_ADDRESS / SUBGRAPH_URL below, once the active
+  // version is known.
   const EXPECTED_CHAIN = {
     chainId: "0x1",
     chainName: "Ethereum",
@@ -108,6 +113,15 @@
    * @type {Object}
    */
   const CAPS = capsFor(ACTIVE_VERSION);
+
+  /**
+   * Contract and subgraph the active version talks to.
+   *
+   * Resolved once, here, rather than read off CONFIG: v1 and v2 have different
+   * deployments, and reaching for a single global would silently point one
+   * version at the other's contract.
+   */
+  const { CONTRACT_ADDRESS, SUBGRAPH_URL } = deploymentFor(ACTIVE_VERSION);
 
   /**
    * Switches protocol version.
@@ -248,12 +262,21 @@
       return;
     }
 
-    const { valid, errors } = Lib.validateConfig(CONFIG, false);
+    // A version that is not live yet has nothing deployed to point at, so its
+    // placeholder coordinates are the expected state rather than a misconfiguration.
+    if (!CAPS.live) {
+      console.warn("Preview version " + CAPS.label + ": skipping deployment validation");
+      return;
+    }
+
+    const { valid, errors } = Lib.validateConfig(deploymentFor(ACTIVE_VERSION), false);
     if (!valid) {
       const msg =
         "Configuration error: " +
         errors.join(", ") +
-        ". Update CONFIG in lib.js before deployment.";
+        ". Update VERSION_CAPS[" +
+        ACTIVE_VERSION +
+        "] in lib.js before deployment.";
       console.error(msg);
       document.body.innerHTML =
         '<div style="color:red;padding:20px;font-family:monospace;">' + msg + "</div>";
@@ -1588,7 +1611,7 @@
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT);
     try {
-      const res = await fetch(CONFIG.SUBGRAPH_URL, {
+      const res = await fetch(SUBGRAPH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query, variables }),
@@ -2684,7 +2707,7 @@
       logV2Call("ERC20.allowance", { token: tokenAddress, owner: userAddress });
       const tx = await v2Send("ERC20.approve", {
         token: tokenAddress,
-        spender: CONFIG.CONTRACT_ADDRESS,
+        spender: CONTRACT_ADDRESS,
         amount: total.toString(),
       });
       await tx.wait();
@@ -2708,7 +2731,7 @@
   // V1 CONNECTOR — LIVE CONTRACTS
   // ============================================================================
   //
-  // Swapboard v1 at CONFIG.CONTRACT_ADDRESS is deployed, immutable, and holds
+  // Swapboard v1 at CONTRACT_ADDRESS is deployed, immutable, and holds
   // real funds. Every method here submits a real transaction.
   //
   // The surface deliberately matches the V2 connector above so the call sites
@@ -2790,11 +2813,11 @@
      */
     async ensureAllowance(tokenAddress, total) {
       const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
-      const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+      const allowance = await tokenContract.allowance(userAddress, CONTRACT_ADDRESS);
       if (allowance >= BigInt(total)) return false;
 
       showToast("Approve tokens in wallet...", "info", true);
-      const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, total);
+      const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, total);
       showToast("Waiting for approval tx...", "info", true);
       await approveTx.wait();
       showToast("Approval confirmed");
@@ -2816,7 +2839,7 @@
       try {
         const txParams = {
           from: userAddress,
-          to: CONFIG.CONTRACT_ADDRESS,
+          to: CONTRACT_ADDRESS,
           data: contract.interface.encodeFunctionData(method, args),
         };
         if (value !== undefined && value !== null) txParams.value = BigInt(value);
@@ -4138,7 +4161,7 @@
       const network = await provider.getNetwork();
       updateNetworkIndicator(Number(network.chainId));
 
-      contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+      contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
       if (!cachedWethAddress) {
         try {
@@ -4308,7 +4331,7 @@
     for (const [address, token] of tokenMap) {
       try {
         const tokenContract = new ethers.Contract(address, ERC20_ABI, provider);
-        const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+        const allowance = await tokenContract.allowance(userAddress, CONTRACT_ADDRESS);
         if (allowance > 0n) {
           approvals.push({ address, symbol: token.symbol, decimals: token.decimals, allowance });
         }
@@ -4353,7 +4376,7 @@
     try {
       showToast("Revoking approval for " + tokenSymbol + "...", "info", true);
       const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
-      const tx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, 0);
+      const tx = await tokenContract.approve(CONTRACT_ADDRESS, 0);
       showToast("Waiting for confirmation...", "info", true);
       await tx.wait();
       showToast("Revoked approval for " + tokenSymbol, "success");
@@ -4528,8 +4551,7 @@
     initTheme();
 
     // Populate contract link
-    $("#contract-link").href =
-      EXPECTED_CHAIN.blockExplorerUrls[0] + "/address/" + CONFIG.CONTRACT_ADDRESS;
+    $("#contract-link").href = EXPECTED_CHAIN.blockExplorerUrls[0] + "/address/" + CONTRACT_ADDRESS;
 
     // Resolve build info if deploy.sh placeholders are unreplaced
     resolveBuildInfo();
@@ -4999,7 +5021,7 @@
 
             const network = await provider.getNetwork();
             updateNetworkIndicator(Number(network.chainId));
-            contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+            contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
             if (!cachedWethAddress) {
               try {
