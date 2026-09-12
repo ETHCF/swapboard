@@ -203,9 +203,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 deadline,
         Permit calldata permit
     ) external payable nonReentrant {
-        FillQuote memory quote = _beginFill(orderId, amountB, minAmountA, deadline);
-        _permit(quote.tokenB, permit);
-        _settleFillQuote(quote);
+        _permitAndSettleFill(_beginFill(orderId, amountB, minAmountA, deadline), permit);
     }
 
     /// @inheritdoc ISwapboard
@@ -249,9 +247,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 deadline,
         Permit calldata permit
     ) external payable nonReentrant {
-        FillQuote memory quote = _beginFillPaying(orderId, amountA, maxAmountB, deadline);
-        _permit(quote.tokenB, permit);
-        _settleFillQuote(quote);
+        _permitAndSettleFill(_beginFillPaying(orderId, amountA, maxAmountB, deadline), permit);
     }
 
     /// @inheritdoc ISwapboard
@@ -536,6 +532,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = orders.length;
         if (length == 0) {
             revert ZeroAmount();
+        }
+        if (length == 1) {
+            uint256[] memory orderIds = new uint256[](1);
+            orderIds[0] = _createOrder(orders[0]);
+            return orderIds;
         }
 
         AggregatedAmounts memory deposits = _aggregateDepositAssets(orders);
@@ -1121,6 +1122,17 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return legs;
     }
 
+    /// @notice Permits tokenB then pays maker tokenB and taker tokenA
+    /// @param quote Settled fill quote
+    /// @param permit EIP-2612 payload for `quote.tokenB` (`v == 0` skips)
+    function _permitAndSettleFill(
+        FillQuote memory quote,
+        Permit calldata permit
+    ) private {
+        _permit(quote.tokenB, permit);
+        _settleFillQuote(quote);
+    }
+
     /// @notice Pays maker tokenB and taker tokenA for a single settled fill quote
     /// @dev ERC20 tokenB goes taker → maker directly; ETH tokenB uses msg.value then sendValue.
     /// @param quote Settled fill quote
@@ -1633,24 +1645,30 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Applies an EIP-2612 permit for `token` from `msg.sender` to this contract
-    /// @dev `v == 0` is a no-op. Native ETH with `v != 0` reverts `PermitOnNative`.
+    /// @dev `v == 0` is a no-op (other fields are not read). Native ETH with `v != 0` reverts
+    ///      `PermitOnNative`.
     /// @param token Token to permit
     /// @param permit Signature payload
     function _permit(
         address token,
         Permit calldata permit
     ) private {
-        _permit(token, permit.value, permit.deadline, permit.v, permit.r, permit.s);
+        uint8 v = permit.v;
+        if (v == 0) {
+            return;
+        }
+
+        _callPermit(token, permit.value, permit.deadline, v, permit.r, permit.s);
     }
 
-    /// @notice Applies an EIP-2612 permit for `token` from `msg.sender` to this contract
+    /// @notice Calls token `permit` after native-ETH check. Caller must ensure `v != 0`.
     /// @param token Token to permit
     /// @param value Signed allowance
     /// @param deadline Permit deadline
-    /// @param v Signature v (`0` skips)
+    /// @param v Signature v
     /// @param r Signature r
     /// @param s Signature s
-    function _permit(
+    function _callPermit(
         address token,
         uint256 value,
         uint256 deadline,
@@ -1658,10 +1676,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         bytes32 r,
         bytes32 s
     ) private {
-        if (v == 0) {
-            return;
-        }
-
         if (Token.wrap(token).isNative()) {
             revert PermitOnNative();
         }
@@ -1681,7 +1695,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (token == address(0)) {
                 revert ZeroAddress();
             }
-            if (p.v == 0) {
+            uint8 v = p.v;
+            if (v == 0) {
                 revert InvalidPermit();
             }
 
@@ -1691,7 +1706,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 }
             }
 
-            _permit(token, p.value, p.deadline, p.v, p.r, p.s);
+            _callPermit(token, p.value, p.deadline, v, p.r, p.s);
         }
     }
 
