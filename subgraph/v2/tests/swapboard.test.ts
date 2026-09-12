@@ -431,16 +431,20 @@ describe("handleOrderFilled", () => {
     assert.entityCount("Fill", 2);
   });
 
-  test("closes the order when tokenB is exhausted but tokenA dust remains", () => {
+  test("closes with nothing left when the final fill sweeps rounded-off tokenA", () => {
     createPartialFillOrder();
-    // Ceiled tokenB payment consumes the whole tokenB side while tokenA dust is left behind.
-    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, REST_A, FIVE_HUNDRED_B, 1));
+    // fillOrderPaying for 1 wei of tokenA ceils the tokenB payment up to 1 unit.
+    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, "1", "1", 1));
+    // Paying the rest of tokenB sweeps every remaining tokenA, so no dust is left in escrow.
+    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, "999999999999999999999", "499999999", 2));
 
     assert.fieldEquals("Order", "1", "status", "FILLED");
     assert.fieldEquals("Order", "1", "active", "false");
+    assert.fieldEquals("Order", "1", "availableA", "0");
     assert.fieldEquals("Order", "1", "availableB", "0");
-    assert.fieldEquals("Order", "1", "availableA", QUARTER_A);
-    assert.fieldEquals("Order", "1", "filledFraction", "0.75");
+    assert.fieldEquals("Order", "1", "filledA", THOUSAND_A);
+    assert.fieldEquals("Order", "1", "filledB", FIVE_HUNDRED_B);
+    assert.fieldEquals("Order", "1", "filledFraction", "1");
   });
 
   test("records a Fill per event", () => {

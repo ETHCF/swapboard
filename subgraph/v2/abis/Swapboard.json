@@ -151,12 +151,40 @@
         "internalType": "uint256"
       },
       {
+        "name": "amountB",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "minAmountA",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "fillOrderPaying",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "amountA",
         "type": "uint128",
         "internalType": "uint128"
       },
       {
-        "name": "minAmountB",
+        "name": "maxAmountB",
         "type": "uint128",
         "internalType": "uint128"
       },
@@ -184,12 +212,47 @@
             "internalType": "uint256"
           },
           {
+            "name": "amountB",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "minAmountA",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "fillOrdersPaying",
+    "inputs": [
+      {
+        "name": "fills",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.FillOrderPayingParams[]",
+        "components": [
+          {
+            "name": "orderId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "amountA",
             "type": "uint128",
             "internalType": "uint128"
           },
           {
-            "name": "minAmountB",
+            "name": "maxAmountB",
             "type": "uint128",
             "internalType": "uint128"
           }
@@ -741,6 +804,27 @@
       },
       {
         "name": "remaining",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FillPayTooHigh",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quoted",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "maximum",
         "type": "uint128",
         "internalType": "uint128"
       }

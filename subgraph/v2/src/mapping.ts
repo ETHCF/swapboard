@@ -138,8 +138,9 @@ export function handleOrderCreated(event: OrderCreated): void {
  * Handles OrderFilled: records the fill and, when the order runs out of tokenA or
  * tokenB, takes it off the board.
  *
- * The contract closes an order as soon as either side is exhausted, so tokenA dust
- * left on a closed order is expected and stays visible in `availableA`.
+ * `fillOrder` and `fillOrderPaying` both emit OrderFilled with the amounts actually
+ * moved. A fill that exhausts tokenB also sweeps the remaining tokenA, so in practice
+ * both sides reach zero together; checking either side keeps the close robust.
  */
 export function handleOrderFilled(event: OrderFilled): void {
   let id = event.params.orderId.toString();
