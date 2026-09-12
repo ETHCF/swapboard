@@ -56,8 +56,10 @@ const {
   isSamePair,
   canSelectOrder,
   getShiftRangeIds,
+  quoteFill,
   computeReceiveFromFill,
   computeFillFromReceive,
+  allowsPartialFill,
   summarizeFillBatch,
   VERSION_STORAGE_KEY,
   DEFAULT_VERSION,
@@ -67,8 +69,13 @@ const {
   resolveVersion,
   capsFor,
   deploymentFor,
-  orderQueryFields,
+  ORDER_STATUS,
+  orderQuerySelection,
+  statusFilterCondition,
   normalizeOrder,
+  statsQuerySelection,
+  normalizeStats,
+  popularPairsQuery,
   offersEthDirectly,
 } = require("./lib");
 
@@ -967,8 +974,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "1000000000000000000", // 1 token
-      amountB: "2500000000000000000", // 2.5 tokens
+      availableA: "1000000000000000000", // 1 token
+      availableB: "2500000000000000000", // 2.5 tokens
     };
     const result = calculateMarketDeviation(order, mockGetPrice);
     expect(result.deviation).toBeCloseTo(25, 0);
@@ -982,8 +989,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "1000000000000000000",
-      amountB: "1500000000000000000",
+      availableA: "1000000000000000000",
+      availableB: "1500000000000000000",
     };
     const result = calculateMarketDeviation(order, mockGetPrice);
     expect(result.deviation).toBeCloseTo(-25, 0);
@@ -996,8 +1003,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "1000000000000000000",
-      amountB: "2000000000000000000", // Exact market rate
+      availableA: "1000000000000000000",
+      availableB: "2000000000000000000", // Exact market rate
     };
     const result = calculateMarketDeviation(order, mockGetPrice);
     expect(result.label).toBe("~market");
@@ -1009,8 +1016,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xunknown", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "1000000000000000000",
-      amountB: "2000000000000000000",
+      availableA: "1000000000000000000",
+      availableB: "2000000000000000000",
     };
     expect(calculateMarketDeviation(order, mockGetPrice)).toBe(null);
   });
@@ -1021,8 +1028,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_zero", decimals: 18 },
-      amountA: "1000000000000000000",
-      amountB: "2000000000000000000",
+      availableA: "1000000000000000000",
+      availableB: "2000000000000000000",
     };
     expect(calculateMarketDeviation(order, mockGetPrice)).toBe(null);
   });
@@ -1033,8 +1040,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "0",
-      amountB: "2000000000000000000",
+      availableA: "0",
+      availableB: "2000000000000000000",
     };
     expect(calculateMarketDeviation(order, mockGetPrice)).toBe(null);
   });
@@ -1045,8 +1052,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "1000000000000000000",
-      amountB: "0",
+      availableA: "1000000000000000000",
+      availableB: "0",
     };
     expect(calculateMarketDeviation(order, mockGetPrice)).toBe(null);
   });
@@ -1062,8 +1069,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "1000000000000000000",
-      amountB: "2000000000000000000",
+      availableA: "1000000000000000000",
+      availableB: "2000000000000000000",
     };
     expect(calculateMarketDeviation(order, mockGetPriceWithZeroA)).toBe(null);
   });
@@ -1077,8 +1084,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "1000000000000000000", // 1 token
-      amountB: "2012000000000000000", // 2.012 tokens = 0.6% above market
+      availableA: "1000000000000000000", // 1 token
+      availableB: "2012000000000000000", // 2.012 tokens = 0.6% above market
     };
     const result = calculateMarketDeviation(order, mockGetPrice);
     expect(result.deviation).toBeCloseTo(0.6, 1);
@@ -1093,8 +1100,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "1000000000000000000",
-      amountB: "2008000000000000000", // 2.008 tokens = 0.4% above market
+      availableA: "1000000000000000000",
+      availableB: "2008000000000000000", // 2.008 tokens = 0.4% above market
     };
     const result = calculateMarketDeviation(order, mockGetPrice);
     expect(Math.abs(result.deviation)).toBeLessThan(0.5);
@@ -1107,8 +1114,8 @@ describe("calculateMarketDeviation", () => {
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "1000000000000000000",
-      amountB: "2000000000000000000", // Exact market rate
+      availableA: "1000000000000000000",
+      availableB: "2000000000000000000", // Exact market rate
     };
     const result = calculateMarketDeviation(order, mockGetPrice);
     expect(result.deviation).toBeCloseTo(0, 1);
@@ -1117,15 +1124,15 @@ describe("calculateMarketDeviation", () => {
 
   // MUTATION: Change humanAmountB / humanAmountA to * humanAmountA
   // BREAKS: Order rate calculation would be wrong (multiplication instead of division)
-  test("calculates order rate as amountB / amountA (division not multiplication)", () => {
+  test("calculates order rate as availableB / availableA (division not multiplication)", () => {
     // Market rate = 100/50 = 2
     // With division: orderRate = 4/2 = 2 (matches market, ~market)
     // With multiplication: orderRate = 4*2 = 8 (huge deviation)
     const order = {
       tokenA: { address: "0xtoken_a", decimals: 18 },
       tokenB: { address: "0xtoken_b", decimals: 18 },
-      amountA: "2000000000000000000", // 2 tokens
-      amountB: "4000000000000000000", // 4 tokens (rate = 2)
+      availableA: "2000000000000000000", // 2 tokens
+      availableB: "4000000000000000000", // 4 tokens (rate = 2)
     };
     const result = calculateMarketDeviation(order, mockGetPrice);
     // With correct division: deviation should be ~0 (market rate is 2)
@@ -1446,27 +1453,31 @@ describe("priceRatio", () => {
 // ============================================================================
 
 describe("orderStatus", () => {
-  // MUTATION: Return "Filled" for an active order
+  // MUTATION: Return "Filled" for an open order
   // BREAKS: Open orders show as filled and fire spurious watch notifications
-  test("an active order is Open", () => {
-    expect(orderStatus({ active: true, taker: null })).toBe("Open");
+  test("an open order is Open", () => {
+    expect(orderStatus({ status: ORDER_STATUS.OPEN })).toBe("Open");
   });
 
-  // MUTATION: Check `active` only
+  // MUTATION: Fold PARTIALLY_FILLED in with FILLED
+  // BREAKS: A still-fillable order is presented as finished, and the Fill
+  // button disappears from an order that can still be filled
+  test("a partially filled order says so, and is not Filled", () => {
+    expect(orderStatus({ status: ORDER_STATUS.PARTIALLY_FILLED })).toBe("Partially Filled");
+  });
+
+  // MUTATION: Collapse the two closed states into one
   // BREAKS: Filled and cancelled orders become indistinguishable
-  test("an inactive order with a taker is Filled", () => {
-    expect(orderStatus({ active: false, taker: "0xabc" })).toBe("Filled");
+  test("the two closed states stay distinct", () => {
+    expect(orderStatus({ status: ORDER_STATUS.FILLED })).toBe("Filled");
+    expect(orderStatus({ status: ORDER_STATUS.CANCELED })).toBe("Cancelled");
   });
 
-  test("an inactive order with no taker is Cancelled", () => {
-    expect(orderStatus({ active: false, taker: null })).toBe("Cancelled");
-    expect(orderStatus({ active: false, taker: "" })).toBe("Cancelled");
-  });
-
-  // MUTATION: Test `taker` before `active`
-  // BREAKS: An active order that already has a taker recorded reads as Filled
-  test("active wins over a recorded taker", () => {
-    expect(orderStatus({ active: true, taker: "0xabc" })).toBe("Open");
+  // MUTATION: Throw or return undefined on an unrecognised status
+  // BREAKS: One unexpected enum value from a future schema blanks the column
+  test("an unknown or missing status reads as Open", () => {
+    expect(orderStatus({})).toBe("Open");
+    expect(orderStatus({ status: "SOMETHING_NEW" })).toBe("Open");
   });
 });
 
@@ -1553,35 +1564,25 @@ describe("watchOrder / unwatchOrder / isOrderWatched", () => {
   // MUTATION: Hardcode status as "Open"
   // BREAKS: Filled orders show status "Open"
   test("watchOrder stores correct status based on order state", () => {
-    watchOrder(
-      { orderId: "1", active: true, taker: null, tokenA: { symbol: "A" }, tokenB: { symbol: "B" } },
-      localStorage
-    );
+    const tokens = { tokenA: { symbol: "A" }, tokenB: { symbol: "B" } };
+
+    watchOrder(Object.assign({ orderId: "1", status: ORDER_STATUS.OPEN }, tokens), localStorage);
     expect(getWatchedOrders(localStorage)["1"].status).toBe("Open");
 
-    watchOrder(
-      {
-        orderId: "2",
-        active: false,
-        taker: "0x123",
-        tokenA: { symbol: "A" },
-        tokenB: { symbol: "B" },
-      },
-      localStorage
-    );
+    watchOrder(Object.assign({ orderId: "2", status: ORDER_STATUS.FILLED }, tokens), localStorage);
     expect(getWatchedOrders(localStorage)["2"].status).toBe("Filled");
 
     watchOrder(
-      {
-        orderId: "3",
-        active: false,
-        taker: null,
-        tokenA: { symbol: "A" },
-        tokenB: { symbol: "B" },
-      },
+      Object.assign({ orderId: "3", status: ORDER_STATUS.CANCELED }, tokens),
       localStorage
     );
     expect(getWatchedOrders(localStorage)["3"].status).toBe("Cancelled");
+
+    watchOrder(
+      Object.assign({ orderId: "4", status: ORDER_STATUS.PARTIALLY_FILLED }, tokens),
+      localStorage
+    );
+    expect(getWatchedOrders(localStorage)["4"].status).toBe("Partially Filled");
   });
 
   // MUTATION: Store only tokenA symbol
@@ -1719,7 +1720,9 @@ describe("sortOrders", () => {
       amountA: "5000000000000000000000",
       amountB: "5000000000",
     },
-  ];
+    // Untouched orders, so what is left is the whole order. The columns sort on
+    // the remainder, since that is what they display.
+  ].map((o) => Object.assign({ availableA: o.amountA, availableB: o.amountB }, o));
   const ids = (result) => result.map((o) => o.orderId);
 
   // MUTATION: Use string comparison for orderId
@@ -1839,6 +1842,46 @@ describe("decodeContractError", () => {
   test("interpolates decoded arguments into the message", () => {
     expect(decodeContractError("0xd2c02610" + pad(7)).message).toBe("Order #7 is no longer active");
     expect(decodeContractError("0x4e90badc" + pad(1234)).message).toBe("Order #1234 not found");
+  });
+
+  // MUTATION: Omit the v2 selectors from the table
+  // BREAKS: Every partial-fill failure — the most common way a v2 fill fails —
+  //         reports "Transaction failed. Please try again." and the user has no
+  //         idea the order simply moved underneath them
+  test("names the order in each v2 fill failure", () => {
+    // FillAmountTooHigh and FillAmountMismatch carry three words; only the
+    // first is used, so the trailing arguments must not shift it.
+    expect(decodeContractError("0xed38596f" + pad(7)).message).toBe(
+      "Order #7 must be filled in full"
+    );
+    expect(decodeContractError("0x535a34f0" + pad(8) + pad(500) + pad(100)).message).toBe(
+      "Order #8 has less left than you asked for. Refresh and try again."
+    );
+    expect(decodeContractError("0x19113a72" + pad(9) + pad(10) + pad(20)).message).toBe(
+      "Order #9 repriced while you were confirming. Refresh and try again."
+    );
+    expect(decodeContractError("0x54b9c511" + pad(12)).message).toBe(
+      "Order #12 appears twice in this batch"
+    );
+  });
+
+  // MUTATION: Omit the OpenZeppelin selectors
+  // BREAKS: v2 replaced v1's hand-rolled ETHTransferFailed with Address and
+  //         SafeERC20's errors, so a failed payout would decode as nothing
+  test("recognizes the library errors v2 reverts with", () => {
+    expect(decodeContractError("0xd6bda275").name).toBe("FailedCall");
+    expect(decodeContractError("0xcf479181" + pad(1) + pad(2)).name).toBe("InsufficientBalance");
+    expect(decodeContractError("0x5274afe7" + pad(0)).name).toBe("SafeERC20FailedOperation");
+    expect(decodeContractError("0x3ee5aeb5").name).toBe("ReentrancyGuardReentrantCall");
+  });
+
+  // MUTATION: Drop the v1-only selectors when adding the v2 ones
+  // BREAKS: v1 is the deployed, live version — its WETH errors would stop
+  //         decoding for every user on mainnet
+  test("still recognizes the v1-only WETH errors", () => {
+    expect(decodeContractError("0x6bdafcae").name).toBe("ZeroETH");
+    expect(decodeContractError("0xcfc02c6e").name).toBe("NotWETH");
+    expect(decodeContractError("0x1c988062").name).toBe("ETHTransferFailed");
   });
 
   // MUTATION: Omit DeadlineExpired from the table
@@ -2192,11 +2235,13 @@ const USER = "0xAAAAaaaAAAAaaAAAaAAaAaaAaaAaaAAAaaAaAAaA";
 const OTHER = "0xBBBbbbBBbbbBBBbBbbbbbBBbBbbBBBbBBbBbbBBb";
 
 function makeOrder(overrides) {
-  return Object.assign(
+  const base = Object.assign(
     {
       orderId: "1",
       maker: OTHER,
       active: true,
+      status: "OPEN",
+      partialFillAllowed: false,
       amountA: "1000",
       amountB: "2000",
       tokenA: { address: "0xAAA0000000000000000000000000000000000001", symbol: "A", decimals: 18 },
@@ -2204,6 +2249,11 @@ function makeOrder(overrides) {
     },
     overrides
   );
+  // Remaining defaults to the whole order unless a test is specifically about
+  // a part-filled one, so overriding amountA alone does not imply a fill.
+  if (base.availableA === undefined) base.availableA = base.amountA;
+  if (base.availableB === undefined) base.availableB = base.amountB;
+  return base;
 }
 
 describe("resolveSelectionMode", () => {
@@ -2354,11 +2404,52 @@ describe("getShiftRangeIds", () => {
 // V2: Partial fill math
 // ============================================================================
 
+describe("quoteFill", () => {
+  const order = { availableA: "1000", availableB: "2000" };
+
+  // MUTATION: Floor the proportion instead of ceiling it
+  // BREAKS: The taker underpays, and the contract rejects the quote
+  test("ceils a partial proportion, in the maker's favour", () => {
+    // 1 of 3 at 3:2 -> 2/3, ceiled to 1
+    expect(quoteFill({ availableA: "3", availableB: "2" }, 1n)).toBe(1n);
+    expect(quoteFill(order, 1n)).toBe(2n);
+  });
+
+  // MUTATION: Ceil the whole-remainder case too
+  // BREAKS: Taking the entire order costs one base unit more than it holds
+  test("taking the whole remainder pays exactly the remainder", () => {
+    expect(quoteFill(order, 1000n)).toBe(2000n);
+  });
+
+  // MUTATION: Let the quote scale past the remainder
+  // BREAKS: Overpayment on a request larger than the order
+  test("clamps a request larger than the order to the remainder", () => {
+    expect(quoteFill(order, 5000n)).toBe(2000n);
+  });
+
+  test("returns zero for an empty request or an exhausted order", () => {
+    expect(quoteFill(order, 0n)).toBe(0n);
+    expect(quoteFill(order, -5n)).toBe(0n);
+    expect(quoteFill({ availableA: "0", availableB: "0" }, 10n)).toBe(0n);
+    expect(quoteFill({ availableA: "1000", availableB: "0" }, 10n)).toBe(0n);
+  });
+
+  // The formula this has to match, spelled out. If Swapboard._quoteFill ever
+  // changes, this is the test that should fail first.
+  test("agrees with the contract's ceil division across the range", () => {
+    const o = { availableA: "997", availableB: "1301" };
+    for (let want = 1n; want < 997n; want += 37n) {
+      const expected = (want * 1301n + 996n) / 997n;
+      expect(quoteFill(o, want)).toBe(expected);
+    }
+  });
+});
+
 describe("computeReceiveFromFill", () => {
-  const order = { amountA: "1000", amountB: "2000" };
+  const order = { availableA: "1000", availableB: "2000" };
 
   // MUTATION: Round up instead of down
-  // BREAKS: Taker receives more than the maker priced, and the fill reverts
+  // BREAKS: Taker receives more than their budget covers, and the fill reverts
   test("rounds down in the maker's favour", () => {
     // 3 * 1000 / 2000 = 1.5 -> 1
     expect(computeReceiveFromFill(order, 3n)).toBe(1n);
@@ -2383,62 +2474,62 @@ describe("computeReceiveFromFill", () => {
   // MUTATION: Divide without guarding
   // BREAKS: Division by zero on a fully filled order
   test("returns zero when nothing is wanted", () => {
-    expect(computeReceiveFromFill({ amountA: "1000", amountB: "0" }, 100n)).toBe(0n);
+    expect(computeReceiveFromFill({ availableA: "1000", availableB: "0" }, 100n)).toBe(0n);
+  });
+
+  // MUTATION: Ceil here as well as in quoteFill
+  // BREAKS: The suggested receive amount costs more than the stated budget
+  test("never suggests a receive amount the budget cannot pay for", () => {
+    const o = { availableA: "997", availableB: "1301" };
+    for (let budget = 1n; budget < 1301n; budget += 53n) {
+      expect(quoteFill(o, computeReceiveFromFill(o, budget))).toBeLessThanOrEqual(budget);
+    }
   });
 });
 
 describe("computeFillFromReceive", () => {
-  const order = { amountA: "1000", amountB: "2000" };
+  const order = { availableA: "1000", availableB: "2000" };
 
-  test("inverts an exact proportion", () => {
-    expect(computeFillFromReceive(order, 500n)).toEqual({
-      fillAmountB: 1000n,
-      actualAmountA: 500n,
-    });
+  test("returns the pair of values a fill is submitted with", () => {
+    expect(computeFillFromReceive(order, 500n)).toEqual({ amountA: 500n, amountB: 1000n });
   });
 
   // MUTATION: Round the payment down
-  // BREAKS: Taker receives less than they asked for
-  test("rounds the payment up so the receive target is met", () => {
-    // want 1 of 1000 for 2000 -> 2 exactly; want 1 at 3:2 needs rounding up
-    const odd = { amountA: "3", amountB: "2" };
-    const result = computeFillFromReceive(odd, 1n);
-    expect(result.fillAmountB).toBe(1n);
-    expect(result.actualAmountA).toBe(1n);
+  // BREAKS: The taker underpays and the contract rejects the fill
+  test("prices the request the way the contract will", () => {
+    const odd = { availableA: "3", availableB: "2" };
+    expect(computeFillFromReceive(odd, 1n)).toEqual({ amountA: 1n, amountB: 1n });
   });
 
-  // MUTATION: Let the payment exceed the order
-  // BREAKS: Overpayment on a full fill
-  test("caps at the full order when asking for everything or more", () => {
-    expect(computeFillFromReceive(order, 1000n)).toEqual({
-      fillAmountB: 2000n,
-      actualAmountA: 1000n,
-    });
-    expect(computeFillFromReceive(order, 5000n)).toEqual({
-      fillAmountB: 2000n,
-      actualAmountA: 1000n,
-    });
+  // MUTATION: Pass the request through unclamped
+  // BREAKS: FillAmountTooHigh, on an order that shrank under an open modal
+  test("clamps a request larger than the order to what is left", () => {
+    expect(computeFillFromReceive(order, 1000n)).toEqual({ amountA: 1000n, amountB: 2000n });
+    expect(computeFillFromReceive(order, 5000n)).toEqual({ amountA: 1000n, amountB: 2000n });
   });
 
   test("returns zero for a zero or negative request", () => {
-    expect(computeFillFromReceive(order, 0n)).toEqual({ fillAmountB: 0n, actualAmountA: 0n });
-    expect(computeFillFromReceive(order, -1n)).toEqual({ fillAmountB: 0n, actualAmountA: 0n });
+    expect(computeFillFromReceive(order, 0n)).toEqual({ amountA: 0n, amountB: 0n });
+    expect(computeFillFromReceive(order, -1n)).toEqual({ amountA: 0n, amountB: 0n });
   });
 
   test("returns zero on an empty order", () => {
-    expect(computeFillFromReceive({ amountA: "0", amountB: "0" }, 10n)).toEqual({
-      fillAmountB: 0n,
-      actualAmountA: 0n,
+    expect(computeFillFromReceive({ availableA: "0", availableB: "0" }, 10n)).toEqual({
+      amountA: 0n,
+      amountB: 0n,
     });
   });
+});
 
-  // MUTATION: Report the requested amount rather than the contract's
-  // BREAKS: Confirmation shows an amount the contract won't deliver
-  test("reports what the contract will actually transfer", () => {
-    const result = computeFillFromReceive({ amountA: "1000", amountB: "3" }, 500n);
-    expect(result.actualAmountA).toBe(
-      computeReceiveFromFill({ amountA: "1000", amountB: "3" }, result.fillAmountB)
-    );
+describe("allowsPartialFill", () => {
+  // MUTATION: Treat a missing flag as permission
+  // BREAKS: Partial-fill controls appear on an all-or-nothing order, and every
+  // fill from them reverts with PartialFillNotAllowed
+  test("only a flag set to true allows a partial fill", () => {
+    expect(allowsPartialFill({ partialFillAllowed: true })).toBe(true);
+    expect(allowsPartialFill({ partialFillAllowed: false })).toBe(false);
+    expect(allowsPartialFill({})).toBe(false);
+    expect(allowsPartialFill(null)).toBe(false);
   });
 });
 
@@ -2448,8 +2539,8 @@ describe("summarizeFillBatch", () => {
     tokenB: { address: "0xB", symbol: "B", decimals: 18 },
   };
   const batch = [
-    Object.assign({ amountA: "1000000000000000000", amountB: "2000000000000000000" }, pair),
-    Object.assign({ amountA: "3000000000000000000", amountB: "6000000000000000000" }, pair),
+    Object.assign({ availableA: "1000000000000000000", availableB: "2000000000000000000" }, pair),
+    Object.assign({ availableA: "3000000000000000000", availableB: "6000000000000000000" }, pair),
   ];
 
   // MUTATION: Sum only the first order
@@ -2472,8 +2563,8 @@ describe("summarizeFillBatch", () => {
   test("accounts for differing token decimals", () => {
     const mixed = [
       {
-        amountA: "1000000000000000000", // 1.0 (18dp)
-        amountB: "3000000", // 3.0 (6dp)
+        availableA: "1000000000000000000", // 1.0 (18dp)
+        availableB: "3000000", // 3.0 (6dp)
         tokenA: { address: "0xA", symbol: "A", decimals: 18 },
         tokenB: { address: "0xB", symbol: "B", decimals: 6 },
       },
@@ -2494,7 +2585,7 @@ describe("summarizeFillBatch", () => {
   // MUTATION: Divide without guarding
   // BREAKS: NaN price shown when there is nothing to receive
   test("reports no price when there is nothing to receive", () => {
-    const empty = [Object.assign({ amountA: "0", amountB: "100" }, pair)];
+    const empty = [Object.assign({ availableA: "0", availableB: "100" }, pair)];
     expect(summarizeFillBatch(empty).avgPrice).toBe(null);
   });
 });
@@ -2656,68 +2747,199 @@ describe("deploymentFor", () => {
   });
 });
 
-describe("orderQueryFields", () => {
-  // MUTATION: Include partialFill in the v1 field list
-  // BREAKS: the deployed subgraph errors on the unknown field and returns no
-  //         orders at all — GraphQL rejects the whole query, not just the field
+describe("orderQuerySelection", () => {
+  // MUTATION: Include a v2 field in the v1 selection
+  // BREAKS: the deployed v1 subgraph errors on the unknown field and returns no
+  //         orders at all — graph-node rejects the whole query, not just the field
   test("omits every v2-only field on v1", () => {
-    const fields = orderQueryFields(1);
-    expect(fields).not.toContain("partialFill");
-    expect(fields).not.toContain("originalAmountA");
-    expect(fields).not.toContain("originalAmountB");
+    const selection = orderQuerySelection(1);
+    for (const field of ["availableA", "availableB", "partialFillAllowed", "status", "fills"]) {
+      expect(selection).not.toContain(field);
+    }
   });
 
   // MUTATION: Drop a v2 field
   // BREAKS: partial-fill progress silently stops rendering on v2
   test("requests the v2-only fields on v2", () => {
-    const fields = orderQueryFields(2);
-    expect(fields).toContain("partialFill");
-    expect(fields).toContain("originalAmountA");
-    expect(fields).toContain("originalAmountB");
+    const selection = orderQuerySelection(2);
+    for (const field of ["availableA", "availableB", "partialFillAllowed", "status"]) {
+      expect(selection).toContain(field);
+    }
+  });
+
+  // MUTATION: Select `maker` as a scalar on v2
+  // BREAKS: maker is an Account entity there, so the query is rejected outright
+  test("v2 selects maker as a relation and v1 as a scalar", () => {
+    expect(orderQuerySelection(2)).toMatch(/maker \{\s*\n\s*id\s*\n\s*\}/);
+    expect(orderQuerySelection(1)).toMatch(/^maker$/m);
+  });
+
+  // MUTATION: Ask v2 for `taker` on the order
+  // BREAKS: v2 moved the taker onto Fill, so the field does not exist and the
+  //         whole order list comes back empty
+  test("only v1 asks the order for a taker", () => {
+    expect(orderQuerySelection(1)).toMatch(/^taker$/m);
+    expect(orderQuerySelection(2)).not.toMatch(/^taker$/m);
+    expect(orderQuerySelection(2)).toContain("fills(");
   });
 
   // MUTATION: Drop a shared field from one branch
   // BREAKS: a column renders blank in exactly one version
   test("both versions request every shared field", () => {
-    const shared = [
-      "orderId",
-      "maker",
-      "amountA",
-      "amountB",
-      "active",
-      "taker",
-      "createdAt",
-      "filledAt",
-    ];
+    const shared = ["orderId", "amountA", "amountB", "active", "createdAt", "filledAt"];
     for (const field of shared) {
-      expect(orderQueryFields(1)).toContain(field);
-      expect(orderQueryFields(2)).toContain(field);
+      expect(orderQuerySelection(1)).toContain(field);
+      expect(orderQuerySelection(2)).toContain(field);
     }
   });
 
-  test("v1 asks for strictly fewer fields", () => {
-    expect(orderQueryFields(1).length).toBe(8);
-    expect(orderQueryFields(2).length).toBe(11);
+  // MUTATION: Omit the token sub-selections
+  // BREAKS: every row loses its symbols and decimals, and formatAmount throws
+  test("both versions select both tokens with symbol and decimals", () => {
+    for (const version of [1, 2]) {
+      const selection = orderQuerySelection(version);
+      expect(selection).toContain("tokenA {");
+      expect(selection).toContain("tokenB {");
+      expect(selection).toContain("decimals");
+      expect(selection).toContain("symbol");
+    }
+  });
+});
+
+describe("statusFilterCondition", () => {
+  // MUTATION: Use the v1 taker conditions on v2
+  // BREAKS: `taker` does not exist on a v2 order, so filtering to Filled or
+  //         Cancelled returns nothing instead of a filtered list
+  test("v2 filters on the status enum", () => {
+    expect(statusFilterCondition(2, "filled")).toBe("status: FILLED");
+    expect(statusFilterCondition(2, "cancelled")).toBe("status: CANCELED");
+  });
+
+  // MUTATION: Use the v2 enum on v1
+  // BREAKS: the deployed subgraph has no status field, so the query is rejected
+  test("v1 infers the state from active and taker", () => {
+    expect(statusFilterCondition(1, "filled")).toBe("active: false, taker_not: null");
+    expect(statusFilterCondition(1, "cancelled")).toBe("active: false, taker: null");
+  });
+
+  test("both versions filter open orders on active", () => {
+    expect(statusFilterCondition(1, "open")).toBe("active: true");
+    expect(statusFilterCondition(2, "open")).toBe("active: true");
+  });
+
+  // MUTATION: Return a condition for the client-side filters
+  // BREAKS: "watched" and "all" would be sent to the subgraph as a field name
+  test("client-side filters add no condition", () => {
+    for (const version of [1, 2]) {
+      expect(statusFilterCondition(version, "watched")).toBe(null);
+      expect(statusFilterCondition(version, "all")).toBe(null);
+      expect(statusFilterCondition(version, "")).toBe(null);
+    }
+  });
+});
+
+describe("statsQuerySelection / normalizeStats", () => {
+  // MUTATION: Ask v2 for activeOrders / cancelledOrders
+  // BREAKS: v2 renamed both, so the stats query is rejected and every tile
+  //         stays on its placeholder
+  test("each version asks for the counters it actually has", () => {
+    expect(statsQuerySelection(1)).toContain("activeOrders");
+    expect(statsQuerySelection(1)).toContain("cancelledOrders");
+    expect(statsQuerySelection(2)).toContain("openOrders");
+    expect(statsQuerySelection(2)).toContain("canceledOrders");
+    expect(statsQuerySelection(2)).not.toContain("activeOrders");
+    expect(statsQuerySelection(1)).not.toContain("openOrders");
+  });
+
+  test("normalizes both spellings onto the same four tiles", () => {
+    expect(
+      normalizeStats(
+        {
+          totalOrders: "10",
+          activeOrders: "4",
+          filledOrders: "3",
+          cancelledOrders: "3",
+        },
+        1
+      )
+    ).toEqual({ total: "10", open: "4", filled: "3", cancelled: "3" });
+
+    expect(
+      normalizeStats(
+        {
+          totalOrders: "10",
+          openOrders: "4",
+          partiallyFilledOrders: "1",
+          filledOrders: "3",
+          canceledOrders: "3",
+        },
+        2
+      )
+    ).toEqual({ total: "10", open: "4", filled: "3", cancelled: "3" });
+  });
+
+  // MUTATION: Return zeroed counters instead of null
+  // BREAKS: a failed stats query would render as a board with nothing on it,
+  //         rather than leaving the previous values in place
+  test("reports nothing when the query returned nothing", () => {
+    expect(normalizeStats(null, 1)).toBe(null);
+    expect(normalizeStats(undefined, 2)).toBe(null);
+  });
+
+  // MUTATION: Drop the "0" fallbacks
+  // BREAKS: formatNumber(undefined) renders "undefined" in a stat tile
+  test("missing counters read as zero", () => {
+    expect(normalizeStats({}, 1)).toEqual({
+      total: "0",
+      open: "0",
+      filled: "0",
+      cancelled: "0",
+    });
+    expect(normalizeStats({}, 2)).toEqual({
+      total: "0",
+      open: "0",
+      filled: "0",
+      cancelled: "0",
+    });
+  });
+});
+
+describe("popularPairsQuery", () => {
+  // MUTATION: Use one root field for both versions
+  // BREAKS: Popular Pairs is permanently stuck on "No popular pairs yet" in
+  //         whichever version got the other's entity name
+  test("each version names its own entity and counter", () => {
+    expect(popularPairsQuery(1)).toEqual({ root: "pairStats_collection", orderBy: "tradeCount" });
+    expect(popularPairsQuery(2)).toEqual({ root: "pairs", orderBy: "fillCount" });
   });
 });
 
 describe("normalizeOrder", () => {
-  // MUTATION: Leave originalAmount undefined on v1
-  // BREAKS: buildAmountCell calls BigInt(undefined) and throws mid-render
-  test("backfills the v2 fields a v1 subgraph never returns", () => {
-    const order = normalizeOrder({ amountA: "100", amountB: "250" }, 1);
-    expect(order.originalAmountA).toBe("100");
-    expect(order.originalAmountB).toBe("250");
-    expect(order.partialFill).toBe(false);
+  // MUTATION: Leave availableA undefined on v1
+  // BREAKS: renderOrders calls BigInt(undefined) and throws mid-render
+  test("backfills the remaining amounts a v1 subgraph never returns", () => {
+    const order = normalizeOrder({ amountA: "100", amountB: "250", active: true }, 1);
+    expect(order.availableA).toBe("100");
+    expect(order.availableB).toBe("250");
+    expect(order.partialFillAllowed).toBe(false);
   });
 
-  // MUTATION: Set original to something other than the remaining amount
+  // MUTATION: Set the remainder to something other than the whole amount
   // BREAKS: every v1 order renders a bogus "of X left" partial-fill hint,
-  //         since that hint shows exactly when original > remaining
+  //         since that hint shows exactly when the original exceeds the remainder
   test("a v1 order reads as untouched, never partly filled", () => {
-    const order = normalizeOrder({ amountA: "100", amountB: "250" }, 1);
-    expect(BigInt(order.originalAmountA)).toBe(BigInt(order.amountA));
-    expect(BigInt(order.originalAmountB)).toBe(BigInt(order.amountB));
+    const order = normalizeOrder({ amountA: "100", amountB: "250", active: true }, 1);
+    expect(BigInt(order.availableA)).toBe(BigInt(order.amountA));
+    expect(BigInt(order.availableB)).toBe(BigInt(order.amountB));
+  });
+
+  // MUTATION: Derive v1 status from `active` alone
+  // BREAKS: cancelled orders report as filled, and the watch list fires a
+  //         "your order was filled" notification for an order that was not
+  test("derives a v1 order's status from active and taker", () => {
+    expect(normalizeOrder({ active: true, taker: null }, 1).status).toBe(ORDER_STATUS.OPEN);
+    expect(normalizeOrder({ active: false, taker: "0xabc" }, 1).status).toBe(ORDER_STATUS.FILLED);
+    expect(normalizeOrder({ active: false, taker: null }, 1).status).toBe(ORDER_STATUS.CANCELED);
   });
 
   // MUTATION: Overwrite the v2 amounts too
@@ -2725,27 +2947,69 @@ describe("normalizeOrder", () => {
   test("leaves genuine v2 partial-fill data alone", () => {
     const order = normalizeOrder(
       {
-        amountA: "40",
-        amountB: "100",
-        originalAmountA: "100",
-        originalAmountB: "250",
-        partialFill: true,
+        amountA: "100",
+        amountB: "250",
+        availableA: "40",
+        availableB: "100",
+        partialFillAllowed: true,
+        status: ORDER_STATUS.PARTIALLY_FILLED,
       },
       2
     );
-    expect(order.originalAmountA).toBe("100");
-    expect(order.amountA).toBe("40");
-    expect(order.partialFill).toBe(true);
+    expect(order.amountA).toBe("100");
+    expect(order.availableA).toBe("40");
+    expect(order.partialFillAllowed).toBe(true);
+  });
+
+  // MUTATION: Keep maker as the Account object
+  // BREAKS: every maker cell renders "[object Object]" and the My Orders
+  //         comparison against the connected wallet never matches
+  test("flattens the v2 maker relation to an address", () => {
+    const order = normalizeOrder(
+      { maker: { id: "0xabc" }, status: ORDER_STATUS.OPEN, partialFillAllowed: false },
+      2
+    );
+    expect(order.maker).toBe("0xabc");
+  });
+
+  // MUTATION: Take the taker from the latest fill regardless of status
+  // BREAKS: a partially filled order shows a taker, implying it is finished
+  test("recovers the taker only once the closing fill has landed", () => {
+    const filled = normalizeOrder(
+      { status: ORDER_STATUS.FILLED, fills: [{ taker: { id: "0xtaker" } }] },
+      2
+    );
+    expect(filled.taker).toBe("0xtaker");
+
+    const partial = normalizeOrder(
+      { status: ORDER_STATUS.PARTIALLY_FILLED, fills: [{ taker: { id: "0xtaker" } }] },
+      2
+    );
+    expect(partial.taker).toBe(null);
+
+    const open = normalizeOrder({ status: ORDER_STATUS.OPEN, fills: [] }, 2);
+    expect(open.taker).toBe(null);
+  });
+
+  // MUTATION: Keep `fills` on the order
+  // MUTATION: Assume `fills` is always present
+  // BREAKS: the raw relation leaks into the CSV export, and a selection that
+  //         omitted `fills` throws on `.length`
+  test("drops the fills relation once the taker is recovered", () => {
+    const order = normalizeOrder({ status: ORDER_STATUS.FILLED, fills: [] }, 2);
+    expect(order.fills).toBeUndefined();
+    expect(normalizeOrder({ status: ORDER_STATUS.FILLED }, 2).taker).toBe(null);
   });
 
   // MUTATION: Treat a missing flag as true
   // BREAKS: an order the subgraph never vouched for offers partial fills the
-  //         contract will reject
-  test("a missing partialFill flag means opted out", () => {
-    expect(normalizeOrder({ amountA: "1", amountB: "1" }, 2).partialFill).toBe(false);
-    expect(normalizeOrder({ amountA: "1", amountB: "1", partialFill: "yes" }, 2).partialFill).toBe(
-      false
-    );
+  //         contract will reject with PartialFillNotAllowed
+  test("a missing partialFillAllowed flag means opted out", () => {
+    expect(normalizeOrder({ amountA: "1", amountB: "1" }, 2).partialFillAllowed).toBe(false);
+    expect(
+      normalizeOrder({ amountA: "1", amountB: "1", partialFillAllowed: "yes" }, 2)
+        .partialFillAllowed
+    ).toBe(false);
   });
 
   test("passes a missing order straight through", () => {

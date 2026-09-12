@@ -400,8 +400,9 @@ function calculateMarketDeviation(order, getPriceFn = getTokenPrice) {
   if (priceA === null || priceB === null) return null;
   if (priceA === 0 || priceB === 0) return null;
 
-  const amountA = BigInt(order.amountA);
-  const amountB = BigInt(order.amountB);
+  // Quoted off what is left, matching the Price column it sits beside.
+  const amountA = BigInt(order.availableA);
+  const amountB = BigInt(order.availableB);
 
   if (amountA === 0n || amountB === 0n) return null;
 
@@ -478,14 +479,44 @@ function searchTokens(query, tokenList, limit = 10, prepend = []) {
 // ============================================================================
 
 /**
- * The lifecycle state of an order, as one word.
- * Once an order is inactive, a recorded taker separates a fill from a cancel.
- * @param {Object} order - Order with `active` and `taker`
- * @returns {"Open"|"Filled"|"Cancelled"}
+ * Order lifecycle states, spelled as the v2 subgraph's `OrderStatus` enum.
+ *
+ * Normalized onto every order regardless of version, so nothing downstream has
+ * to reconstruct a state from `active` + `taker`. Note `CANCELED`, one `l` —
+ * the schema's spelling, kept verbatim so a value can be sent straight back in
+ * a `where` clause.
+ *
+ * @constant {Object<string, string>}
+ */
+const ORDER_STATUS = {
+  OPEN: "OPEN",
+  PARTIALLY_FILLED: "PARTIALLY_FILLED",
+  FILLED: "FILLED",
+  CANCELED: "CANCELED",
+};
+
+/**
+ * Display text for an order's lifecycle state.
+ *
+ * Reads the normalized `status`, which normalizeOrder guarantees on orders
+ * from either version — v2 indexes the enum directly, v1 has it derived from
+ * `active` + `taker`. The returned strings are UI copy, deliberately separate
+ * from the subgraph's enum spelling (`CANCELED`, one `l`).
+ *
+ * @param {Object} order - Order with a normalized `status`
+ * @returns {"Open"|"Partially Filled"|"Filled"|"Cancelled"}
  */
 function orderStatus(order) {
-  if (order.active) return "Open";
-  return order.taker ? "Filled" : "Cancelled";
+  switch (order.status) {
+    case ORDER_STATUS.PARTIALLY_FILLED:
+      return "Partially Filled";
+    case ORDER_STATUS.FILLED:
+      return "Filled";
+    case ORDER_STATUS.CANCELED:
+      return "Cancelled";
+    default:
+      return "Open";
+  }
 }
 
 // ============================================================================
@@ -658,10 +689,10 @@ function loadSortPreferences(storage) {
  * @returns {number} Price in the quoted direction, or 0 when a side is empty
  */
 function quotedPrice(order, quoteSideFn) {
-  const { tokenA, tokenB, amountA, amountB } = order;
+  const { tokenA, tokenB, availableA, availableB } = order;
   return quoteSideFn(tokenA.address, tokenB.address) === "A"
-    ? priceRatio(amountA, amountB, tokenA.decimals, tokenB.decimals)
-    : priceRatio(amountB, amountA, tokenB.decimals, tokenA.decimals);
+    ? priceRatio(availableA, availableB, tokenA.decimals, tokenB.decimals)
+    : priceRatio(availableB, availableA, tokenB.decimals, tokenA.decimals);
 }
 
 /**
@@ -682,10 +713,12 @@ function sortOrders(orders, column, direction, getPriceFn = () => null, quoteSid
   /** Amount in human units, so tokens of differing precision compare. */
   const human = (amount, decimals) => Number(BigInt(amount)) / Math.pow(10, decimals);
 
-  /** USD value of the offered side; -1 sinks orders whose price is unknown. */
+  /** USD value of what is still on offer; -1 sinks orders whose price is unknown. */
   const usdValue = (o) => {
     const price = getPriceFn(o.tokenA.address);
-    return price !== null && price !== undefined ? human(o.amountA, o.tokenA.decimals) * price : -1;
+    return price !== null && price !== undefined
+      ? human(o.availableA, o.tokenA.decimals) * price
+      : -1;
   };
 
   return [...orders].sort((a, b) => {
@@ -705,16 +738,17 @@ function sortOrders(orders, column, direction, getPriceFn = () => null, quoteSid
         valB = (b.tokenA.symbol || "").toLowerCase();
         break;
       case "amountA":
-        valA = human(a.amountA, a.tokenA.decimals);
-        valB = human(b.amountA, b.tokenA.decimals);
+        // The column shows what is left, so that is what it sorts on.
+        valA = human(a.availableA, a.tokenA.decimals);
+        valB = human(b.availableA, b.tokenA.decimals);
         break;
       case "tokenB":
         valA = (a.tokenB.symbol || "").toLowerCase();
         valB = (b.tokenB.symbol || "").toLowerCase();
         break;
       case "amountB":
-        valA = human(a.amountB, a.tokenB.decimals);
-        valB = human(b.amountB, b.tokenB.decimals);
+        valA = human(a.availableB, a.tokenB.decimals);
+        valB = human(b.availableB, b.tokenB.decimals);
         break;
       case "usdVal":
         valA = usdValue(a);
@@ -739,7 +773,17 @@ function sortOrders(orders, column, direction, getPriceFn = () => null, quoteSid
 // Error Parsing
 // ============================================================================
 
+/**
+ * Contract error selectors, across both protocol versions.
+ *
+ * Selectors are globally unique, so the two versions' errors share one table
+ * rather than being split per version: a revert carries no version tag, and
+ * matching against the union cannot produce a false hit.
+ *
+ * @constant {Object<string, string>}
+ */
 const ERROR_SIGNATURES = {
+  // Shared by v1 and v2
   "0xd92e233d": "ZeroAddress",
   "0x1f2a2005": "ZeroAmount",
   "0x201b580a": "SameToken",
@@ -748,11 +792,27 @@ const ERROR_SIGNATURES = {
   "0x4e90badc": "OrderNotFound",
   "0xd2c02610": "OrderNotActive",
   "0x98cd7222": "NotMaker",
+  "0x8230dc8f": "ETHAmountMismatch",
+  "0x1ab7da6b": "DeadlineExpired",
+
+  // v1 only: ETH is reached by wrapping, so the failures are WETH-shaped.
   "0x6bdafcae": "ZeroETH",
   "0xcfc02c6e": "NotWETH",
-  "0x8230dc8f": "ETHAmountMismatch",
   "0x1c988062": "ETHTransferFailed",
-  "0x1ab7da6b": "DeadlineExpired",
+
+  // v2 only: partial fills, slippage bounds, and batch entry points.
+  "0xed38596f": "PartialFillNotAllowed",
+  "0x535a34f0": "FillAmountTooHigh",
+  "0x19113a72": "FillAmountMismatch",
+  "0x54b9c511": "DuplicateOrderId",
+
+  // v2 only, from OpenZeppelin. Address.sendValue and SafeERC20 replace v1's
+  // hand-rolled ETHTransferFailed, and the transient reentrancy guard has its
+  // own error rather than a require string.
+  "0xd6bda275": "FailedCall",
+  "0xcf479181": "InsufficientBalance",
+  "0x5274afe7": "SafeERC20FailedOperation",
+  "0x3ee5aeb5": "ReentrancyGuardReentrantCall",
 };
 
 /**
@@ -774,6 +834,19 @@ const ERROR_MESSAGES = {
   ETHAmountMismatch: "ETH amount does not match required amount",
   ETHTransferFailed: "ETH transfer to recipient failed",
   DeadlineExpired: "Transaction deadline passed. Please try again.",
+
+  // v2. The three fill errors all mean the order moved between quote and
+  // submission, so each says what to do rather than restating the numbers.
+  PartialFillNotAllowed: (args) => `Order #${args[0]} must be filled in full`,
+  FillAmountTooHigh: (args) =>
+    `Order #${args[0]} has less left than you asked for. Refresh and try again.`,
+  FillAmountMismatch: (args) =>
+    `Order #${args[0]} repriced while you were confirming. Refresh and try again.`,
+  DuplicateOrderId: (args) => `Order #${args[0]} appears twice in this batch`,
+  FailedCall: "ETH transfer to recipient failed",
+  InsufficientBalance: "The contract holds less ETH than this transfer needs",
+  SafeERC20FailedOperation: "Token transfer failed",
+  ReentrancyGuardReentrantCall: "Reentrant call rejected",
 };
 
 /**
@@ -954,10 +1027,13 @@ function validateConfig(config, isLocal) {
 // that reach all the way up into the UI, so the version is resolved once at
 // startup and everything downstream reads it through VERSION_CAPS:
 //
-//   1. Subgraph shape. The deployed v1 subgraph has no partialFill /
-//      originalAmountA / originalAmountB, and GraphQL rejects an entire query
-//      on one unknown field — so asking for the v2 shape in v1 mode returns
-//      nothing at all, not a partial result. orderQueryFields() is the fix.
+//   1. Subgraph shape. The two schemas share almost no field names: v2 splits
+//      the original size (amountA/amountB) from the remainder
+//      (availableA/availableB), makes `maker` an Account relation, moves the
+//      taker onto a Fill entity, and indexes a status enum. graph-node rejects
+//      an entire query on one unknown field, so asking either version for the
+//      other's shape returns nothing at all, not a partial result.
+//      orderQuerySelection() and normalizeOrder() are the fix.
 //   2. Contract surface. v1 has no partial fills and no batch entry points.
 //   3. Native ETH. v1 has no NATIVE_ETH sentinel; it reaches ETH by treating
 //      a WETH-denominated side as a wrap/unwrap. v2 escrows ETH directly.
@@ -1111,65 +1187,226 @@ function deploymentFor(version) {
 }
 
 /**
- * Order fields to request from the subgraph for a given version.
+ * GraphQL selection set for an order, for the given version.
  *
- * v2-only fields are omitted in v1 mode because the deployed subgraph errors
- * on unknown fields and returns no data at all.
+ * A flat field list is not enough for v2: `maker` is an `Account` relation and
+ * the taker moved onto the `Fill` entity, so the selection is nested. It is
+ * built here rather than inlined at the call site because graph-node rejects an
+ * *entire* query on one unknown field — asking either version for the other's
+ * shape returns nothing at all, not a partial result — which makes the exact
+ * selection a property of the version rather than of the screen.
+ *
+ * Amount vocabulary, in both versions after normalizeOrder:
+ *   amountA / amountB       the original size, fixed for the life of the order
+ *   availableA / availableB what is still fillable
  *
  * @param {number} version - Protocol version
- * @returns {string[]} Field names, in query order
+ * @returns {string} Selection set, newline-separated, without enclosing braces
  */
-function orderQueryFields(version) {
-  const base = [
-    "orderId",
-    "maker",
-    "amountA",
-    "amountB",
-    "active",
-    "taker",
-    "createdAt",
-    "filledAt",
+function orderQuerySelection(version) {
+  const tokens = [
+    "tokenA {",
+    "  address",
+    "  symbol",
+    "  decimals",
+    "}",
+    "tokenB {",
+    "  address",
+    "  symbol",
+    "  decimals",
+    "}",
   ];
-  if (!capsFor(version).remainingAmounts) return base;
-  // Slot the v2 additions next to the amounts they qualify.
+
+  if (!capsFor(version).remainingAmounts) {
+    // v1: maker and taker are plain Bytes, and amountA/amountB are the whole
+    // order, since a v1 order is all-or-nothing.
+    return [
+      "orderId",
+      "maker",
+      "amountA",
+      "amountB",
+      "active",
+      "taker",
+      "createdAt",
+      "filledAt",
+      ...tokens,
+    ].join("\n");
+  }
+
   return [
     "orderId",
-    "maker",
+    "maker {",
+    "  id",
+    "}",
     "amountA",
     "amountB",
-    "originalAmountA",
-    "originalAmountB",
-    "partialFill",
+    "availableA",
+    "availableB",
+    "partialFillAllowed",
+    "status",
     "active",
-    "taker",
     "createdAt",
     "filledAt",
-  ];
+    // The taker of the fill that closed the order. Only meaningful once the
+    // order is FILLED — a partially filled order has many takers and no one of
+    // them owns it — so normalizeOrder drops it in every other state.
+    "fills(first: 1, orderBy: timestamp, orderDirection: desc) {",
+    "  taker {",
+    "    id",
+    "  }",
+    "}",
+    ...tokens,
+  ].join("\n");
 }
 
 /**
- * Fills in the v2-shaped fields a v1 subgraph never returns, so rendering and
- * fill math stay on one code path regardless of version.
+ * `where` condition selecting orders by lifecycle state.
  *
- * A v1 order is all-or-nothing and never partly filled, so its remaining
- * amount is by definition its original amount.
+ * v1 has to infer the state — an inactive order with a taker was filled,
+ * without one it was cancelled — while v2 indexes the enum and can be asked
+ * directly. "watched" and "all" are resolved client-side and select nothing here.
  *
- * @param {Object} order - Raw order from the subgraph
+ * @param {number} version - Protocol version
+ * @param {string} status - Filter value: "open", "filled", "cancelled", ...
+ * @returns {string|null} Condition text, or null when nothing should be added
+ */
+function statusFilterCondition(version, status) {
+  if (capsFor(version).remainingAmounts) {
+    switch (status) {
+      case "open":
+        return "active: true";
+      case "filled":
+        return `status: ${ORDER_STATUS.FILLED}`;
+      case "cancelled":
+        return `status: ${ORDER_STATUS.CANCELED}`;
+      default:
+        return null;
+    }
+  }
+
+  switch (status) {
+    case "open":
+      return "active: true";
+    case "filled":
+      return "active: false, taker_not: null";
+    case "cancelled":
+      return "active: false, taker: null";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Flattens a raw subgraph order onto one internal model, whichever version it
+ * came from.
+ *
+ * The model is the v2 vocabulary, because v2 is what the contract's own `Order`
+ * struct uses: `amountA`/`amountB` are the original size and
+ * `availableA`/`availableB` are what is left. A v1 order is all-or-nothing, so
+ * its remaining amount is by definition its original amount.
+ *
+ * @param {Object} order - Raw order from the subgraph, mutated in place
  * @param {number} version - Protocol version the order came from
- * @returns {Object} The same order, normalized in place
+ * @returns {Object} The same order, normalized
  */
 function normalizeOrder(order, version) {
   if (!order) return order;
-  if (capsFor(version).remainingAmounts) {
-    // A missing flag means the order never opted in, so treat it as
-    // all-or-nothing rather than assuming partial fills are allowed.
-    order.partialFill = order.partialFill === true;
+
+  if (!capsFor(version).remainingAmounts) {
+    order.availableA = order.amountA;
+    order.availableB = order.amountB;
+    order.partialFillAllowed = false;
+    order.status = order.active
+      ? ORDER_STATUS.OPEN
+      : order.taker
+        ? ORDER_STATUS.FILLED
+        : ORDER_STATUS.CANCELED;
     return order;
   }
-  order.partialFill = false;
-  order.originalAmountA = order.amountA;
-  order.originalAmountB = order.amountB;
+
+  // `maker` arrives as an Account, and the app only ever wants its address.
+  if (order.maker && typeof order.maker === "object") {
+    order.maker = order.maker.id;
+  }
+
+  // A missing flag means the order never opted in, so treat it as
+  // all-or-nothing rather than assuming partial fills are allowed.
+  order.partialFillAllowed = order.partialFillAllowed === true;
+
+  const lastFill = Array.isArray(order.fills) ? order.fills[0] : null;
+  order.taker =
+    order.status === ORDER_STATUS.FILLED && lastFill && lastFill.taker ? lastFill.taker.id : null;
+  delete order.fills;
+
   return order;
+}
+
+/**
+ * GraphQL selection set for the board-wide statistics.
+ * @param {number} version - Protocol version
+ * @returns {string} Selection set, newline-separated, without enclosing braces
+ */
+function statsQuerySelection(version) {
+  if (!capsFor(version).remainingAmounts) {
+    return ["totalOrders", "activeOrders", "filledOrders", "cancelledOrders"].join("\n");
+  }
+  // v2 renamed two of these and added the partial-fill count. Note the single
+  // `l` in canceledOrders.
+  return [
+    "totalOrders",
+    "openOrders",
+    "partiallyFilledOrders",
+    "filledOrders",
+    "canceledOrders",
+  ].join("\n");
+}
+
+/**
+ * Flattens raw `globalStats` onto the four counters the stat tiles show.
+ *
+ * v2 counts a partially filled order as open, which is also how it renders —
+ * such an order is still fillable — so the two are summed into `open` rather
+ * than being reported separately.
+ *
+ * @param {Object|null} stats - Raw globalStats entity
+ * @param {number} version - Protocol version
+ * @returns {{total: string, open: string, filled: string, cancelled: string}|null}
+ */
+function normalizeStats(stats, version) {
+  if (!stats) return null;
+
+  if (!capsFor(version).remainingAmounts) {
+    return {
+      total: stats.totalOrders || "0",
+      open: stats.activeOrders || "0",
+      filled: stats.filledOrders || "0",
+      cancelled: stats.cancelledOrders || "0",
+    };
+  }
+
+  return {
+    total: stats.totalOrders || "0",
+    open: stats.openOrders || "0",
+    filled: stats.filledOrders || "0",
+    cancelled: stats.canceledOrders || "0",
+  };
+}
+
+/**
+ * Root field and ordering for the popular-pairs query.
+ *
+ * v1 indexes a `PairStats` entity — whose plural graph-node spells
+ * `pairStats_collection` — ranked by `tradeCount`. v2 renamed the entity to
+ * `Pair` and the counter to `fillCount`, since a partially filled order
+ * produces several fills.
+ *
+ * @param {number} version - Protocol version
+ * @returns {{root: string, orderBy: string}}
+ */
+function popularPairsQuery(version) {
+  return capsFor(version).remainingAmounts
+    ? { root: "pairs", orderBy: "fillCount" }
+    : { root: "pairStats_collection", orderBy: "tradeCount" };
 }
 
 /**
@@ -1313,57 +1550,92 @@ function getShiftRangeIds(sortedOrders, anchorId, targetId, firstSelected, userA
 // ============================================================================
 // V2: Partial fill math
 // ============================================================================
+//
+// These mirror `Swapboard._quoteFill` exactly. They have to: v2 pays with an
+// exact `msg.value` when the wanted token is native ETH, and submits the quote
+// it computed as `minAmountB`, so a formula that disagrees with the contract by
+// one base unit is a reverted transaction rather than a rounding artifact.
+//
+// A fill is expressed as `amountA` — the offered token the taker receives —
+// and the payment is derived from it, ceiled in the maker's favour.
+// ============================================================================
 
 /**
- * Computes how much of the offered token a given fill amount buys.
+ * The tokenB payment for taking `amountA` of an order's offered token.
  *
- * Mirrors the contract's `mulDiv(fillAmountB, amountA, amountB)`, which floors
- * and therefore rounds in the maker's favour. `amountA`/`amountB` on a v2 order
- * are the *remaining* amounts.
+ * Mirrors `Swapboard._quoteFill`: taking the whole remainder pays exactly the
+ * remaining tokenB (no rounding at all), and anything less ceils the
+ * proportion. Ceiling rather than flooring is what keeps a sequence of small
+ * fills from underpaying the maker.
  *
- * @param {Object} order - Order with amountA/amountB in base units
- * @param {string|bigint} fillAmountB - Amount of the wanted token being paid
- * @returns {bigint} Amount of the offered token received
+ * @param {Object} order - Order with availableA/availableB in base units
+ * @param {string|bigint} amountA - Offered token requested, in base units
+ * @returns {bigint} tokenB owed, or 0 when the request is empty or unfillable
  */
-function computeReceiveFromFill(order, fillAmountB) {
-  const amountA = BigInt(order.amountA);
-  const amountB = BigInt(order.amountB);
-  const fill = BigInt(fillAmountB);
+function quoteFill(order, amountA) {
+  const availableA = BigInt(order.availableA);
+  const availableB = BigInt(order.availableB);
+  const want = BigInt(amountA);
 
-  if (amountB === 0n || fill <= 0n) return 0n;
-  if (fill >= amountB) return amountA;
-  return (fill * amountA) / amountB;
+  if (want <= 0n || availableA === 0n || availableB === 0n) return 0n;
+  if (want >= availableA) return availableB;
+
+  return (want * availableB + availableA - 1n) / availableA;
 }
 
 /**
- * Inverts computeReceiveFromFill: given a desired receive amount, works out
- * what must be paid.
+ * Largest `amountA` obtainable for a given tokenB budget.
  *
- * Rounds the payment up so the taker receives at least what they asked for,
- * then re-floors to report the amount the contract will actually transfer
- * (the two differ by at most one base unit).
+ * The inverse of quoteFill, and floored, so the quote for the returned amount
+ * never exceeds the budget. Used to drive the fill controls when the taker
+ * thinks in terms of what they are paying rather than what they receive.
  *
- * @param {Object} order - Order with amountA/amountB in base units
+ * @param {Object} order - Order with availableA/availableB in base units
+ * @param {string|bigint} amountB - Budget in the wanted token, in base units
+ * @returns {bigint} Amount of the offered token received
+ */
+function computeReceiveFromFill(order, amountB) {
+  const availableA = BigInt(order.availableA);
+  const availableB = BigInt(order.availableB);
+  const budget = BigInt(amountB);
+
+  if (availableB === 0n || budget <= 0n) return 0n;
+  if (budget >= availableB) return availableA;
+  return (budget * availableA) / availableB;
+}
+
+/**
+ * Resolves a desired receive amount into the pair of values a fill is
+ * submitted with.
+ *
+ * Clamps to what is actually left rather than rejecting an over-large request:
+ * the fill controls open at 100% of the remainder, and an order shrinking
+ * underneath an open modal should scale the fill down, not fail it.
+ *
+ * @param {Object} order - Order with availableA/availableB in base units
  * @param {string|bigint} receiveAmountA - Desired amount of the offered token
- * @returns {{fillAmountB: bigint, actualAmountA: bigint}}
+ * @returns {{amountA: bigint, amountB: bigint}} Arguments for fillOrder
  */
 function computeFillFromReceive(order, receiveAmountA) {
-  const amountA = BigInt(order.amountA);
-  const amountB = BigInt(order.amountB);
+  const availableA = BigInt(order.availableA);
   let want = BigInt(receiveAmountA);
   if (want < 0n) want = 0n;
+  if (want > availableA) want = availableA;
 
-  if (amountA === 0n || amountB === 0n || want === 0n) {
-    return { fillAmountB: 0n, actualAmountA: 0n };
-  }
-  if (want >= amountA) {
-    return { fillAmountB: amountB, actualAmountA: amountA };
-  }
+  return { amountA: want, amountB: quoteFill(order, want) };
+}
 
-  let fillAmountB = (want * amountB + amountA - 1n) / amountA;
-  if (fillAmountB > amountB) fillAmountB = amountB;
-
-  return { fillAmountB, actualAmountA: computeReceiveFromFill(order, fillAmountB) };
+/**
+ * Whether an order accepts a fill smaller than its whole remainder.
+ *
+ * An order that opted out is all-or-nothing on chain — `PartialFillNotAllowed`
+ * — so the controls that would offer a smaller fill stay off for it.
+ *
+ * @param {Object} order - Normalized order
+ * @returns {boolean}
+ */
+function allowsPartialFill(order) {
+  return order ? order.partialFillAllowed === true : false;
 }
 
 /**
@@ -1380,8 +1652,8 @@ function summarizeFillBatch(orders) {
   let totalSend = 0n;
   let totalReceive = 0n;
   for (const order of orders) {
-    totalSend += BigInt(order.amountB);
-    totalReceive += BigInt(order.amountA);
+    totalSend += BigInt(order.availableB);
+    totalReceive += BigInt(order.availableA);
   }
 
   let avgPrice = null;
@@ -1434,6 +1706,7 @@ if (typeof window !== "undefined") {
     searchTokens,
 
     // Order helpers
+    ORDER_STATUS,
     orderStatus,
 
     // Sorting
@@ -1472,8 +1745,12 @@ if (typeof window !== "undefined") {
     resolveVersion,
     capsFor,
     deploymentFor,
-    orderQueryFields,
+    orderQuerySelection,
+    statusFilterCondition,
     normalizeOrder,
+    statsQuerySelection,
+    normalizeStats,
+    popularPairsQuery,
     offersEthDirectly,
 
     // V2: native ETH
@@ -1490,8 +1767,10 @@ if (typeof window !== "undefined") {
     getShiftRangeIds,
 
     // V2: partial fill math
+    quoteFill,
     computeReceiveFromFill,
     computeFillFromReceive,
+    allowsPartialFill,
     summarizeFillBatch,
   };
 }
@@ -1533,6 +1812,7 @@ if (typeof module !== "undefined" && module.exports) {
     searchTokens,
 
     // Order helpers
+    ORDER_STATUS,
     orderStatus,
 
     // localStorage functions
@@ -1575,8 +1855,12 @@ if (typeof module !== "undefined" && module.exports) {
     resolveVersion,
     capsFor,
     deploymentFor,
-    orderQueryFields,
+    orderQuerySelection,
+    statusFilterCondition,
     normalizeOrder,
+    statsQuerySelection,
+    normalizeStats,
+    popularPairsQuery,
     offersEthDirectly,
 
     // V2: native ETH
@@ -1592,8 +1876,10 @@ if (typeof module !== "undefined" && module.exports) {
     getShiftRangeIds,
 
     // V2: partial fill math
+    quoteFill,
     computeReceiveFromFill,
     computeFillFromReceive,
+    allowsPartialFill,
     summarizeFillBatch,
   };
 }
