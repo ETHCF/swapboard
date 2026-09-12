@@ -31,6 +31,8 @@ contract MockERC20Permit is MockERC20, IERC20Permit {
     }
 
     /// @inheritdoc IERC20Permit
+    /// @dev `DOMAIN_SEPARATOR` is the EIP-2612 name; mixedCase does not apply.
+    // forge-lint: disable-next-line(mixed-case-function)
     function DOMAIN_SEPARATOR() public view returns (bytes32) {
         return keccak256(
             abi.encode(
@@ -64,6 +66,8 @@ contract MockERC20Permit is MockERC20, IERC20Permit {
                 keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, _nonces[owner]++, deadline))
             )
         );
+        // Mock permit: EIP-2612 does not require s-malleability checks.
+        // forge-lint: disable-next-line(ecrecover)
         address recovered = ecrecover(digest, v, r, s);
         if (recovered == address(0) || recovered != owner) {
             revert InvalidSigner();
