@@ -1849,6 +1849,13 @@ describe("decodeContractError", () => {
     });
   });
 
+  test("recognizes PermitOnNative", () => {
+    expect(decodeContractError("0x62898bac")).toEqual({
+      name: "PermitOnNative",
+      message: "Cannot permit native ETH",
+    });
+  });
+
   // MUTATION: Return a partial object instead of null
   // BREAKS: An unknown revert renders as "undefined"
   test("returns null for input it cannot decode", () => {
