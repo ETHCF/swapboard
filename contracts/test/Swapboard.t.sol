@@ -2567,9 +2567,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         rebaseB.approve(address(_board), payB);
         ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
-        vm.expectRevert(
-            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, payB, _rebaseOnTransferNet(payB))
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, payB, _rebaseOnTransferNet(payB)));
         _fillOrderPayingQuoted(orderBefore, orderId, payB);
         vm.stopPrank();
 
@@ -3371,9 +3369,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         rebaseB.approve(address(_board), expectedBIn);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ISwapboard.BalanceMismatch.selector, expectedBIn, _rebaseOnTransferNet(expectedBIn)
-            )
+            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, expectedBIn, _rebaseOnTransferNet(expectedBIn))
         );
         _board.fillOrdersPaying(fills, 0);
         vm.stopPrank();
@@ -4015,9 +4011,7 @@ contract SwapboardTest is Test {
         rebaseB.approve(address(_board), expectedBIn);
         ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ISwapboard.BalanceMismatch.selector, expectedBIn, _rebaseOnTransferNet(expectedBIn)
-            )
+            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, expectedBIn, _rebaseOnTransferNet(expectedBIn))
         );
         _fillOrderQuoted(orderBefore, orderId, fillA);
         vm.stopPrank();
@@ -4217,9 +4211,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_taker);
         rebaseB.approve(address(_board), expectedBIn);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ISwapboard.BalanceMismatch.selector, expectedBIn, _rebaseOnTransferNet(expectedBIn)
-            )
+            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, expectedBIn, _rebaseOnTransferNet(expectedBIn))
         );
         _board.fillOrders(fills, 0);
         vm.stopPrank();
