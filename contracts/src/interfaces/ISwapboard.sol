@@ -73,14 +73,24 @@ interface ISwapboard is ISemver {
         uint128 availableB;
     }
 
-    /// @notice Arguments for filling a single OTC order
+    /// @notice Arguments for filling a single OTC order by exact tokenB paid
     /// @param orderId Unique identifier of the order to fill
-    /// @param amountA Amount of tokenA to receive from the order
-    /// @param minAmountB Minimum amount of tokenB the taker is willing to pay (quoted payment may be higher)
+    /// @param amountB Exact amount of tokenB to send
+    /// @param minAmountA Minimum amount of tokenA the taker will accept
     struct FillOrderParams {
         uint256 orderId;
+        uint128 amountB;
+        uint128 minAmountA;
+    }
+
+    /// @notice Arguments for filling a single OTC order by exact tokenA received
+    /// @param orderId Unique identifier of the order to fill
+    /// @param amountA Exact amount of tokenA to receive
+    /// @param maxAmountB Maximum amount of tokenB the taker is willing to send
+    struct FillOrderPayingParams {
+        uint256 orderId;
         uint128 amountA;
-        uint128 minAmountB;
+        uint128 maxAmountB;
     }
 
     /// @notice Arguments for one entry in a `modifyOrders` batch
@@ -192,17 +202,24 @@ interface ISwapboard is ISemver {
     /// @param orderId The order ID
     error PartialFillNotAllowed(uint256 orderId);
 
-    /// @notice Thrown when the requested fill amountA exceeds the order's available amountA
+    /// @notice Thrown when the requested fill amount exceeds the order's remaining liquidity
+    /// @dev Used for both amountB-driven (`fillOrder`) and amountA-driven (`fillOrderPaying`) fills.
     /// @param orderId The order ID
-    /// @param requested The requested amountA
-    /// @param remaining The available amountA on the order
+    /// @param requested The requested fill amount
+    /// @param remaining The available amount on the order for that side
     error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining);
 
-    /// @notice Thrown when the quoted fill payment is below the taker's minimum
+    /// @notice Thrown when the quoted tokenA receive is below the taker's minimum
     /// @param orderId The order ID
-    /// @param quoted The quoted payment amount for this fill
-    /// @param minimum The minimum payment amount declared by the taker
+    /// @param quoted The quoted tokenA receive for this fill
+    /// @param minimum The minimum tokenA receive declared by the taker
     error FillAmountMismatch(uint256 orderId, uint128 quoted, uint128 minimum);
+
+    /// @notice Thrown when the quoted tokenB payment exceeds the taker's maximum
+    /// @param orderId The order ID
+    /// @param quoted The quoted tokenB payment for this fill
+    /// @param maximum The maximum tokenB payment declared by the taker
+    error FillPayTooHigh(uint256 orderId, uint128 quoted, uint128 maximum);
 
     /// @notice Thrown when the provided previous amounts do not match the current on-chain order
     /// @dev Only `amountA`, `amountB`, `availableA`, and `availableB` are compared; immutable fields
@@ -252,28 +269,26 @@ interface ISwapboard is ISemver {
         CreateOrderParams[] calldata orders
     ) external payable returns (uint256[] memory);
 
-    /// @notice Fills an existing order for the given amountA
-    /// @dev Taker receives `amountA` of tokenA and pays proportional tokenB.
-    ///      tokenB in is ceiled (`(amountA * availableB + availableA - 1) / availableA`) so the
-    ///      taker never underpays. Residual tokenA dust is not refunded (not worth the gas); it
-    ///      can be picked up by any user that rounds favorably on another order where the dust
-    ///      token is tokenB.
-    ///      `minAmountB` is the minimum tokenB payment the taker accepts; the quoted ceiled payment may
-    ///      exceed it (e.g. rounding). Reverts with `FillAmountMismatch` when the quote is lower.
-    ///      If tokenB is ETH, requires `msg.value` equal to the ceiled tokenB amount.
+    /// @notice Fills an existing order by sending exact amountB
+    /// @dev Taker sends `amountB` of tokenB and receives floored proportional tokenA
+    ///      (`amountB * availableA / availableB`). Full remaining `amountB == availableB` pays out
+    ///      all remaining `availableA`.
+    ///      `minAmountA` is the minimum tokenA the taker accepts. Reverts with `FillAmountMismatch`
+    ///      when the floored receive is lower.
+    ///      If tokenB is ETH, requires `msg.value == amountB`.
     ///      If tokenA is ETH, pays the taker in ETH.
     /// @param orderId The unique identifier of the order to fill
-    /// @param amountA Amount of tokenA to receive from the order
-    /// @param minAmountB Minimum amount of tokenB the taker is willing to pay
+    /// @param amountB Exact amount of tokenB to send
+    /// @param minAmountA Minimum amount of tokenA the taker will accept
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     function fillOrder(
         uint256 orderId,
-        uint128 amountA,
-        uint128 minAmountB,
+        uint128 amountB,
+        uint128 minAmountA,
         uint256 deadline
     ) external payable;
 
-    /// @notice Fills multiple orders in one call
+    /// @notice Fills multiple orders in one call by exact tokenB sent
     /// @dev The same `orderId` may appear more than once when the order allows partial fills and
     ///      still has remaining liquidity; otherwise later legs revert (`FillAmountTooHigh` /
     ///      `OrderNotActive` / `PartialFillNotAllowed`). Repeated tokenB payments are aggregated
@@ -283,6 +298,35 @@ interface ISwapboard is ISemver {
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     function fillOrders(
         FillOrderParams[] calldata fills,
+        uint256 deadline
+    ) external payable;
+
+    /// @notice Fills an existing order by receiving exact amountA
+    /// @dev Taker receives `amountA` of tokenA and pays ceiled proportional tokenB
+    ///      (`(amountA * availableB + availableA - 1) / availableA`). If that payment consumes all
+    ///      remaining tokenB, remaining tokenA is paid out as well so escrow is not left stranded.
+    ///      `maxAmountB` is the maximum tokenB the taker will send. Reverts with `FillPayTooHigh`
+    ///      when the ceiled payment is higher.
+    ///      If tokenB is ETH, requires `msg.value` equal to the quoted tokenB payment.
+    ///      If tokenA is ETH, pays the taker in ETH.
+    /// @param orderId The unique identifier of the order to fill
+    /// @param amountA Exact amount of tokenA to receive
+    /// @param maxAmountB Maximum amount of tokenB the taker is willing to send
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    function fillOrderPaying(
+        uint256 orderId,
+        uint128 amountA,
+        uint128 maxAmountB,
+        uint256 deadline
+    ) external payable;
+
+    /// @notice Fills multiple orders in one call by exact tokenA received
+    /// @dev Same aggregation and multi-leg rules as `fillOrders`, but each leg specifies `amountA`
+    ///      and `maxAmountB`.
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    function fillOrdersPaying(
+        FillOrderPayingParams[] calldata fills,
         uint256 deadline
     ) external payable;
 

@@ -85,10 +85,9 @@ contract GasBenchmarks is Test {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_order());
 
-        uint128 amountB = FillTestLib.quoteAmountB(_board.getOrder(orderId), ORDER_A);
         vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        FillTestLib.fill(_board, orderId, ORDER_A, amountB, 0);
+        _board.fillOrder(orderId, ORDER_B, ORDER_A, 0);
         uint256 gasUsed = gasBefore - gasleft();
         vm.stopPrank();
 
@@ -101,10 +100,9 @@ contract GasBenchmarks is Test {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_orderPartial());
 
-        uint128 amountB = FillTestLib.quoteAmountB(_board.getOrder(orderId), 40 ether);
         vm.startPrank(_taker);
         uint256 gasBefore = gasleft();
-        _board.fillOrder(orderId, 40 ether, amountB, 0);
+        _board.fillOrder(orderId, 40 ether, 40 ether, 0);
         uint256 gasUsed = gasBefore - gasleft();
         vm.stopPrank();
 
@@ -133,6 +131,61 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("fillOrders(3) gas:", gasUsed);
+        assertLt(gasUsed, 400_000);
+    }
+
+    /// @notice Benchmarks gas used by fillOrderPaying
+    function test_gas_fillOrderPaying() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(_order());
+
+        vm.startPrank(_taker);
+        uint256 gasBefore = gasleft();
+        _board.fillOrderPaying(orderId, ORDER_A, ORDER_B, 0);
+        uint256 gasUsed = gasBefore - gasleft();
+        vm.stopPrank();
+
+        console2.log("fillOrderPaying gas:", gasUsed);
+        assertLt(gasUsed, 150_000);
+    }
+
+    /// @notice Benchmarks gas used by a partial fillOrderPaying
+    function test_gas_fillOrderPaying_partial() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(_orderPartial());
+
+        uint128 payB = 40 ether;
+        vm.startPrank(_taker);
+        uint256 gasBefore = gasleft();
+        _board.fillOrderPaying(orderId, payB, payB, 0);
+        uint256 gasUsed = gasBefore - gasleft();
+        vm.stopPrank();
+
+        console2.log("fillOrderPaying partial gas:", gasUsed);
+        assertLt(gasUsed, 155_000);
+    }
+
+    /// @notice Benchmarks gas used by fillOrdersPaying for three same-tokenB orders
+    function test_gas_fillOrdersPaying() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
+        for (uint256 i = 0; i < 3; ++i) {
+            orders[i] = _order();
+        }
+
+        vm.prank(_maker);
+        uint256[] memory ids = _board.createOrders(orders);
+
+        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](3);
+        for (uint256 j = 0; j < 3; ++j) {
+            fills[j] = FillTestLib.fillPayingParams(_board.getOrder(ids[j]), ids[j], ORDER_B);
+        }
+
+        vm.prank(_taker);
+        uint256 gasBefore = gasleft();
+        _board.fillOrdersPaying(fills, 0);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        console2.log("fillOrdersPaying(3) gas:", gasUsed);
         assertLt(gasUsed, 400_000);
     }
 
