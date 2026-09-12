@@ -38,19 +38,25 @@ contract SwapboardHandler is Test {
     address[] internal _actors;
     address internal _currentActor;
 
-    // Counters for call tracking
-    uint256 private _callsCreateOrder;
-    uint256 private _callsCreateOrderSellEth;
-    uint256 private _callsCreateOrderWantEth;
-    uint256 private _callsCreateOrderAllowPartial;
-    uint256 private _callsCreateOrders;
-    uint256 private _callsFillOrder;
-    uint256 private _callsFillOrders;
-    uint256 private _callsCancelOrder;
-    uint256 private _callsCancelOrders;
-    uint256 private _callsModifyOrder;
-    uint256 private _callsModifyOrders;
-    uint256 private _callsSetPartialFillAllowed;
+    // Counters for call tracking (packed to satisfy solhint max-states-count)
+    struct CallCounts {
+        uint256 createOrder;
+        uint256 createOrderSellEth;
+        uint256 createOrderWantEth;
+        uint256 createOrderAllowPartial;
+        uint256 createOrders;
+        uint256 fillOrder;
+        uint256 fillOrders;
+        uint256 fillOrderPaying;
+        uint256 fillOrdersPaying;
+        uint256 cancelOrder;
+        uint256 cancelOrders;
+        uint256 modifyOrder;
+        uint256 modifyOrders;
+        uint256 setPartialFillAllowed;
+    }
+
+    CallCounts private _calls;
 
     modifier useActor(
         uint256 actorIndexSeed
@@ -137,51 +143,59 @@ contract SwapboardHandler is Test {
     }
 
     function getCallsCreateOrder() external view returns (uint256) {
-        return _callsCreateOrder;
+        return _calls.createOrder;
     }
 
     function getCallsCreateOrderSellEth() external view returns (uint256) {
-        return _callsCreateOrderSellEth;
+        return _calls.createOrderSellEth;
     }
 
     function getCallsCreateOrderWantEth() external view returns (uint256) {
-        return _callsCreateOrderWantEth;
+        return _calls.createOrderWantEth;
     }
 
     function getCallsCreateOrderAllowPartial() external view returns (uint256) {
-        return _callsCreateOrderAllowPartial;
+        return _calls.createOrderAllowPartial;
     }
 
     function getCallsCreateOrders() external view returns (uint256) {
-        return _callsCreateOrders;
+        return _calls.createOrders;
     }
 
     function getCallsFillOrder() external view returns (uint256) {
-        return _callsFillOrder;
+        return _calls.fillOrder;
     }
 
     function getCallsFillOrders() external view returns (uint256) {
-        return _callsFillOrders;
+        return _calls.fillOrders;
+    }
+
+    function getCallsFillOrderPaying() external view returns (uint256) {
+        return _calls.fillOrderPaying;
+    }
+
+    function getCallsFillOrdersPaying() external view returns (uint256) {
+        return _calls.fillOrdersPaying;
     }
 
     function getCallsCancelOrder() external view returns (uint256) {
-        return _callsCancelOrder;
+        return _calls.cancelOrder;
     }
 
     function getCallsCancelOrders() external view returns (uint256) {
-        return _callsCancelOrders;
+        return _calls.cancelOrders;
     }
 
     function getCallsModifyOrder() external view returns (uint256) {
-        return _callsModifyOrder;
+        return _calls.modifyOrder;
     }
 
     function getCallsModifyOrders() external view returns (uint256) {
-        return _callsModifyOrders;
+        return _calls.modifyOrders;
     }
 
     function getCallsSetPartialFillAllowed() external view returns (uint256) {
-        return _callsSetPartialFillAllowed;
+        return _calls.setPartialFillAllowed;
     }
 
     /// @notice Creates a new ERC20/ERC20 order with bounded amounts
@@ -198,7 +212,7 @@ contract SwapboardHandler is Test {
             return; // Skip if insufficient balance
         }
 
-        ++_callsCreateOrder;
+        ++_calls.createOrder;
 
         // casting to 'uint128' is safe because amounts are bounded well below uint128.max
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -232,7 +246,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsCreateOrderSellEth;
+        ++_calls.createOrderSellEth;
 
         // casting to 'uint128' is safe because amounts are bounded well below uint128.max
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -266,7 +280,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsCreateOrderWantEth;
+        ++_calls.createOrderWantEth;
 
         // casting to 'uint128' is safe because amounts are bounded well below uint128.max
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -300,7 +314,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsCreateOrderAllowPartial;
+        ++_calls.createOrderAllowPartial;
 
         // casting to 'uint128' is safe because amounts are bounded well below uint128.max
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -359,12 +373,88 @@ contract SwapboardHandler is Test {
             partialFillAllowed: true
         });
 
-        ++_callsCreateOrders;
+        ++_calls.createOrders;
         uint256[] memory ids = _board.createOrders(orders);
 
         _ghostTotalTokenADeposited += amountA;
         _trackCreatedOrder(ids[0], amountA1128, amountB128);
         _trackCreatedOrder(ids[1], amountA2128, amountB128);
+    }
+
+    struct LoadedOrder {
+        bool ok;
+        uint256 orderId;
+        ISwapboard.Order order;
+    }
+
+    struct LoadedOrderPair {
+        bool ok;
+        uint256 id1;
+        ISwapboard.Order order1;
+        uint256 id2;
+        ISwapboard.Order order2;
+    }
+
+    struct ModifyTopUp {
+        bool funded;
+        uint256 value;
+    }
+
+    /// @notice Loads a bounded order id when any orders exist; returns false if none
+    function _tryLoadOrder(
+        uint256 orderIdSeed
+    ) private view returns (LoadedOrder memory result) {
+        uint256 nextId = _board.getNextOrderId();
+        if (nextId == 0) {
+            return result;
+        }
+
+        result.orderId = bound(orderIdSeed, 0, nextId - 1);
+        result.order = _board.getOrder(result.orderId);
+        result.ok = true;
+
+        return result;
+    }
+
+    /// @notice Loads a bounded active order; returns false when missing or inactive
+    function _tryLoadActiveOrder(
+        uint256 orderIdSeed
+    ) private view returns (LoadedOrder memory result) {
+        result = _tryLoadOrder(orderIdSeed);
+        if (!result.ok || !result.order.active) {
+            result.ok = false;
+        }
+
+        return result;
+    }
+
+    /// @notice Loads two distinct active same-ERC20-tokenB orders for batch fills
+    function _tryLoadTwoDistinctActiveSameErc20B(
+        uint256 orderIdSeed1,
+        uint256 orderIdSeed2
+    ) private view returns (LoadedOrderPair memory result) {
+        uint256 nextId = _board.getNextOrderId();
+        if (nextId < 2) {
+            return result;
+        }
+
+        result.id1 = bound(orderIdSeed1, 0, nextId - 1);
+        result.id2 = bound(orderIdSeed2, 0, nextId - 1);
+        if (result.id1 == result.id2) {
+            return result;
+        }
+
+        result.order1 = _board.getOrder(result.id1);
+        result.order2 = _board.getOrder(result.id2);
+        if (!result.order1.active || !result.order2.active) {
+            return result;
+        }
+        if (result.order1.tokenB != result.order2.tokenB || result.order1.tokenB == _ETH) {
+            return result;
+        }
+        result.ok = true;
+
+        return result;
     }
 
     /// @notice Fills an existing order (full or partial when allowed)
@@ -373,17 +463,48 @@ contract SwapboardHandler is Test {
         uint256 orderIdSeed,
         uint256 fillAmountSeed
     ) external useActor(actorSeed) {
-        uint256 nextId = _board.getNextOrderId();
-        if (nextId == 0) {
-            return; // No orders exist
+        LoadedOrder memory loaded = _tryLoadActiveOrder(orderIdSeed);
+        if (!loaded.ok) {
+            return;
+        }
+        ISwapboard.Order memory order = loaded.order;
+
+        uint128 fillB128;
+        if (order.partialFillAllowed) {
+            // casting to 'uint128' is safe because fill amount is bounded by order.availableB
+            // forge-lint: disable-next-line(unsafe-typecast)
+            fillB128 = uint128(bound(fillAmountSeed, 1, order.availableB));
+        } else {
+            fillB128 = order.availableB;
         }
 
-        uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
-        ISwapboard.Order memory order = _board.getOrder(orderId);
-
-        if (!order.active) {
-            return; // Order not active
+        uint128 amountAOut = FillTestLib.quoteAmountA(order, fillB128);
+        if (amountAOut == 0 || !_actorCanPayTokenB(order.tokenB, fillB128)) {
+            return;
         }
+
+        ++_calls.fillOrder;
+
+        if (order.tokenB == _ETH) {
+            _board.fillOrder{value: fillB128}(loaded.orderId, fillB128, amountAOut, 0);
+        } else {
+            _board.fillOrder(loaded.orderId, fillB128, amountAOut, 0);
+        }
+
+        _recordFillGhosts(order, loaded.orderId, amountAOut);
+    }
+
+    /// @notice Fills an existing order by paying amountB (full or partial when allowed)
+    function fillOrderPaying(
+        uint256 actorSeed,
+        uint256 orderIdSeed,
+        uint256 fillAmountSeed
+    ) external useActor(actorSeed) {
+        LoadedOrder memory loaded = _tryLoadActiveOrder(orderIdSeed);
+        if (!loaded.ok) {
+            return;
+        }
+        ISwapboard.Order memory order = loaded.order;
 
         uint128 fillA128;
         if (order.partialFillAllowed) {
@@ -394,20 +515,21 @@ contract SwapboardHandler is Test {
             fillA128 = order.availableA;
         }
 
+        uint128 amountAOut = FillTestLib.quoteFillPayingAmountA(order, fillA128);
         uint128 amountBIn = FillTestLib.quoteAmountB(order, fillA128);
         if (amountBIn == 0 || !_actorCanPayTokenB(order.tokenB, amountBIn)) {
             return;
         }
 
-        ++_callsFillOrder;
+        ++_calls.fillOrderPaying;
 
         if (order.tokenB == _ETH) {
-            _board.fillOrder{value: amountBIn}(orderId, fillA128, amountBIn, 0);
+            _board.fillOrderPaying{value: amountBIn}(loaded.orderId, fillA128, amountBIn, 0);
         } else {
-            _board.fillOrder(orderId, fillA128, amountBIn, 0);
+            _board.fillOrderPaying(loaded.orderId, fillA128, amountBIn, 0);
         }
 
-        _recordFillGhosts(order, orderId, fillA128);
+        _recordFillGhosts(order, loaded.orderId, amountAOut);
     }
 
     /// @notice Fills two same-tokenB ERC20 orders in one aggregated pull
@@ -416,41 +538,54 @@ contract SwapboardHandler is Test {
         uint256 orderIdSeed1,
         uint256 orderIdSeed2
     ) external useActor(actorSeed) {
-        uint256 nextId = _board.getNextOrderId();
-        if (nextId < 2) {
+        LoadedOrderPair memory loaded = _tryLoadTwoDistinctActiveSameErc20B(orderIdSeed1, orderIdSeed2);
+        if (!loaded.ok) {
             return;
         }
+        ISwapboard.Order memory order1 = loaded.order1;
+        ISwapboard.Order memory order2 = loaded.order2;
 
-        uint256 id1 = bound(orderIdSeed1, 0, nextId - 1);
-        uint256 id2 = bound(orderIdSeed2, 0, nextId - 1);
-        if (id1 == id2) {
-            return;
-        }
-
-        ISwapboard.Order memory order1 = _board.getOrder(id1);
-        ISwapboard.Order memory order2 = _board.getOrder(id2);
-        if (!order1.active || !order2.active) {
-            return;
-        }
-        if (order1.tokenB != order2.tokenB || order1.tokenB == _ETH) {
-            return;
-        }
-
-        uint256 amountBIn1 = order1.availableB;
-        uint256 amountBIn2 = order2.availableB;
-        uint256 totalBIn = amountBIn1 + amountBIn2;
+        uint256 totalBIn = uint256(order1.availableB) + uint256(order2.availableB);
         if (!_actorCanPayTokenB(order1.tokenB, totalBIn)) {
             return;
         }
 
-        ++_callsFillOrders;
+        ++_calls.fillOrders;
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
-        fills[0] = FillTestLib.fillParams(_board.getOrder(id1), id1, order1.availableA);
-        fills[1] = FillTestLib.fillParams(_board.getOrder(id2), id2, order2.availableA);
+        fills[0] = FillTestLib.fillParams(order1, loaded.id1, order1.availableA);
+        fills[1] = FillTestLib.fillParams(order2, loaded.id2, order2.availableA);
         _board.fillOrders(fills, 0);
 
-        _recordFillGhosts(order1, id1, order1.availableA);
-        _recordFillGhosts(order2, id2, order2.availableA);
+        _recordFillGhosts(order1, loaded.id1, order1.availableA);
+        _recordFillGhosts(order2, loaded.id2, order2.availableA);
+    }
+
+    /// @notice Fills two same-tokenB ERC20 orders by paying amountB in one aggregated pull
+    function fillOrdersPaying(
+        uint256 actorSeed,
+        uint256 orderIdSeed1,
+        uint256 orderIdSeed2
+    ) external useActor(actorSeed) {
+        LoadedOrderPair memory loaded = _tryLoadTwoDistinctActiveSameErc20B(orderIdSeed1, orderIdSeed2);
+        if (!loaded.ok) {
+            return;
+        }
+        ISwapboard.Order memory order1 = loaded.order1;
+        ISwapboard.Order memory order2 = loaded.order2;
+
+        uint256 totalBIn = uint256(order1.availableB) + uint256(order2.availableB);
+        if (!_actorCanPayTokenB(order1.tokenB, totalBIn)) {
+            return;
+        }
+
+        ++_calls.fillOrdersPaying;
+        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
+        fills[0] = FillTestLib.fillPayingParams(order1, loaded.id1, order1.availableB);
+        fills[1] = FillTestLib.fillPayingParams(order2, loaded.id2, order2.availableB);
+        _board.fillOrdersPaying(fills, 0);
+
+        _recordFillGhosts(order1, loaded.id1, order1.availableA);
+        _recordFillGhosts(order2, loaded.id2, order2.availableA);
     }
 
     /// @notice Fills one partial-fill order with two sequential legs in one batch
@@ -458,14 +593,51 @@ contract SwapboardHandler is Test {
         uint256 actorSeed,
         uint256 orderIdSeed
     ) external useActor(actorSeed) {
-        uint256 nextId = _board.getNextOrderId();
-        if (nextId == 0) {
+        LoadedOrder memory loaded = _tryLoadActiveOrder(orderIdSeed);
+        ISwapboard.Order memory order = loaded.order;
+        if (!loaded.ok || !order.partialFillAllowed || order.availableB < 2) {
+            return;
+        }
+        if (order.tokenB == _ETH) {
             return;
         }
 
-        uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
-        ISwapboard.Order memory order = _board.getOrder(orderId);
-        if (!order.active || !order.partialFillAllowed || order.availableA < 2) {
+        uint128 fillB1 = uint128(order.availableB / 2);
+        uint128 amountAOut1 = FillTestLib.quoteAmountA(order, fillB1);
+        if (amountAOut1 == 0 || fillB1 == 0 || fillB1 > order.availableB - 1) {
+            return;
+        }
+        uint128 fillB2 = uint128(order.availableB - fillB1);
+        ISwapboard.Order memory afterFirst = order;
+        unchecked {
+            afterFirst.availableA = uint128(uint256(order.availableA) - uint256(amountAOut1));
+            afterFirst.availableB = uint128(uint256(order.availableB) - uint256(fillB1));
+        }
+        uint128 amountAOut2 = FillTestLib.quoteAmountA(afterFirst, fillB2);
+        if (
+            fillB2 == 0 || fillB2 > afterFirst.availableB || amountAOut2 == 0
+                || !_actorCanPayTokenB(order.tokenB, uint256(fillB1) + uint256(fillB2))
+        ) {
+            return;
+        }
+
+        ++_calls.fillOrders;
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
+        fills[0] = ISwapboard.FillOrderParams({orderId: loaded.orderId, amountB: fillB1, minAmountA: amountAOut1});
+        fills[1] = ISwapboard.FillOrderParams({orderId: loaded.orderId, amountB: fillB2, minAmountA: amountAOut2});
+        _board.fillOrders(fills, 0);
+
+        _recordFillGhosts(order, loaded.orderId, uint256(amountAOut1) + uint256(amountAOut2));
+    }
+
+    /// @notice Fills one partial-fill order with two amountB-driven legs in one batch
+    function fillOrdersPayingPartialSameOrder(
+        uint256 actorSeed,
+        uint256 orderIdSeed
+    ) external useActor(actorSeed) {
+        LoadedOrder memory loaded = _tryLoadActiveOrder(orderIdSeed);
+        ISwapboard.Order memory order = loaded.order;
+        if (!loaded.ok || !order.partialFillAllowed || order.availableA < 2) {
             return;
         }
         if (order.tokenB == _ETH) {
@@ -473,23 +645,34 @@ contract SwapboardHandler is Test {
         }
 
         uint128 fillA1 = uint128(order.availableA / 2);
-        uint128 fillA2 = uint128(order.availableA - fillA1);
-        uint256 amountBIn1 =
-            (uint256(fillA1) * uint256(order.availableB) + uint256(order.availableA) - 1) / uint256(order.availableA);
-        uint256 remA = order.availableA - fillA1;
-        uint256 remB = order.availableB - amountBIn1;
-        uint256 amountBIn2 = remA == 0 ? remB : (uint256(fillA2) * remB + remA - 1) / remA;
-        if (amountBIn1 == 0 || amountBIn2 == 0 || !_actorCanPayTokenB(order.tokenB, amountBIn1 + amountBIn2)) {
+        uint128 amountAOut1 = FillTestLib.quoteFillPayingAmountA(order, fillA1);
+        uint128 amountBIn1 = FillTestLib.quoteAmountB(order, fillA1);
+        if (amountAOut1 == 0 || amountBIn1 == 0 || amountAOut1 > order.availableA - 1) {
             return;
         }
 
-        ++_callsFillOrders;
-        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
-        fills[0] = FillTestLib.fillParams(_board.getOrder(orderId), orderId, fillA1);
-        fills[1] = FillTestLib.fillParams(_board.getOrder(orderId), orderId, fillA2);
-        _board.fillOrders(fills, 0);
+        ISwapboard.Order memory afterFirst = order;
+        unchecked {
+            afterFirst.availableA = uint128(uint256(order.availableA) - uint256(amountAOut1));
+            afterFirst.availableB = uint128(uint256(order.availableB) - uint256(amountBIn1));
+        }
+        uint128 fillA2 = afterFirst.availableA;
+        uint128 amountAOut2 = FillTestLib.quoteFillPayingAmountA(afterFirst, fillA2);
+        uint128 amountBIn2 = FillTestLib.quoteAmountB(afterFirst, fillA2);
+        if (
+            fillA2 == 0 || amountAOut2 == 0 || amountBIn2 == 0
+                || !_actorCanPayTokenB(order.tokenB, uint256(amountBIn1) + uint256(amountBIn2))
+        ) {
+            return;
+        }
 
-        _recordFillGhosts(order, orderId, uint256(fillA1) + uint256(fillA2));
+        ++_calls.fillOrdersPaying;
+        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
+        fills[0] = ISwapboard.FillOrderPayingParams({orderId: loaded.orderId, amountA: fillA1, maxAmountB: amountBIn1});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: loaded.orderId, amountA: fillA2, maxAmountB: amountBIn2});
+        _board.fillOrdersPaying(fills, 0);
+
+        _recordFillGhosts(order, loaded.orderId, uint256(amountAOut1) + uint256(amountAOut2));
     }
 
     /// @notice Returns whether the current actor can pay `amount` of `tokenB`
@@ -543,7 +726,7 @@ contract SwapboardHandler is Test {
         // Only maker can cancel
         vm.prank(order.maker);
 
-        ++_callsCancelOrder;
+        ++_calls.cancelOrder;
 
         _board.cancelOrder(orderId);
 
@@ -587,7 +770,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsCancelOrders;
+        ++_calls.cancelOrders;
         uint256[] memory ids = new uint256[](2);
         ids[0] = id1;
         ids[1] = id2;
@@ -626,12 +809,12 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        (bool funded, uint256 value) = _modifyOrderTopUp(order, newA);
-        if (!funded) {
+        ModifyTopUp memory topUp = _modifyOrderTopUp(order, newA);
+        if (!topUp.funded) {
             return;
         }
 
-        ++_callsModifyOrder;
+        ++_calls.modifyOrder;
 
         ISwapboard.OrderAmounts memory previous = ISwapboard.OrderAmounts({
             amountA: order.amountA, amountB: order.amountB, availableA: order.availableA, availableB: order.availableB
@@ -639,7 +822,7 @@ contract SwapboardHandler is Test {
         ISwapboard.ModifyOrderParams memory updated =
             ISwapboard.ModifyOrderParams({availableA: newA, availableB: newB});
 
-        _board.modifyOrder{value: value}(orderId, previous, updated);
+        _board.modifyOrder{value: topUp.value}(orderId, previous, updated);
         _trackModifyOrderGhosts(order, orderId, newA, newB);
     }
 
@@ -661,9 +844,10 @@ contract SwapboardHandler is Test {
         uint256 newASeed2,
         uint256 newBSeed2
     ) external useActor(actorSeed) {
-        (bool ok, uint256 id1, uint256 id2, ISwapboard.Order memory order1, ISwapboard.Order memory order2) =
-            _pickTwoOwnedOrders(orderIdSeed1, orderIdSeed2);
-        if (!ok || order1.tokenA != order2.tokenA || order1.tokenA == _ETH) {
+        LoadedOrderPair memory loaded = _pickTwoOwnedOrders(orderIdSeed1, orderIdSeed2);
+        ISwapboard.Order memory order1 = loaded.order1;
+        ISwapboard.Order memory order2 = loaded.order2;
+        if (!loaded.ok || order1.tokenA != order2.tokenA || order1.tokenA == _ETH) {
             return;
         }
 
@@ -673,9 +857,9 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        (bool funded1,) = _modifyOrderTopUp(order1, amounts.newA1);
-        (bool funded2,) = _modifyOrderTopUp(order2, amounts.newA2);
-        if (!funded1 || !funded2) {
+        ModifyTopUp memory topUp1 = _modifyOrderTopUp(order1, amounts.newA1);
+        ModifyTopUp memory topUp2 = _modifyOrderTopUp(order2, amounts.newA2);
+        if (!topUp1.funded || !topUp2.funded) {
             return;
         }
 
@@ -684,7 +868,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        _commitTwoModifies(id1, order1, id2, order2, amounts, 0);
+        _commitTwoModifies(loaded.id1, order1, loaded.id2, order2, amounts, 0);
     }
 
     /// @notice Modifies two ETH-sell orders owned by the actor, using netted msg.value
@@ -697,9 +881,10 @@ contract SwapboardHandler is Test {
         uint256 newASeed2,
         uint256 newBSeed2
     ) external useActor(actorSeed) {
-        (bool ok, uint256 id1, uint256 id2, ISwapboard.Order memory order1, ISwapboard.Order memory order2) =
-            _pickTwoOwnedOrders(orderIdSeed1, orderIdSeed2);
-        if (!ok || order1.tokenA != _ETH || order2.tokenA != _ETH) {
+        LoadedOrderPair memory loaded = _pickTwoOwnedOrders(orderIdSeed1, orderIdSeed2);
+        ISwapboard.Order memory order1 = loaded.order1;
+        ISwapboard.Order memory order2 = loaded.order2;
+        if (!loaded.ok || order1.tokenA != _ETH || order2.tokenA != _ETH) {
             return;
         }
 
@@ -714,7 +899,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        _commitTwoModifies(id1, order1, id2, order2, amounts, netPull);
+        _commitTwoModifies(loaded.id1, order1, loaded.id2, order2, amounts, netPull);
     }
 
     /// @notice Calls `modifyOrders` and updates ghosts for a validated pair
@@ -726,7 +911,7 @@ contract SwapboardHandler is Test {
         BoundModifyAmounts memory amounts,
         uint256 ethValue
     ) private {
-        ++_callsModifyOrders;
+        ++_calls.modifyOrders;
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = ISwapboard.ModifyOrdersParams({
@@ -759,33 +944,29 @@ contract SwapboardHandler is Test {
     function _pickTwoOwnedOrders(
         uint256 orderIdSeed1,
         uint256 orderIdSeed2
-    )
-        private
-        view
-        returns (bool ok, uint256 id1, uint256 id2, ISwapboard.Order memory order1, ISwapboard.Order memory order2)
-    {
+    ) private view returns (LoadedOrderPair memory result) {
         uint256 nextId = _board.getNextOrderId();
         if (nextId < 2) {
-            return (ok, id1, id2, order1, order2);
+            return result;
         }
 
-        id1 = bound(orderIdSeed1, 0, nextId - 1);
-        id2 = bound(orderIdSeed2, 0, nextId - 1);
-        if (id1 == id2) {
-            return (ok, id1, id2, order1, order2);
+        result.id1 = bound(orderIdSeed1, 0, nextId - 1);
+        result.id2 = bound(orderIdSeed2, 0, nextId - 1);
+        if (result.id1 == result.id2) {
+            return result;
         }
 
-        order1 = _board.getOrder(id1);
-        order2 = _board.getOrder(id2);
-        if (!order1.active || !order2.active) {
-            return (ok, id1, id2, order1, order2);
+        result.order1 = _board.getOrder(result.id1);
+        result.order2 = _board.getOrder(result.id2);
+        if (!result.order1.active || !result.order2.active) {
+            return result;
         }
-        if (order1.maker != _currentActor || order2.maker != _currentActor) {
-            return (ok, id1, id2, order1, order2);
+        if (result.order1.maker != _currentActor || result.order2.maker != _currentActor) {
+            return result;
         }
 
-        ok = true;
-        return (ok, id1, id2, order1, order2);
+        result.ok = true;
+        return result;
     }
 
     /// @notice Bounds new remainings for a two-order modify; rejects no-change legs
@@ -844,23 +1025,23 @@ contract SwapboardHandler is Test {
     function _modifyOrderTopUp(
         ISwapboard.Order memory order,
         uint128 newA
-    ) private view returns (bool funded, uint256 value) {
+    ) private view returns (ModifyTopUp memory result) {
         if (newA > order.availableA) {
             uint256 delta = uint256(newA) - uint256(order.availableA);
             if (order.tokenA == _ETH) {
                 if (_currentActor.balance < delta) {
-                    return (funded, value);
+                    return result;
                 }
-                funded = true;
-                value = delta;
-                return (funded, value);
+                result.funded = true;
+                result.value = delta;
+                return result;
             }
             if (_tokenA.balanceOf(_currentActor) < delta) {
-                return (funded, value);
+                return result;
             }
         }
-        funded = true;
-        return (funded, value);
+        result.funded = true;
+        return result;
     }
 
     /// @notice Updates ghost accounting after a successful modifyOrder
@@ -909,7 +1090,7 @@ contract SwapboardHandler is Test {
             return;
         }
 
-        ++_callsSetPartialFillAllowed;
+        ++_calls.setPartialFillAllowed;
         _board.setPartialFillAllowed(orderId, partialFillAllowed);
     }
 

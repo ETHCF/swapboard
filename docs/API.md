@@ -289,11 +289,11 @@ async function fillOrder(provider, signer, orderId) {
     "function approve(address spender, uint256 amount) returns (bool)"
   ], signer);
 
-  const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, order.amountB);
+  const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, order.availableB);
   await approveTx.wait();
 
-  // Fill order
-  const tx = await contract.fillOrder(orderId);
+  // Fill: send exact remaining tokenB, require at least remaining tokenA
+  const tx = await contract.fillOrder(orderId, order.availableB, order.availableA, 0);
   await tx.wait();
 }
 ```
@@ -426,8 +426,77 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `ETHAmountMismatch(uint256,uint256)` | `0x8230dc8f` | `msg.value` does not match the required ETH amount |
 | `OrderStateMismatch(uint256,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128)` | `0xe796ec17` | `modifyOrder` / `modifyOrders` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` |
 | `DuplicateOrderId(uint256)` | `0x54b9c511` | Same `orderId` appears more than once in a `cancelOrders` or `modifyOrders` batch |
+| `FillAmountTooHigh(uint256,uint128,uint128)` | `0x535a34f0` | Requested fill amount exceeds remaining liquidity (`amountB` for `fillOrder`, `amountA` for `fillOrderPaying`) |
+| `FillAmountMismatch(uint256,uint128,uint128)` | `0x19113a72` | Quoted tokenA receive is below the taker's `minAmountA` (`fillOrder`) |
+| `FillPayTooHigh(uint256,uint128,uint128)` | `0x489a6af8` | Quoted tokenB payment exceeds the taker's `maxAmountB` (`fillOrderPaying`) |
 
 ## Methods
+
+### `fillOrder`
+
+Taker sends exact `amountB` of tokenB and receives floored proportional tokenA. `minAmountA` is the minimum they will accept.
+
+```solidity
+struct FillOrderParams {
+    uint256 orderId;
+    uint128 amountB;      // exact tokenB to send
+    uint128 minAmountA;   // minimum tokenA willing to receive
+}
+
+function fillOrder(
+    uint256 orderId,
+    uint128 amountB,
+    uint128 minAmountA,
+    uint256 deadline
+) external payable;
+
+function fillOrders(
+    FillOrderParams[] calldata fills,
+    uint256 deadline
+) external payable;
+```
+
+Behavior:
+
+- tokenB in is exact: `amountB`.
+- tokenA out is floored: `amountB * availableA / availableB` (full remaining `amountB == availableB` returns all `availableA`).
+- Reverts with `FillAmountMismatch` when quoted tokenA is below `minAmountA`.
+- Reverts with `FillAmountTooHigh` when `amountB` exceeds `availableB`.
+- If tokenB is ETH, `msg.value` must equal `amountB`.
+- Empty `fillOrders` reverts with `ZeroAmount`.
+
+### `fillOrderPaying`
+
+Taker receives exact `amountA` of tokenA and pays ceiled proportional tokenB. `maxAmountB` is the maximum they will send.
+
+```solidity
+struct FillOrderPayingParams {
+    uint256 orderId;
+    uint128 amountA;      // exact tokenA to receive
+    uint128 maxAmountB;   // maximum tokenB willing to send
+}
+
+function fillOrderPaying(
+    uint256 orderId,
+    uint128 amountA,
+    uint128 maxAmountB,
+    uint256 deadline
+) external payable;
+
+function fillOrdersPaying(
+    FillOrderPayingParams[] calldata fills,
+    uint256 deadline
+) external payable;
+```
+
+Behavior:
+
+- tokenA out is exact: `amountA` (or all remaining tokenA when the ceiled payment consumes remaining tokenB, so escrow is not stranded).
+- tokenB in is ceiled: `(amountA * availableB + availableA - 1) / availableA` (full remaining `amountA == availableA` pays all `availableB`).
+- Reverts with `FillPayTooHigh` when quoted tokenB exceeds `maxAmountB`.
+- Reverts with `FillAmountTooHigh` when `amountA` exceeds `availableA`.
+- Same ETH / aggregation / deadline rules as `fillOrder` / `fillOrders` (`msg.value` must equal the quoted tokenB payment when tokenB is ETH).
+- Empty `fillOrdersPaying` reverts with `ZeroAmount`.
 
 ### `modifyOrder`
 

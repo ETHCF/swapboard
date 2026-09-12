@@ -169,11 +169,9 @@ contract SwapboardIntegrationTest is Test {
         _fillOrder(orderId, 10 ether);
         vm.stopPrank();
 
-        ISwapboard.Order memory orderBeforeCharlie = _board.getOrder(orderId);
-        uint128 amountBCharlie = FillTestLib.quoteAmountB(orderBeforeCharlie, 10 ether);
         vm.startPrank(_charlie);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        _board.fillOrder(orderId, 10 ether, amountBCharlie, 0);
+        _board.fillOrder(orderId, 30_000e6, 10 ether, 0);
         vm.stopPrank();
 
         assertFalse(_board.getOrder(orderId).active);
@@ -497,9 +495,8 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_charlie);
         _usdc.approve(address(_board), 30_000e6);
-        ISwapboard.Order memory order = _board.getOrder(orderId);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, 4 ether, remainingA));
-        _board.fillOrder(orderId, 4 ether, FillTestLib.quoteAmountB(order, 4 ether), 0);
+        _board.fillOrderPaying(orderId, 4 ether, type(uint128).max, 0);
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));
@@ -614,8 +611,10 @@ contract SwapboardIntegrationTest is Test {
         vm.stopPrank();
 
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
-        fills[0] = FillTestLib.fillParams(_board.getOrder(ids[0]), ids[0], 10 ether);
-        fills[1] = FillTestLib.fillParams(_board.getOrder(ids[1]), ids[1], 20 ether);
+        ISwapboard.Order memory order0 = _board.getOrder(ids[0]);
+        ISwapboard.Order memory order1 = _board.getOrder(ids[1]);
+        fills[0] = FillTestLib.fillParams(order0, ids[0], order0.availableA);
+        fills[1] = FillTestLib.fillParams(order1, ids[1], order1.availableA);
 
         vm.startPrank(_bob);
         _usdc.approve(address(_board), 88_000e6);
@@ -862,15 +861,17 @@ contract SwapboardIntegrationTest is Test {
         uint256 orderId,
         uint128 amountA
     ) private {
-        FillTestLib.fill(_board, orderId, amountA);
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        uint128 amountB = FillTestLib.quoteAmountB(order, amountA);
+        FillTestLib.fill(_board, orderId, amountB, amountA);
     }
 
     function _fillOrderPayEth(
         uint256 orderId,
         uint128 amountA,
-        uint128 minAmountB
+        uint128 value
     ) private {
-        FillTestLib.fillPayEth(_board, orderId, amountA, minAmountB);
+        FillTestLib.fillPayEth(_board, orderId, amountA, value);
     }
 
     function _order(
