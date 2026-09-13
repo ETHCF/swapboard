@@ -25,7 +25,47 @@ const CONFIG = {
   MAX_BATCH_CREATE: 10,
 };
 
-const EXPECTED_CHAIN_ID = 1;
+/**
+ * Chains a build can target. The page talks to exactly one of them, picked by
+ * BUILD_TARGET below. `chain` is the EIP-3085 shape wallet_addEthereumChain takes.
+ * @constant {Object<string, Object>}
+ */
+const CHAINS = {
+  mainnet: {
+    id: 1,
+    label: "Ethereum mainnet",
+    chain: {
+      chainId: "0x1",
+      chainName: "Ethereum",
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q"],
+      blockExplorerUrls: ["https://etherscan.io"],
+    },
+  },
+  sepolia: {
+    id: 11155111,
+    label: "Sepolia",
+    chain: {
+      chainId: "0xaa36a7",
+      chainName: "Sepolia",
+      nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"],
+      blockExplorerUrls: ["https://sepolia.etherscan.io"],
+    },
+  },
+};
+
+/**
+ * The network this build points at. The trailing `deploy:network` marker is
+ * load-bearing: deploy.sh rewrites it to the network it just deployed to.
+ */
+const BUILD_TARGET = {
+  network: "mainnet", // deploy:network
+};
+
+const ACTIVE_CHAIN = CHAINS[BUILD_TARGET.network];
+
+const EXPECTED_CHAIN_ID = ACTIVE_CHAIN.id;
 
 /**
  * Sentinel address representing native ETH in v2 orders.
@@ -1736,6 +1776,8 @@ if (typeof window !== "undefined") {
     // Config
     CONFIG,
     EXPECTED_CHAIN_ID,
+    CHAINS,
+    ACTIVE_CHAIN,
 
     // Utility functions
     escapeHtml,
@@ -1843,6 +1885,8 @@ if (typeof module !== "undefined" && module.exports) {
     // Config
     CONFIG,
     EXPECTED_CHAIN_ID,
+    CHAINS,
+    ACTIVE_CHAIN,
     COINGECKO_ID_MAP,
     NATIVE_ETH,
 

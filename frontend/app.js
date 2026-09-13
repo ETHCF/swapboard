@@ -25,6 +25,7 @@
   const {
     CONFIG,
     EXPECTED_CHAIN_ID,
+    ACTIVE_CHAIN,
     WATCHED_ORDERS_KEY,
     escapeHtml,
     isValidAddress,
@@ -73,17 +74,13 @@
   // Configuration
   // ============================================================================
 
-  // CONFIG and EXPECTED_CHAIN_ID come from lib.js. The per-version deployment
-  // coordinates live there too, on VERSION_CAPS, and are what deploy.sh patches;
-  // they are resolved to CONTRACT_ADDRESS / SUBGRAPH_URL below, once the active
-  // version is known.
-  const EXPECTED_CHAIN = {
-    chainId: "0x1",
-    chainName: "Ethereum",
-    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: ["https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q"],
-    blockExplorerUrls: ["https://etherscan.io"],
-  };
+  // CONFIG, EXPECTED_CHAIN_ID and the chain this build targets come from lib.js.
+  // The per-version deployment coordinates live there too, on VERSION_CAPS, and
+  // are what deploy.sh patches; they are resolved to CONTRACT_ADDRESS /
+  // SUBGRAPH_URL below, once the active version is known.
+  const EXPECTED_CHAIN = ACTIVE_CHAIN.chain;
+  const EXPECTED_CHAIN_LABEL = ACTIVE_CHAIN.label;
+  const EXPLORER_URL = EXPECTED_CHAIN.blockExplorerUrls[0];
 
   // ============================================================================
   // Protocol Version
@@ -698,9 +695,9 @@
       if (!res.ok) return;
 
       const data = await res.json();
-      // Filter to Ethereum mainnet (chainId: 1)
+      // Filter to the chain this build targets
       uniswapTokens = (data.tokens || [])
-        .filter((t) => t.chainId === 1)
+        .filter((t) => t.chainId === EXPECTED_CHAIN_ID)
         .map((t) => ({
           address: t.address.toLowerCase(),
           symbol: t.symbol,
@@ -1418,7 +1415,7 @@
     const makerEl = $("#order-modal-maker");
     makerEl.textContent = "";
     const makerLink = document.createElement("a");
-    makerLink.href = "https://etherscan.io/address/" + order.maker;
+    makerLink.href = EXPLORER_URL + "/address/" + order.maker;
     makerLink.target = "_blank";
     makerLink.rel = "noopener noreferrer";
     const ensName = getCachedEns(order.maker);
@@ -1503,7 +1500,7 @@
       takerRow.style.display = "flex";
       takerEl.textContent = "";
       const takerLink = document.createElement("a");
-      takerLink.href = "https://etherscan.io/address/" + order.taker;
+      takerLink.href = EXPLORER_URL + "/address/" + order.taker;
       takerLink.target = "_blank";
       takerLink.rel = "noopener noreferrer";
       const takerEns = getCachedEns(order.taker);
@@ -2439,7 +2436,7 @@ ${orderFields}
       const sellerWrap = document.createElement("span");
       sellerWrap.style.whiteSpace = "nowrap";
       const sellerLink = document.createElement("a");
-      sellerLink.href = "https://etherscan.io/address/" + order.maker;
+      sellerLink.href = EXPLORER_URL + "/address/" + order.maker;
       sellerLink.target = "_blank";
       sellerLink.rel = "noopener noreferrer";
       const ensName = getCachedEns(order.maker);
@@ -4095,11 +4092,15 @@ ${orderFields}
 
     if (chainId !== EXPECTED_CHAIN_ID) {
       const networkName = NETWORK_NAMES[chainId] || "Chain " + chainId;
-      showToast(`Wrong network: ${networkName}. Switching to Ethereum mainnet...`, "error", true);
+      showToast(
+        `Wrong network: ${networkName}. Switching to ${EXPECTED_CHAIN_LABEL}...`,
+        "error",
+        true
+      );
 
       const switched = await switchToExpectedNetwork();
       if (!switched) {
-        showToast("Please switch to Ethereum mainnet", "error");
+        showToast("Please switch to " + EXPECTED_CHAIN_LABEL, "error");
         return false;
       }
       return false;
@@ -4269,7 +4270,7 @@ ${orderFields}
     walletProvider.on("chainChanged", (chainIdHex) => {
       const chainId = parseInt(chainIdHex, 16);
       if (chainId !== EXPECTED_CHAIN_ID) {
-        showToast("Please switch to Ethereum mainnet", "error");
+        showToast("Please switch to " + EXPECTED_CHAIN_LABEL, "error");
         disconnectWallet();
       } else {
         window.location.reload();
