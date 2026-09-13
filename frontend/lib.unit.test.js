@@ -1856,6 +1856,20 @@ describe("decodeContractError", () => {
     });
   });
 
+  test("recognizes InvalidPermit", () => {
+    expect(decodeContractError("0xddafbaef")).toEqual({
+      name: "InvalidPermit",
+      message: "Permit signature is invalid",
+    });
+  });
+
+  test("recognizes DuplicatePermitToken", () => {
+    expect(decodeContractError("0xc87bfe90")).toEqual({
+      name: "DuplicatePermitToken",
+      message: "Duplicate permit token",
+    });
+  });
+
   // MUTATION: Return a partial object instead of null
   // BREAKS: An unknown revert renders as "undefined"
   test("returns null for input it cannot decode", () => {
