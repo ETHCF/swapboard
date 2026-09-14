@@ -1665,6 +1665,25 @@ describe("handleFillOrder", () => {
     expect(note.nextElementSibling.textContent).toMatch(/^You will send/);
   });
 
+  test("a partial fill's summary follows the amount typed or picked", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    const h = installEthers();
+    routeFetch({ orders: [] });
+    await connect(v2, h);
+    // 1 WETH for 3,000 USDC.
+    await v2.handleFillOrder(makeOrder({ partialFillAllowed: true }));
+    const summary = document.querySelector("#modal-body .partial-fill-note").nextElementSibling;
+    expect(summary.textContent).toBe("You will send 3,000 USDC and receive 1 WETH in return.");
+
+    const input = document.querySelector("#modal-body .partial-fill-controls input");
+    input.value = "750";
+    input.dispatchEvent(new Event("input"));
+    expect(summary.textContent).toBe("You will send 750 USDC and receive 0.25 WETH in return.");
+
+    document.querySelectorAll("#modal-body .partial-fill-presets button")[1].click(); // 50%
+    expect(summary.textContent).toBe("You will send 1,500 USDC and receive 0.5 WETH in return.");
+  });
+
   test("a v2 all-or-nothing order has no partial-fill note", async () => {
     const v2 = loadApp({ search: "?v=2" });
     const h = installEthers();

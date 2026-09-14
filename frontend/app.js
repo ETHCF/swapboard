@@ -3110,10 +3110,15 @@ ${orderFields}
       body.appendChild(note);
     }
 
+    // Rewritten on every change to a partial fill's amount, so the sentence
+    // always states the fill that Confirm will send.
     const summary = document.createElement("div");
-    summary.textContent =
-      `You will send ${formatAmount(remainingB, order.tokenB.decimals)} ${order.tokenB.symbol} ` +
-      `and receive ${formatAmount(remainingA, order.tokenA.decimals)} ${order.tokenA.symbol} in return.`;
+    const describeFill = (amountA, amountB) => {
+      summary.textContent =
+        `You will send ${formatAmount(amountB, order.tokenB.decimals)} ${order.tokenB.symbol} ` +
+        `and receive ${formatAmount(amountA, order.tokenA.decimals)} ${order.tokenA.symbol} in return.`;
+    };
+    describeFill(remainingA, remainingB);
     body.appendChild(summary);
 
     let fillAmountA = remainingA;
@@ -3123,6 +3128,7 @@ ${orderFields}
         buildPartialFillControls(order, (amountA, amountB) => {
           fillAmountA = amountA;
           fillAmountB = amountB;
+          describeFill(amountA, amountB);
         })
       );
     }
