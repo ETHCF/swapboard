@@ -1367,28 +1367,17 @@
   }
 
   /**
-   * Flags a wanted amount as fillable in parts: appends the asterisk and gives
-   * the whole amount a hover/focus hint saying what it means.
+   * Gives the fill button of an order that can be filled in parts a hover/focus
+   * hint explaining the asterisk in its label ("[Fill*]", "Fill Order*").
    *
    * The hint is drawn in CSS (data-tooltip) rather than with `title`, which
-   * shows only after a delay, never on touch, and is easy to miss over a
-   * one-character target.
+   * shows only after a delay and never on touch.
    *
-   * @param {Node} content - The rendered amount
-   * @returns {HTMLSpanElement}
+   * @param {HTMLElement} btn - The fill link or button
    */
-  function markPartialFill(content) {
-    const wrap = document.createElement("span");
-    wrap.className = "partial-fill";
-    wrap.dataset.tooltip = "Partial fills allowed";
-    wrap.tabIndex = 0;
-    wrap.appendChild(content);
-
-    const marker = document.createElement("span");
-    marker.className = "partial-fill-marker";
-    marker.textContent = "*";
-    wrap.appendChild(marker);
-    return wrap;
+  function hintPartialFill(btn) {
+    btn.classList.add("partial-fill-hint");
+    btn.dataset.tooltip = "Partial fills allowed";
   }
 
   /**
@@ -1402,9 +1391,8 @@
    * @param {Object} token - Token with {address, symbol, decimals}
    * @param {bigint} amount - Remaining amount in base units
    * @param {string|undefined} original - Original amount in base units
-   * @param {boolean} [partialFill] - Mark the amount as fillable in parts
    */
-  function fillOrderModalAmount(el, token, amount, original, partialFill) {
+  function fillOrderModalAmount(el, token, amount, original) {
     el.textContent = "";
     const decimals = token.decimals || 18;
     const text = formatAmount(amount, decimals) + " " + token.symbol;
@@ -1420,7 +1408,7 @@
       amountNode = link;
     }
 
-    el.appendChild(partialFill ? markPartialFill(amountNode) : amountNode);
+    el.appendChild(amountNode);
     if (!native) el.appendChild(createCopyButton(token.address));
 
     if (original !== null && original !== undefined && BigInt(original) > amount) {
@@ -1489,13 +1477,7 @@
     const wantedEl = $("#order-modal-wanted");
     const tokenBDecimals = order.tokenB.decimals || 18;
     const amountB = BigInt(order.availableB);
-    fillOrderModalAmount(
-      wantedEl,
-      order.tokenB,
-      amountB,
-      order.amountB,
-      CAPS.partialFill && allowsPartialFill(order)
-    );
+    fillOrderModalAmount(wantedEl, order.tokenB, amountB, order.amountB);
 
     // USD Value
     const usdEl = $("#order-modal-usd");
@@ -1602,7 +1584,9 @@
         actionsEl.appendChild(cancelBtn);
       } else {
         const fillBtn = document.createElement("button");
-        fillBtn.textContent = "Fill Order";
+        const partial = CAPS.partialFill && allowsPartialFill(order);
+        fillBtn.textContent = partial ? "Fill Order*" : "Fill Order";
+        if (partial) hintPartialFill(fillBtn);
         fillBtn.addEventListener("click", async () => {
           modal.classList.add("hidden");
           if (!userAddress) {
@@ -2287,14 +2271,12 @@ ${orderFields}
    * @param {string|undefined} original - Original amount in base units
    * @param {number} decimals - Token decimals
    * @param {string} label - Mobile card label
-   * @param {boolean} [partialFill] - Mark the amount as fillable in parts
    * @returns {HTMLTableCellElement}
    */
-  function buildAmountCell(remaining, original, decimals, label, partialFill) {
+  function buildAmountCell(remaining, original, decimals, label) {
     const td = document.createElement("td");
     td.dataset.label = label;
-    const amount = document.createTextNode(formatAmount(remaining, decimals));
-    td.appendChild(partialFill ? markPartialFill(amount) : amount);
+    td.appendChild(document.createTextNode(formatAmount(remaining, decimals)));
 
     if (original !== null && original !== undefined && BigInt(original) > BigInt(remaining)) {
       const hint = document.createElement("span");
@@ -2438,8 +2420,10 @@ ${orderFields}
         } else {
           const fillBtn = document.createElement("a");
           fillBtn.href = "#";
-          fillBtn.textContent = "[Fill]";
+          const partial = CAPS.partialFill && allowsPartialFill(order);
+          fillBtn.textContent = partial ? "[Fill*]" : "[Fill]";
           fillBtn.classList.add("buy-btn");
+          if (partial) hintPartialFill(fillBtn);
           fillBtn.addEventListener("click", async (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -2523,13 +2507,7 @@ ${orderFields}
 
       // Column 7: Wanted Size (remaining, for v2 partial fills)
       tr.appendChild(
-        buildAmountCell(
-          order.availableB,
-          order.amountB,
-          tokenBDecimals,
-          "Wanted Size",
-          CAPS.partialFill && allowsPartialFill(order)
-        )
+        buildAmountCell(order.availableB, order.amountB, tokenBDecimals, "Wanted Size")
       );
 
       // Column 8: USD Val (nowrap to keep $ and value on same line)

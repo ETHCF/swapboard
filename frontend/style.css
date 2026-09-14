@@ -1213,24 +1213,19 @@ td.select-col input[type="checkbox"]:disabled {
   color: var(--muted);
 }
 
-/* A wanted amount that can be filled in parts: the amount plus its asterisk,
-   with a hint drawn from data-tooltip on hover or keyboard focus. */
-.partial-fill {
+/* The fill button of an order that can be filled in parts ("[Fill*]"), with a
+   hint drawn from data-tooltip on hover or keyboard focus. */
+.partial-fill-hint {
   position: relative;
-  cursor: help;
 }
 
-.partial-fill-marker {
-  margin-left: 2px;
-  color: var(--muted);
-}
-
-.partial-fill::after {
+.partial-fill-hint::after {
   content: attr(data-tooltip);
   position: absolute;
-  left: 50%;
+  /* Left-aligned, not centred: the table's [Fill*] sits against the page edge,
+     where a centred hint is cut off. */
+  left: 0;
   bottom: calc(100% + 4px);
-  transform: translateX(-50%);
   padding: 3px 6px;
   font-size: 11px;
   font-weight: normal;
@@ -1243,8 +1238,8 @@ td.select-col input[type="checkbox"]:disabled {
   z-index: 10;
 }
 
-.partial-fill:hover::after,
-.partial-fill:focus-visible::after {
+.partial-fill-hint:hover::after,
+.partial-fill-hint:focus-visible::after {
   opacity: 1;
 }
 
