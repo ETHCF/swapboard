@@ -60,7 +60,7 @@ const CHAINS = {
  * load-bearing: deploy.sh rewrites it to the network it just deployed to.
  */
 const BUILD_TARGET = {
-  network: "mainnet", // deploy:network
+  network: "sepolia", // deploy:network
 };
 
 const ACTIVE_CHAIN = CHAINS[BUILD_TARGET.network];
@@ -1143,32 +1143,23 @@ const VERSION_CAPS = {
     version: 2,
     label: "v2",
     /**
-     * Placeholders until v2 ships: there is no deployed contract and no
-     * subgraph indexing one. `live: false` below is what keeps these from
-     * being reached, and validateConfig only enforces them once a version
-     * goes live. deploy.sh fills both in.
+     * Sepolia deployment of Swapboard v2, and the subgraph that indexes it.
+     * deploy.sh wrote both; being live, validateConfig now enforces them.
      */
-    contractAddress: "0x0000000000000000000000000000000000000000", // deploy:v2:contract
+    contractAddress: "0x0b2EA9B0bda7f25EfE2A89f86BaA4cD1c472d174", // deploy:v2:contract
     subgraphUrl:
-      "https://api.goldsky.com/api/public/project_YOUR_ID/subgraphs/swapboard-v2/2.0.0/gn", // deploy:v2:subgraph
+      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/swapboard-v2-sepolia/2.0.0/gn", // deploy:v2:subgraph
     partialFill: true,
     batch: true,
     nativeEth: true,
     multiCreate: true,
     remainingAmounts: true,
-    /**
-     * The connector encodes against the real v2 ABI, so a call can be priced.
-     * Until there is a deployment it declines to estimate against the zero
-     * placeholder, so the modal shows no figure rather than a made-up one.
-     */
+    /** The connector encodes against the real v2 ABI, so a call can be priced. */
     gasEstimate: true,
-    /** Off until a v2 subgraph is deployed: polling a placeholder only times out. */
-    subgraphPolling: false,
-    /**
-     * Not deployed. Writes still go through the real connector, which refuses
-     * to send to the zero placeholder outside mock mode — see requireDeployed().
-     */
-    live: false,
+    /** Real subgraph, so post-transaction indexing can be polled. */
+    subgraphPolling: true,
+    /** Writes hit chain. */
+    live: true,
   },
 };
 
