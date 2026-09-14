@@ -3413,6 +3413,33 @@ describe("openOrderModal", () => {
     expect(document.querySelector("#order-modal-wanted").textContent).not.toContain("*");
   });
 
+  /** A quarter of a 4 WETH / 12,000 USDC order left. */
+  const PART_FILLED = {
+    amountA: "4000000000000000000",
+    availableA: "1000000000000000000",
+    amountB: "12000000000",
+    availableB: "3000000000",
+  };
+
+  // v2 only: v1 shows an order's totals, with no remaining-vs-original split.
+  test("hides 'of X left' on somebody else's partly filled order", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    await open(v2, makeOrder({ orderId: "7", ...PART_FILLED }));
+    expect(document.querySelector("#order-modal-offered").textContent).toContain("1 WETH");
+    expect(document.querySelector("#order-modal .partial-progress")).toBeNull();
+  });
+
+  test("shows 'of X left' on your own partly filled order", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    await open(v2, makeOrder({ orderId: "7", maker: WALLET_ADDRESS, ...PART_FILLED }), true);
+    expect(document.querySelector("#order-modal-offered .partial-progress").textContent).toBe(
+      "of 4 left"
+    );
+    expect(document.querySelector("#order-modal-wanted .partial-progress").textContent).toBe(
+      "of 12,000 left"
+    );
+  });
+
   test("offers Cancel on your own open order", async () => {
     await open(app, makeOrder({ orderId: "7", maker: WALLET_ADDRESS }), true);
     const btn = document.querySelector("#order-modal-actions button");
@@ -4896,6 +4923,39 @@ describe("final wiring", () => {
     const fill = document.querySelector("#order-table .buy-btn");
     expect(fill.textContent).toBe("[Fill]");
     expect(fill.classList.contains("partial-fill-hint")).toBe(false);
+  });
+
+  /** A quarter of a 4 WETH / 12,000 USDC order left. */
+  const PART_FILLED_ROW = {
+    amountA: "4000000000000000000",
+    availableA: "1000000000000000000",
+    amountB: "12000000000",
+    availableB: "3000000000",
+  };
+
+  // v2 only: v1 shows an order's totals, with no remaining-vs-original split.
+  test("a partly filled row hides 'of X left' from everyone but its maker", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    installEthers();
+    routeFetch({ orders: [makeOrder({ orderId: "1", ...PART_FILLED_ROW })] });
+    await v2.loadOrders();
+    expect(document.querySelector('#order-table td[data-label="Offered Size"]').textContent).toBe(
+      "1"
+    );
+    expect(document.querySelector("#order-table .partial-progress")).toBeNull();
+  });
+
+  test("the maker sees 'of X left' on their own partly filled row", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    const h = installEthers();
+    routeFetch({
+      orders: [makeOrder({ orderId: "1", maker: WALLET_ADDRESS, ...PART_FILLED_ROW })],
+    });
+    await connect(v2, h);
+    await flush();
+    await v2.loadOrders();
+    const hints = [...document.querySelectorAll("#order-table .partial-progress")];
+    expect(hints.map((s) => s.textContent)).toEqual(["of 4 left", "of 12,000 left"]);
   });
 
   test("a mixed cancel batch splits plain and unwrapping orders", async () => {

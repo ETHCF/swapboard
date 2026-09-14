@@ -1467,17 +1467,22 @@
     makerEl.appendChild(makerLink);
     makerEl.appendChild(createCopyButton(order.maker));
 
+    // "of X left" is the maker's view of their own order's progress. To anyone
+    // else the remaining amount simply is the order, so only the maker sees it.
+    const showFillProgress =
+      Boolean(userAddress) && order.maker.toLowerCase() === userAddress.toLowerCase();
+
     // Offered
     const offeredEl = $("#order-modal-offered");
     const tokenADecimals = order.tokenA.decimals || 18;
     const amountA = BigInt(order.availableA);
-    fillOrderModalAmount(offeredEl, order.tokenA, amountA, order.amountA);
+    fillOrderModalAmount(offeredEl, order.tokenA, amountA, showFillProgress ? order.amountA : null);
 
     // Wanted
     const wantedEl = $("#order-modal-wanted");
     const tokenBDecimals = order.tokenB.decimals || 18;
     const amountB = BigInt(order.availableB);
-    fillOrderModalAmount(wantedEl, order.tokenB, amountB, order.amountB);
+    fillOrderModalAmount(wantedEl, order.tokenB, amountB, showFillProgress ? order.amountB : null);
 
     // USD Value
     const usdEl = $("#order-modal-usd");
@@ -2497,17 +2502,29 @@ ${orderFields}
       // Column 4: Offered Token (link to CoinGecko + copy; bare text for ETH)
       tr.appendChild(buildTokenCell(order.tokenA, "Offered"));
 
-      // Column 5: Offered Size (remaining, for v2 partial fills)
+      // Column 5: Offered Size (remaining, for v2 partial fills). The original
+      // size ("of X left") is shown to the maker only: to anyone else the
+      // remaining amount simply is the order.
       tr.appendChild(
-        buildAmountCell(order.availableA, order.amountA, tokenADecimals, "Offered Size")
+        buildAmountCell(
+          order.availableA,
+          isMaker ? order.amountA : null,
+          tokenADecimals,
+          "Offered Size"
+        )
       );
 
       // Column 6: Wanted Token (link to CoinGecko + copy; bare text for ETH)
       tr.appendChild(buildTokenCell(order.tokenB, "Wanted"));
 
-      // Column 7: Wanted Size (remaining, for v2 partial fills)
+      // Column 7: Wanted Size (remaining, for v2 partial fills; original for the maker only)
       tr.appendChild(
-        buildAmountCell(order.availableB, order.amountB, tokenBDecimals, "Wanted Size")
+        buildAmountCell(
+          order.availableB,
+          isMaker ? order.amountB : null,
+          tokenBDecimals,
+          "Wanted Size"
+        )
       );
 
       // Column 8: USD Val (nowrap to keep $ and value on same line)
