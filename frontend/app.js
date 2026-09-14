@@ -1367,15 +1367,28 @@
   }
 
   /**
-   * The asterisk that flags a wanted amount as fillable in parts.
+   * Flags a wanted amount as fillable in parts: appends the asterisk and gives
+   * the whole amount a hover/focus hint saying what it means.
+   *
+   * The hint is drawn in CSS (data-tooltip) rather than with `title`, which
+   * shows only after a delay, never on touch, and is easy to miss over a
+   * one-character target.
+   *
+   * @param {Node} content - The rendered amount
    * @returns {HTMLSpanElement}
    */
-  function createPartialFillMarker() {
+  function markPartialFill(content) {
+    const wrap = document.createElement("span");
+    wrap.className = "partial-fill";
+    wrap.dataset.tooltip = "Partial fills allowed";
+    wrap.tabIndex = 0;
+    wrap.appendChild(content);
+
     const marker = document.createElement("span");
     marker.className = "partial-fill-marker";
     marker.textContent = "*";
-    marker.title = "Partial fills allowed";
-    return marker;
+    wrap.appendChild(marker);
+    return wrap;
   }
 
   /**
@@ -1396,23 +1409,19 @@
     const decimals = token.decimals || 18;
     const text = formatAmount(amount, decimals) + " " + token.symbol;
 
-    if (isNativeEth(token.address)) {
-      el.textContent = text;
-      if (partialFill) el.appendChild(createPartialFillMarker());
-    } else {
-      const cgUrl = coinGeckoUrl(token.address);
-      if (cgUrl) {
-        const link = document.createElement("a");
-        link.href = cgUrl;
-        link.target = "_blank";
-        link.textContent = text;
-        el.appendChild(link);
-      } else {
-        el.textContent = text;
-      }
-      if (partialFill) el.appendChild(createPartialFillMarker());
-      el.appendChild(createCopyButton(token.address));
+    const native = isNativeEth(token.address);
+    const cgUrl = native ? null : coinGeckoUrl(token.address);
+    let amountNode = document.createTextNode(text);
+    if (cgUrl) {
+      const link = document.createElement("a");
+      link.href = cgUrl;
+      link.target = "_blank";
+      link.textContent = text;
+      amountNode = link;
     }
+
+    el.appendChild(partialFill ? markPartialFill(amountNode) : amountNode);
+    if (!native) el.appendChild(createCopyButton(token.address));
 
     if (original !== null && original !== undefined && BigInt(original) > amount) {
       const hint = document.createElement("span");
@@ -2284,8 +2293,8 @@ ${orderFields}
   function buildAmountCell(remaining, original, decimals, label, partialFill) {
     const td = document.createElement("td");
     td.dataset.label = label;
-    td.appendChild(document.createTextNode(formatAmount(remaining, decimals)));
-    if (partialFill) td.appendChild(createPartialFillMarker());
+    const amount = document.createTextNode(formatAmount(remaining, decimals));
+    td.appendChild(partialFill ? markPartialFill(amount) : amount);
 
     if (original !== null && original !== undefined && BigInt(original) > BigInt(remaining)) {
       const hint = document.createElement("span");
@@ -3093,18 +3102,28 @@ ${orderFields}
     const remainingA = BigInt(order.availableA);
     const remainingB = BigInt(order.availableB);
 
+    // Orders that opted out of partial fill are all-or-nothing, so there is
+    // nothing to choose and the note and controls stay off. So is every v1 order.
+    const partial = CAPS.partialFill && allowsPartialFill(order);
+
     const body = document.createElement("div");
+    if (partial) {
+      const note = document.createElement("div");
+      note.className = "partial-fill-note";
+      note.textContent =
+        "This order supports partial fills: pick a percentage or enter a custom amount below.";
+      body.appendChild(note);
+    }
+
     const summary = document.createElement("div");
     summary.textContent =
       `You will send ${formatAmount(remainingB, order.tokenB.decimals)} ${order.tokenB.symbol} ` +
       `and receive ${formatAmount(remainingA, order.tokenA.decimals)} ${order.tokenA.symbol} in return.`;
     body.appendChild(summary);
 
-    // Orders that opted out of partial fill are all-or-nothing, so there is
-    // nothing to choose and the controls stay off. So is every v1 order.
     let fillAmountA = remainingA;
     let fillAmountB = remainingB;
-    if (CAPS.partialFill && allowsPartialFill(order)) {
+    if (partial) {
       body.appendChild(
         buildPartialFillControls(order, (amountA, amountB) => {
           fillAmountA = amountA;

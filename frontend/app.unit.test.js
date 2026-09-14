@@ -1653,6 +1653,37 @@ describe("handleFillOrder", () => {
     expect(document.querySelector("#modal-body").textContent).toMatch(/You will send/);
   });
 
+  test("a v2 partial-fill order says so above the summary", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    const h = installEthers();
+    routeFetch({ orders: [] });
+    await connect(v2, h);
+    await v2.handleFillOrder(makeOrder({ partialFillAllowed: true }));
+    const note = document.querySelector("#modal-body > div").firstElementChild;
+    expect(note.className).toBe("partial-fill-note");
+    expect(note.textContent).toMatch(/supports partial fills/);
+    expect(note.nextElementSibling.textContent).toMatch(/^You will send/);
+  });
+
+  test("a v2 all-or-nothing order has no partial-fill note", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    const h = installEthers();
+    routeFetch({ orders: [] });
+    await connect(v2, h);
+    await v2.handleFillOrder(makeOrder({ partialFillAllowed: false }));
+    expect(document.querySelector("#modal-body").textContent).toMatch(/You will send/);
+    expect(document.querySelector(".partial-fill-note")).toBeNull();
+  });
+
+  test("a v1 order never shows the partial-fill note", async () => {
+    const h = installEthers();
+    routeFetch({ orders: [] });
+    await connect(app, h);
+    await app.handleFillOrder(makeOrder({ partialFillAllowed: true }));
+    expect(document.querySelector("#modal-body").textContent).toMatch(/You will send/);
+    expect(document.querySelector(".partial-fill-note")).toBeNull();
+  });
+
   test("a v2 fill runs the simulated transaction to completion", async () => {
     const v2 = loadApp({ search: "?v=2" });
     installEthers();
@@ -3959,9 +3990,14 @@ describe("order table cells", () => {
 
   test("buildAmountCell stars an amount that can be filled in parts", () => {
     const starred = app.buildAmountCell("1000000000000000000", null, 18, "Amount", true);
-    const marker = starred.querySelector(".partial-fill-marker");
     expect(starred.textContent).toBe("1*");
-    expect(marker.title).toBe("Partial fills allowed");
+    // The hint covers the amount and the asterisk together, not just the one character.
+    const wrap = starred.querySelector(".partial-fill");
+    expect(wrap.textContent).toBe("1*");
+    expect(wrap.dataset.tooltip).toBe("Partial fills allowed");
+    expect(wrap.tabIndex).toBe(0);
+    expect(wrap.querySelector(".partial-fill-marker").textContent).toBe("*");
+    expect(starred.querySelector("[title]")).toBeNull();
 
     const plain = app.buildAmountCell("1000000000000000000", null, 18, "Amount", false);
     expect(plain.querySelector(".partial-fill-marker")).toBeNull();
@@ -3979,15 +4015,21 @@ describe("order table cells", () => {
     );
     expect(eth.textContent).toBe("1 ETH*");
 
+    // USDC has a CoinGecko id, so it renders as a link.
     const erc20 = document.createElement("div");
     v2.fillOrderModalAmount(
       erc20,
-      { address: PLAIN, symbol: "AAA", decimals: 18 },
-      10n ** 18n,
+      { address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6 },
+      10n ** 6n,
       null,
       true
     );
-    expect(erc20.querySelector(".partial-fill-marker")).not.toBeNull();
+    // The CoinGecko link sits inside the hinted span; the copy button stays outside it.
+    const wrap = erc20.querySelector(".partial-fill");
+    expect(wrap.querySelector("a").textContent).toBe("1 USDC");
+    expect(wrap.querySelector(".partial-fill-marker")).not.toBeNull();
+    expect(wrap.querySelector(".copy-btn")).toBeNull();
+    expect(erc20.querySelector(".copy-btn")).not.toBeNull();
 
     const plain = document.createElement("div");
     v2.fillOrderModalAmount(plain, { address: PLAIN, symbol: "AAA", decimals: 18 }, 10n ** 18n);
