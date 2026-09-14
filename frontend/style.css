@@ -864,7 +864,8 @@ tbody tr.highlighted-order:hover {
 
 .modal-content p {
   margin-bottom: 20px;
-  word-break: break-all;
+  /* Wrap at word boundaries; only split a word (e.g. an address) that cannot fit a line. */
+  overflow-wrap: break-word;
 }
 
 .gas-estimate {
@@ -1210,6 +1211,12 @@ td.select-col input[type="checkbox"]:disabled {
   display: block;
   font-size: 11px;
   color: var(--muted);
+}
+
+.partial-fill-marker {
+  margin-left: 2px;
+  color: var(--muted);
+  cursor: help;
 }
 
 .partial-fill-controls {

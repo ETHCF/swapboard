@@ -1367,6 +1367,18 @@
   }
 
   /**
+   * The asterisk that flags a wanted amount as fillable in parts.
+   * @returns {HTMLSpanElement}
+   */
+  function createPartialFillMarker() {
+    const marker = document.createElement("span");
+    marker.className = "partial-fill-marker";
+    marker.textContent = "*";
+    marker.title = "Partial fills allowed";
+    return marker;
+  }
+
+  /**
    * Renders "<amount> <symbol>" into an order-modal row.
    *
    * Links to CoinGecko and offers the contract address where there is one;
@@ -1377,14 +1389,16 @@
    * @param {Object} token - Token with {address, symbol, decimals}
    * @param {bigint} amount - Remaining amount in base units
    * @param {string|undefined} original - Original amount in base units
+   * @param {boolean} [partialFill] - Mark the amount as fillable in parts
    */
-  function fillOrderModalAmount(el, token, amount, original) {
+  function fillOrderModalAmount(el, token, amount, original, partialFill) {
     el.textContent = "";
     const decimals = token.decimals || 18;
     const text = formatAmount(amount, decimals) + " " + token.symbol;
 
     if (isNativeEth(token.address)) {
       el.textContent = text;
+      if (partialFill) el.appendChild(createPartialFillMarker());
     } else {
       const cgUrl = coinGeckoUrl(token.address);
       if (cgUrl) {
@@ -1396,6 +1410,7 @@
       } else {
         el.textContent = text;
       }
+      if (partialFill) el.appendChild(createPartialFillMarker());
       el.appendChild(createCopyButton(token.address));
     }
 
@@ -1465,7 +1480,13 @@
     const wantedEl = $("#order-modal-wanted");
     const tokenBDecimals = order.tokenB.decimals || 18;
     const amountB = BigInt(order.availableB);
-    fillOrderModalAmount(wantedEl, order.tokenB, amountB, order.amountB);
+    fillOrderModalAmount(
+      wantedEl,
+      order.tokenB,
+      amountB,
+      order.amountB,
+      CAPS.partialFill && allowsPartialFill(order)
+    );
 
     // USD Value
     const usdEl = $("#order-modal-usd");
@@ -2257,12 +2278,14 @@ ${orderFields}
    * @param {string|undefined} original - Original amount in base units
    * @param {number} decimals - Token decimals
    * @param {string} label - Mobile card label
+   * @param {boolean} [partialFill] - Mark the amount as fillable in parts
    * @returns {HTMLTableCellElement}
    */
-  function buildAmountCell(remaining, original, decimals, label) {
+  function buildAmountCell(remaining, original, decimals, label, partialFill) {
     const td = document.createElement("td");
     td.dataset.label = label;
     td.appendChild(document.createTextNode(formatAmount(remaining, decimals)));
+    if (partialFill) td.appendChild(createPartialFillMarker());
 
     if (original !== null && original !== undefined && BigInt(original) > BigInt(remaining)) {
       const hint = document.createElement("span");
@@ -2491,7 +2514,13 @@ ${orderFields}
 
       // Column 7: Wanted Size (remaining, for v2 partial fills)
       tr.appendChild(
-        buildAmountCell(order.availableB, order.amountB, tokenBDecimals, "Wanted Size")
+        buildAmountCell(
+          order.availableB,
+          order.amountB,
+          tokenBDecimals,
+          "Wanted Size",
+          CAPS.partialFill && allowsPartialFill(order)
+        )
       );
 
       // Column 8: USD Val (nowrap to keep $ and value on same line)

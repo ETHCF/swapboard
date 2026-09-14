@@ -3957,6 +3957,43 @@ describe("order table cells", () => {
     expect(hint.title).toBe("Partially filled");
   });
 
+  test("buildAmountCell stars an amount that can be filled in parts", () => {
+    const starred = app.buildAmountCell("1000000000000000000", null, 18, "Amount", true);
+    const marker = starred.querySelector(".partial-fill-marker");
+    expect(starred.textContent).toBe("1*");
+    expect(marker.title).toBe("Partial fills allowed");
+
+    const plain = app.buildAmountCell("1000000000000000000", null, 18, "Amount", false);
+    expect(plain.querySelector(".partial-fill-marker")).toBeNull();
+  });
+
+  test("fillOrderModalAmount stars a partial-fill amount, ETH or ERC20", () => {
+    const v2 = loadApp({ search: "?v=2" });
+    const eth = document.createElement("div");
+    v2.fillOrderModalAmount(
+      eth,
+      { address: NATIVE, symbol: "ETH", decimals: 18 },
+      10n ** 18n,
+      null,
+      true
+    );
+    expect(eth.textContent).toBe("1 ETH*");
+
+    const erc20 = document.createElement("div");
+    v2.fillOrderModalAmount(
+      erc20,
+      { address: PLAIN, symbol: "AAA", decimals: 18 },
+      10n ** 18n,
+      null,
+      true
+    );
+    expect(erc20.querySelector(".partial-fill-marker")).not.toBeNull();
+
+    const plain = document.createElement("div");
+    v2.fillOrderModalAmount(plain, { address: PLAIN, symbol: "AAA", decimals: 18 }, 10n ** 18n);
+    expect(plain.querySelector(".partial-fill-marker")).toBeNull();
+  });
+
   test("fillOrderModalAmount renders a native ETH amount as plain text", () => {
     const v2 = loadApp({ search: "?v=2" });
     const el = document.createElement("div");
