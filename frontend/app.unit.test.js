@@ -1653,6 +1653,56 @@ describe("handleFillOrder", () => {
     expect(document.querySelector("#modal-body").textContent).toMatch(/You will send/);
   });
 
+  test("a v2 partial-fill order says so above the summary", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    const h = installEthers();
+    routeFetch({ orders: [] });
+    await connect(v2, h);
+    await v2.handleFillOrder(makeOrder({ partialFillAllowed: true }));
+    const note = document.querySelector("#modal-body > div").firstElementChild;
+    expect(note.className).toBe("partial-fill-note");
+    expect(note.textContent).toMatch(/supports partial fills/);
+    expect(note.nextElementSibling.textContent).toMatch(/^You will send/);
+  });
+
+  test("a partial fill's summary follows the amount typed or picked", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    const h = installEthers();
+    routeFetch({ orders: [] });
+    await connect(v2, h);
+    // 1 WETH for 3,000 USDC.
+    await v2.handleFillOrder(makeOrder({ partialFillAllowed: true }));
+    const summary = document.querySelector("#modal-body .partial-fill-note").nextElementSibling;
+    expect(summary.textContent).toBe("You will send 3,000 USDC and receive 1 WETH in return.");
+
+    const input = document.querySelector("#modal-body .partial-fill-controls input");
+    input.value = "750";
+    input.dispatchEvent(new Event("input"));
+    expect(summary.textContent).toBe("You will send 750 USDC and receive 0.25 WETH in return.");
+
+    document.querySelectorAll("#modal-body .partial-fill-presets button")[1].click(); // 50%
+    expect(summary.textContent).toBe("You will send 1,500 USDC and receive 0.5 WETH in return.");
+  });
+
+  test("a v2 all-or-nothing order has no partial-fill note", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    const h = installEthers();
+    routeFetch({ orders: [] });
+    await connect(v2, h);
+    await v2.handleFillOrder(makeOrder({ partialFillAllowed: false }));
+    expect(document.querySelector("#modal-body").textContent).toMatch(/You will send/);
+    expect(document.querySelector(".partial-fill-note")).toBeNull();
+  });
+
+  test("a v1 order never shows the partial-fill note", async () => {
+    const h = installEthers();
+    routeFetch({ orders: [] });
+    await connect(app, h);
+    await app.handleFillOrder(makeOrder({ partialFillAllowed: true }));
+    expect(document.querySelector("#modal-body").textContent).toMatch(/You will send/);
+    expect(document.querySelector(".partial-fill-note")).toBeNull();
+  });
+
   test("a v2 fill runs the simulated transaction to completion", async () => {
     const v2 = loadApp({ search: "?v=2" });
     installEthers();
@@ -3371,6 +3421,44 @@ describe("openOrderModal", () => {
     expect(document.querySelector("#order-modal").classList.contains("hidden")).toBe(true);
   });
 
+  test("a v2 partial-fill order's Fill button is starred, with a hint", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    await open(v2, makeOrder({ orderId: "7", partialFillAllowed: true }));
+    const btn = document.querySelector("#order-modal-actions button");
+    expect(btn.textContent).toBe("Fill Order*");
+    expect(btn.classList.contains("partial-fill-hint")).toBe(true);
+    expect(btn.dataset.tooltip).toBe("Partial fills allowed");
+    // The asterisk moved off the amounts and onto the button.
+    expect(document.querySelector("#order-modal-wanted").textContent).not.toContain("*");
+  });
+
+  /** A quarter of a 4 WETH / 12,000 USDC order left. */
+  const PART_FILLED = {
+    amountA: "4000000000000000000",
+    availableA: "1000000000000000000",
+    amountB: "12000000000",
+    availableB: "3000000000",
+  };
+
+  // v2 only: v1 shows an order's totals, with no remaining-vs-original split.
+  test("hides 'of X left' on somebody else's partly filled order", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    await open(v2, makeOrder({ orderId: "7", ...PART_FILLED }));
+    expect(document.querySelector("#order-modal-offered").textContent).toContain("1 WETH");
+    expect(document.querySelector("#order-modal .partial-progress")).toBeNull();
+  });
+
+  test("shows 'of X left' on your own partly filled order", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    await open(v2, makeOrder({ orderId: "7", maker: WALLET_ADDRESS, ...PART_FILLED }), true);
+    expect(document.querySelector("#order-modal-offered .partial-progress").textContent).toBe(
+      "of 4 left"
+    );
+    expect(document.querySelector("#order-modal-wanted .partial-progress").textContent).toBe(
+      "of 12,000 left"
+    );
+  });
+
   test("offers Cancel on your own open order", async () => {
     await open(app, makeOrder({ orderId: "7", maker: WALLET_ADDRESS }), true);
     const btn = document.querySelector("#order-modal-actions button");
@@ -4824,6 +4912,71 @@ describe("final wiring", () => {
     expect(document.querySelector("#modal")).not.toBeNull();
   });
 
+  test("a v2 partial-fill order's row link reads [Fill*], with a hint", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    routeFetch({
+      orders: [
+        makeOrder({ orderId: "1", partialFillAllowed: true }),
+        makeOrder({ orderId: "2", partialFillAllowed: false }),
+      ],
+    });
+    await v2.loadOrders();
+
+    const links = [...document.querySelectorAll("#order-table .buy-btn")];
+    expect(links.map((a) => a.textContent).sort()).toEqual(["[Fill*]", "[Fill]"]);
+    const starred = links.find((a) => a.textContent === "[Fill*]");
+    expect(starred.classList.contains("partial-fill-hint")).toBe(true);
+    expect(starred.dataset.tooltip).toBe("Partial fills allowed");
+    const plain = links.find((a) => a.textContent === "[Fill]");
+    expect(plain.classList.contains("partial-fill-hint")).toBe(false);
+    // The asterisk moved off the Wanted Size cells and onto the link.
+    for (const td of document.querySelectorAll('#order-table td[data-label="Wanted Size"]')) {
+      expect(td.textContent).not.toContain("*");
+    }
+  });
+
+  test("a v1 row link is always [Fill]", async () => {
+    installEthers();
+    routeFetch({ orders: [makeOrder({ orderId: "1", partialFillAllowed: true })] });
+    await app.loadOrders();
+    const fill = document.querySelector("#order-table .buy-btn");
+    expect(fill.textContent).toBe("[Fill]");
+    expect(fill.classList.contains("partial-fill-hint")).toBe(false);
+  });
+
+  /** A quarter of a 4 WETH / 12,000 USDC order left. */
+  const PART_FILLED_ROW = {
+    amountA: "4000000000000000000",
+    availableA: "1000000000000000000",
+    amountB: "12000000000",
+    availableB: "3000000000",
+  };
+
+  // v2 only: v1 shows an order's totals, with no remaining-vs-original split.
+  test("a partly filled row hides 'of X left' from everyone but its maker", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    installEthers();
+    routeFetch({ orders: [makeOrder({ orderId: "1", ...PART_FILLED_ROW })] });
+    await v2.loadOrders();
+    expect(document.querySelector('#order-table td[data-label="Offered Size"]').textContent).toBe(
+      "1"
+    );
+    expect(document.querySelector("#order-table .partial-progress")).toBeNull();
+  });
+
+  test("the maker sees 'of X left' on their own partly filled row", async () => {
+    const v2 = loadApp({ search: "?v=2" });
+    const h = installEthers();
+    routeFetch({
+      orders: [makeOrder({ orderId: "1", maker: WALLET_ADDRESS, ...PART_FILLED_ROW })],
+    });
+    await connect(v2, h);
+    await flush();
+    await v2.loadOrders();
+    const hints = [...document.querySelectorAll("#order-table .partial-progress")];
+    expect(hints.map((s) => s.textContent)).toEqual(["of 4 left", "of 12,000 left"]);
+  });
+
   test("a mixed cancel batch splits plain and unwrapping orders", async () => {
     const mod = loadApp({ search: "?v=2" });
     const h = installEthers();
@@ -4960,6 +5113,75 @@ describe("final wiring", () => {
       // subscribe to contract events. The shared DOM can still carry a toast
       // from another test's late async continuation.
       expect(h.swap.on).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Announces `wallet` over EIP-6963 whenever the app requests providers.
+     * @returns {Function} Removes the listener
+     */
+    function announceOnRequest(info, wallet) {
+      const announce = () =>
+        window.dispatchEvent(
+          new CustomEvent("eip6963:announceProvider", { detail: { info, provider: wallet } })
+        );
+      window.addEventListener("eip6963:requestProvider", announce);
+      return () => window.removeEventListener("eip6963:requestProvider", announce);
+    }
+
+    test("reconnects through the remembered EIP-6963 wallet, not window.ethereum", async () => {
+      localStorage.setItem("swapboard_wallet", "io.rabby");
+      const rabby = { request: jest.fn(), on: jest.fn(), removeListener: jest.fn() };
+      const stop = announceOnRequest({ uuid: "r1", name: "Rabby", rdns: "io.rabby" }, rabby);
+      try {
+        const { h } = await eagerBoot();
+        expect(global.ethers.BrowserProvider).toHaveBeenCalledWith(rabby);
+        expect(global.ethers.BrowserProvider).not.toHaveBeenCalledWith(h.wallet);
+        expect(document.querySelector("#connect-btn").textContent).toMatch(/0xf39/i);
+      } finally {
+        stop();
+      }
+    });
+
+    test("stays disconnected after the user pressed Disconnect", async () => {
+      localStorage.setItem("swapboard_wallet", "disconnected");
+      const { h } = await eagerBoot();
+      expect(h.provider.send).not.toHaveBeenCalledWith("eth_accounts", []);
+      expect(h.swap.on).not.toHaveBeenCalled();
+      expect(document.querySelector("#connect-btn").textContent).toMatch(/Connect Wallet/);
+    });
+
+    test("remembers the chosen wallet, and a Disconnect click", async () => {
+      const { mod, h } = await eagerBoot();
+      await mod.connectWithProvider(h.wallet, "MetaMask", "io.metamask");
+      expect(localStorage.getItem("swapboard_wallet")).toBe("io.metamask");
+      document.querySelector("#wallet-disconnect").click();
+      expect(localStorage.getItem("swapboard_wallet")).toBe("disconnected");
+    });
+
+    test("a wallet-side disconnect does not stop the next reload reconnecting", async () => {
+      const { mod, h } = await eagerBoot();
+      await mod.connectWithProvider(h.wallet, "MetaMask", "io.metamask");
+      mod.disconnectWallet();
+      expect(localStorage.getItem("swapboard_wallet")).toBe("io.metamask");
+    });
+
+    test("listens for account and chain changes after reconnecting", async () => {
+      const { h } = await eagerBoot();
+      const events = h.wallet.on.mock.calls.map((c) => c[0]);
+      expect(events).toEqual(expect.arrayContaining(["accountsChanged", "chainChanged"]));
+    });
+
+    test("a wallet on the wrong chain is not prompted on load", async () => {
+      const { h } = await eagerBoot({
+        provider: { getNetwork: jest.fn().mockResolvedValue({ chainId: BigInt(137) }) },
+      });
+      expect(h.wallet.request).not.toHaveBeenCalledWith(
+        expect.objectContaining({ method: "wallet_switchEthereumChain" })
+      );
+      expect(h.provider.send).not.toHaveBeenCalledWith("eth_requestAccounts", []);
+      expect(h.swap.on).not.toHaveBeenCalled();
+      // Still listening, so switching chains in the wallet reloads into a session.
+      expect(h.wallet.on.mock.calls.map((c) => c[0])).toContain("chainChanged");
     });
   });
 });

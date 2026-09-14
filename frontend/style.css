@@ -864,7 +864,8 @@ tbody tr.highlighted-order:hover {
 
 .modal-content p {
   margin-bottom: 20px;
-  word-break: break-all;
+  /* Wrap at word boundaries; only split a word (e.g. an address) that cannot fit a line. */
+  overflow-wrap: break-word;
 }
 
 .gas-estimate {
@@ -1209,6 +1210,44 @@ td.select-col input[type="checkbox"]:disabled {
 .partial-progress {
   display: block;
   font-size: 11px;
+  color: var(--muted);
+}
+
+/* The fill button of an order that can be filled in parts ("[Fill*]"), with a
+   hint drawn from data-tooltip on hover or keyboard focus. */
+.partial-fill-hint {
+  position: relative;
+}
+
+.partial-fill-hint::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  /* Left-aligned, not centred: the table's [Fill*] sits against the page edge,
+     where a centred hint is cut off. */
+  left: 0;
+  bottom: calc(100% + 4px);
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: normal;
+  white-space: nowrap;
+  color: var(--bg);
+  background: var(--fg);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+  z-index: 10;
+}
+
+.partial-fill-hint:hover::after,
+.partial-fill-hint:focus-visible::after {
+  opacity: 1;
+}
+
+.partial-fill-note {
+  margin-bottom: 10px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border-light);
+  font-size: 12px;
   color: var(--muted);
 }
 

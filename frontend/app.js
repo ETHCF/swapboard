@@ -25,6 +25,7 @@
   const {
     CONFIG,
     EXPECTED_CHAIN_ID,
+    ACTIVE_CHAIN,
     WATCHED_ORDERS_KEY,
     escapeHtml,
     isValidAddress,
@@ -73,17 +74,13 @@
   // Configuration
   // ============================================================================
 
-  // CONFIG and EXPECTED_CHAIN_ID come from lib.js. The per-version deployment
-  // coordinates live there too, on VERSION_CAPS, and are what deploy.sh patches;
-  // they are resolved to CONTRACT_ADDRESS / SUBGRAPH_URL below, once the active
-  // version is known.
-  const EXPECTED_CHAIN = {
-    chainId: "0x1",
-    chainName: "Ethereum",
-    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: ["https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q"],
-    blockExplorerUrls: ["https://etherscan.io"],
-  };
+  // CONFIG, EXPECTED_CHAIN_ID and the chain this build targets come from lib.js.
+  // The per-version deployment coordinates live there too, on VERSION_CAPS, and
+  // are what deploy.sh patches; they are resolved to CONTRACT_ADDRESS /
+  // SUBGRAPH_URL below, once the active version is known.
+  const EXPECTED_CHAIN = ACTIVE_CHAIN.chain;
+  const EXPECTED_CHAIN_LABEL = ACTIVE_CHAIN.label;
+  const EXPLORER_URL = EXPECTED_CHAIN.blockExplorerUrls[0];
 
   // ============================================================================
   // Protocol Version
@@ -456,6 +453,37 @@
     window.dispatchEvent(new Event("eip6963:requestProvider"));
   }
 
+  /** localStorage key remembering which wallet to reconnect on page load. */
+  const WALLET_STORAGE_KEY = "swapboard_wallet";
+
+  /** Stored when the wallet came from the legacy window.ethereum path. */
+  const WALLET_INJECTED = "injected";
+
+  /** Stored when the user pressed Disconnect, so a reload does not undo it. */
+  const WALLET_DISCONNECTED = "disconnected";
+
+  /**
+   * Reads the remembered wallet: an EIP-6963 rdns, WALLET_INJECTED or
+   * WALLET_DISCONNECTED.
+   * @returns {string|null} Stored value, or null when unset or storage is unavailable
+   */
+  function readStoredWallet() {
+    try {
+      return localStorage.getItem(WALLET_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  /** @param {string} walletId - Value to remember for the next page load */
+  function storeWallet(walletId) {
+    try {
+      localStorage.setItem(WALLET_STORAGE_KEY, walletId);
+    } catch {
+      // Storage unavailable (private mode); reload falls back to window.ethereum.
+    }
+  }
+
   // ============================================================================
   // Price Service (CoinGecko)
   // ============================================================================
@@ -698,9 +726,9 @@
       if (!res.ok) return;
 
       const data = await res.json();
-      // Filter to Ethereum mainnet (chainId: 1)
+      // Filter to the chain this build targets
       uniswapTokens = (data.tokens || [])
-        .filter((t) => t.chainId === 1)
+        .filter((t) => t.chainId === EXPECTED_CHAIN_ID)
         .map((t) => ({
           address: t.address.toLowerCase(),
           symbol: t.symbol,
@@ -1339,6 +1367,20 @@
   }
 
   /**
+   * Gives the fill button of an order that can be filled in parts a hover/focus
+   * hint explaining the asterisk in its label ("[Fill*]", "Fill Order*").
+   *
+   * The hint is drawn in CSS (data-tooltip) rather than with `title`, which
+   * shows only after a delay and never on touch.
+   *
+   * @param {HTMLElement} btn - The fill link or button
+   */
+  function hintPartialFill(btn) {
+    btn.classList.add("partial-fill-hint");
+    btn.dataset.tooltip = "Partial fills allowed";
+  }
+
+  /**
    * Renders "<amount> <symbol>" into an order-modal row.
    *
    * Links to CoinGecko and offers the contract address where there is one;
@@ -1355,21 +1397,19 @@
     const decimals = token.decimals || 18;
     const text = formatAmount(amount, decimals) + " " + token.symbol;
 
-    if (isNativeEth(token.address)) {
-      el.textContent = text;
-    } else {
-      const cgUrl = coinGeckoUrl(token.address);
-      if (cgUrl) {
-        const link = document.createElement("a");
-        link.href = cgUrl;
-        link.target = "_blank";
-        link.textContent = text;
-        el.appendChild(link);
-      } else {
-        el.textContent = text;
-      }
-      el.appendChild(createCopyButton(token.address));
+    const native = isNativeEth(token.address);
+    const cgUrl = native ? null : coinGeckoUrl(token.address);
+    let amountNode = document.createTextNode(text);
+    if (cgUrl) {
+      const link = document.createElement("a");
+      link.href = cgUrl;
+      link.target = "_blank";
+      link.textContent = text;
+      amountNode = link;
     }
+
+    el.appendChild(amountNode);
+    if (!native) el.appendChild(createCopyButton(token.address));
 
     if (original !== null && original !== undefined && BigInt(original) > amount) {
       const hint = document.createElement("span");
@@ -1418,7 +1458,7 @@
     const makerEl = $("#order-modal-maker");
     makerEl.textContent = "";
     const makerLink = document.createElement("a");
-    makerLink.href = "https://etherscan.io/address/" + order.maker;
+    makerLink.href = EXPLORER_URL + "/address/" + order.maker;
     makerLink.target = "_blank";
     makerLink.rel = "noopener noreferrer";
     const ensName = getCachedEns(order.maker);
@@ -1427,17 +1467,22 @@
     makerEl.appendChild(makerLink);
     makerEl.appendChild(createCopyButton(order.maker));
 
+    // "of X left" is the maker's view of their own order's progress. To anyone
+    // else the remaining amount simply is the order, so only the maker sees it.
+    const showFillProgress =
+      Boolean(userAddress) && order.maker.toLowerCase() === userAddress.toLowerCase();
+
     // Offered
     const offeredEl = $("#order-modal-offered");
     const tokenADecimals = order.tokenA.decimals || 18;
     const amountA = BigInt(order.availableA);
-    fillOrderModalAmount(offeredEl, order.tokenA, amountA, order.amountA);
+    fillOrderModalAmount(offeredEl, order.tokenA, amountA, showFillProgress ? order.amountA : null);
 
     // Wanted
     const wantedEl = $("#order-modal-wanted");
     const tokenBDecimals = order.tokenB.decimals || 18;
     const amountB = BigInt(order.availableB);
-    fillOrderModalAmount(wantedEl, order.tokenB, amountB, order.amountB);
+    fillOrderModalAmount(wantedEl, order.tokenB, amountB, showFillProgress ? order.amountB : null);
 
     // USD Value
     const usdEl = $("#order-modal-usd");
@@ -1503,7 +1548,7 @@
       takerRow.style.display = "flex";
       takerEl.textContent = "";
       const takerLink = document.createElement("a");
-      takerLink.href = "https://etherscan.io/address/" + order.taker;
+      takerLink.href = EXPLORER_URL + "/address/" + order.taker;
       takerLink.target = "_blank";
       takerLink.rel = "noopener noreferrer";
       const takerEns = getCachedEns(order.taker);
@@ -1544,7 +1589,9 @@
         actionsEl.appendChild(cancelBtn);
       } else {
         const fillBtn = document.createElement("button");
-        fillBtn.textContent = "Fill Order";
+        const partial = CAPS.partialFill && allowsPartialFill(order);
+        fillBtn.textContent = partial ? "Fill Order*" : "Fill Order";
+        if (partial) hintPartialFill(fillBtn);
         fillBtn.addEventListener("click", async () => {
           modal.classList.add("hidden");
           if (!userAddress) {
@@ -2378,8 +2425,10 @@ ${orderFields}
         } else {
           const fillBtn = document.createElement("a");
           fillBtn.href = "#";
-          fillBtn.textContent = "[Fill]";
+          const partial = CAPS.partialFill && allowsPartialFill(order);
+          fillBtn.textContent = partial ? "[Fill*]" : "[Fill]";
           fillBtn.classList.add("buy-btn");
+          if (partial) hintPartialFill(fillBtn);
           fillBtn.addEventListener("click", async (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -2439,7 +2488,7 @@ ${orderFields}
       const sellerWrap = document.createElement("span");
       sellerWrap.style.whiteSpace = "nowrap";
       const sellerLink = document.createElement("a");
-      sellerLink.href = "https://etherscan.io/address/" + order.maker;
+      sellerLink.href = EXPLORER_URL + "/address/" + order.maker;
       sellerLink.target = "_blank";
       sellerLink.rel = "noopener noreferrer";
       const ensName = getCachedEns(order.maker);
@@ -2453,17 +2502,29 @@ ${orderFields}
       // Column 4: Offered Token (link to CoinGecko + copy; bare text for ETH)
       tr.appendChild(buildTokenCell(order.tokenA, "Offered"));
 
-      // Column 5: Offered Size (remaining, for v2 partial fills)
+      // Column 5: Offered Size (remaining, for v2 partial fills). The original
+      // size ("of X left") is shown to the maker only: to anyone else the
+      // remaining amount simply is the order.
       tr.appendChild(
-        buildAmountCell(order.availableA, order.amountA, tokenADecimals, "Offered Size")
+        buildAmountCell(
+          order.availableA,
+          isMaker ? order.amountA : null,
+          tokenADecimals,
+          "Offered Size"
+        )
       );
 
       // Column 6: Wanted Token (link to CoinGecko + copy; bare text for ETH)
       tr.appendChild(buildTokenCell(order.tokenB, "Wanted"));
 
-      // Column 7: Wanted Size (remaining, for v2 partial fills)
+      // Column 7: Wanted Size (remaining, for v2 partial fills; original for the maker only)
       tr.appendChild(
-        buildAmountCell(order.availableB, order.amountB, tokenBDecimals, "Wanted Size")
+        buildAmountCell(
+          order.availableB,
+          isMaker ? order.amountB : null,
+          tokenBDecimals,
+          "Wanted Size"
+        )
       );
 
       // Column 8: USD Val (nowrap to keep $ and value on same line)
@@ -3036,22 +3097,38 @@ ${orderFields}
     const remainingA = BigInt(order.availableA);
     const remainingB = BigInt(order.availableB);
 
+    // Orders that opted out of partial fill are all-or-nothing, so there is
+    // nothing to choose and the note and controls stay off. So is every v1 order.
+    const partial = CAPS.partialFill && allowsPartialFill(order);
+
     const body = document.createElement("div");
+    if (partial) {
+      const note = document.createElement("div");
+      note.className = "partial-fill-note";
+      note.textContent =
+        "This order supports partial fills: pick a percentage or enter a custom amount below.";
+      body.appendChild(note);
+    }
+
+    // Rewritten on every change to a partial fill's amount, so the sentence
+    // always states the fill that Confirm will send.
     const summary = document.createElement("div");
-    summary.textContent =
-      `You will send ${formatAmount(remainingB, order.tokenB.decimals)} ${order.tokenB.symbol} ` +
-      `and receive ${formatAmount(remainingA, order.tokenA.decimals)} ${order.tokenA.symbol} in return.`;
+    const describeFill = (amountA, amountB) => {
+      summary.textContent =
+        `You will send ${formatAmount(amountB, order.tokenB.decimals)} ${order.tokenB.symbol} ` +
+        `and receive ${formatAmount(amountA, order.tokenA.decimals)} ${order.tokenA.symbol} in return.`;
+    };
+    describeFill(remainingA, remainingB);
     body.appendChild(summary);
 
-    // Orders that opted out of partial fill are all-or-nothing, so there is
-    // nothing to choose and the controls stay off. So is every v1 order.
     let fillAmountA = remainingA;
     let fillAmountB = remainingB;
-    if (CAPS.partialFill && allowsPartialFill(order)) {
+    if (partial) {
       body.appendChild(
         buildPartialFillControls(order, (amountA, amountB) => {
           fillAmountA = amountA;
           fillAmountB = amountB;
+          describeFill(amountA, amountB);
         })
       );
     }
@@ -4067,8 +4144,10 @@ ${orderFields}
   }
 
   async function switchToExpectedNetwork() {
+    // Ask the wallet the user picked, which need not be the one on window.ethereum.
+    const wallet = selectedProvider || window.ethereum;
     try {
-      await window.ethereum.request({
+      await wallet.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: EXPECTED_CHAIN.chainId }],
       });
@@ -4076,7 +4155,7 @@ ${orderFields}
     } catch (switchError) {
       if (switchError.code === 4902) {
         try {
-          await window.ethereum.request({
+          await wallet.request({
             method: "wallet_addEthereumChain",
             params: [EXPECTED_CHAIN],
           });
@@ -4089,22 +4168,40 @@ ${orderFields}
     }
   }
 
-  async function validateNetwork() {
+  /**
+   * Checks the wallet is on EXPECTED_CHAIN_ID, asking it to switch if not.
+   * @param {{silent?: boolean}} [opts] - silent: page-load reconnect; report
+   *   the wrong chain but never pop a wallet prompt the user did not ask for
+   * @returns {Promise<boolean>} true once the wallet is on the expected chain
+   */
+  async function validateNetwork({ silent = false } = {}) {
     const network = await provider.getNetwork();
     const chainId = Number(network.chainId);
+    if (chainId === EXPECTED_CHAIN_ID) return true;
 
-    if (chainId !== EXPECTED_CHAIN_ID) {
-      const networkName = NETWORK_NAMES[chainId] || "Chain " + chainId;
-      showToast(`Wrong network: ${networkName}. Switching to Ethereum mainnet...`, "error", true);
-
-      const switched = await switchToExpectedNetwork();
-      if (!switched) {
-        showToast("Please switch to Ethereum mainnet", "error");
-        return false;
-      }
+    const networkName = NETWORK_NAMES[chainId] || "Chain " + chainId;
+    if (silent) {
+      showToast(`Wallet is on ${networkName}. Switch to ${EXPECTED_CHAIN_LABEL} to reconnect.`);
       return false;
     }
-    return true;
+
+    showToast(
+      `Wrong network: ${networkName}. Switching to ${EXPECTED_CHAIN_LABEL}...`,
+      "error",
+      true
+    );
+
+    const switched = await switchToExpectedNetwork();
+    if (!switched) {
+      showToast("Please switch to " + EXPECTED_CHAIN_LABEL, "error");
+      return false;
+    }
+
+    // ethers v6 pins a BrowserProvider to the chain it first saw, so the old
+    // one throws "network changed" from here on. Rebuild it and re-check.
+    provider = new ethers.BrowserProvider(selectedProvider || window.ethereum);
+    const switchedNetwork = await provider.getNetwork();
+    return Number(switchedNetwork.chainId) === EXPECTED_CHAIN_ID;
   }
 
   /**
@@ -4129,7 +4226,7 @@ ${orderFields}
     if (providers.length === 0) {
       if (typeof window.ethereum !== "undefined") {
         // Single legacy wallet - connect directly
-        connectWithProvider(window.ethereum, "Browser Wallet");
+        connectWithProvider(window.ethereum, "Browser Wallet", WALLET_INJECTED);
         return;
       }
       // No wallets at all
@@ -4140,7 +4237,7 @@ ${orderFields}
     // If only one EIP-6963 wallet, connect directly
     if (providers.length === 1) {
       const { info, provider: walletProvider } = providers[0];
-      connectWithProvider(walletProvider, info.name);
+      connectWithProvider(walletProvider, info.name, info.rdns || null);
       return;
     }
 
@@ -4154,7 +4251,7 @@ ${orderFields}
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         $("#wallet-modal").classList.add("hidden");
-        connectWithProvider(walletProvider, info.name);
+        connectWithProvider(walletProvider, info.name, info.rdns || null);
       });
 
       walletList.appendChild(btn);
@@ -4164,20 +4261,78 @@ ${orderFields}
   }
 
   /**
+   * Reconnects on page load, without prompting, to the wallet the user last
+   * connected. A wallet with no authorised account stays disconnected.
+   */
+  function restoreWalletConnection() {
+    // Some wallet extensions define window.ethereum as a non-configurable
+    // getter, so mock mode cannot replace it and this path would reconnect the
+    // user's real wallet — real signer, real address, real contract calls — on
+    // a page where everything else is simulated. Mock mode owns this provider
+    // when it is active; window.ethereum stays the default everywhere else.
+    if (window.SWAPBOARD_MOCK_PROVIDER) {
+      connectWithProvider(window.SWAPBOARD_MOCK_PROVIDER, "Mock Wallet", null, { silent: true });
+      return;
+    }
+
+    const stored = readStoredWallet();
+    if (stored === WALLET_DISCONNECTED) return;
+
+    // Discovery ran synchronously at the top of initApp, so announced wallets
+    // are already in the map.
+    const match = Array.from(discoveredProviders.values()).find(
+      ({ info }) => stored && info.rdns === stored
+    );
+    if (match) {
+      connectWithProvider(match.provider, match.info.name, stored, { silent: true });
+      return;
+    }
+
+    // Legacy injection, no remembered choice (connected before this was
+    // stored), or the remembered wallet did not announce. The stored choice
+    // is left alone so it still wins if that wallet is back next load.
+    if (window.ethereum) {
+      connectWithProvider(window.ethereum, "Browser Wallet", null, { silent: true });
+    }
+  }
+
+  /**
    * Connects to wallet using a specific EIP-1193 provider.
    * @param {Object} walletProvider - The EIP-1193 provider object
    * @param {string} walletName - Display name of the wallet (for toasts)
+   * @param {string|null} [walletId] - Remembered for the next page load (an
+   *   EIP-6963 rdns or WALLET_INJECTED); null leaves the stored choice alone
+   * @param {{silent?: boolean}} [opts] - silent: page-load reconnect. Only
+   *   uses already-authorised accounts, and never prompts, switches chain or
+   *   toasts a failure.
    */
-  async function connectWithProvider(walletProvider, walletName) {
+  async function connectWithProvider(
+    walletProvider,
+    walletName,
+    walletId = null,
+    { silent = false } = {}
+  ) {
     try {
       selectedProvider = walletProvider;
       provider = new ethers.BrowserProvider(walletProvider);
-      await provider.send("eth_requestAccounts", []);
+      if (silent) {
+        const accounts = await provider.send("eth_accounts", []);
+        if (!accounts || accounts.length === 0) return;
+      } else {
+        await provider.send("eth_requestAccounts", []);
+      }
+
+      const validNetwork = await validateNetwork({ silent });
+      if (!validNetwork) {
+        // Keep listening: switching to the right chain in the wallet reloads
+        // the page, and the reload reconnects.
+        if (silent) setupProviderListeners(walletProvider, walletId);
+        return;
+      }
+
+      // After validateNetwork, which may have rebuilt provider on the new chain.
       signer = await provider.getSigner();
       userAddress = await signer.getAddress();
-
-      const validNetwork = await validateNetwork();
-      if (!validNetwork) return;
 
       const network = await provider.getNetwork();
       updateNetworkIndicator(Number(network.chainId));
@@ -4226,11 +4381,14 @@ ${orderFields}
       });
 
       // Set up provider event listeners for the selected wallet
-      setupProviderListeners(walletProvider);
+      setupProviderListeners(walletProvider, walletId);
 
-      showToast(`Connected to ${walletName}`, "success");
+      if (walletId) storeWallet(walletId);
+      if (!silent) showToast(`Connected to ${walletName}`, "success");
       loadOrders();
     } catch (e) {
+      // A locked or unreachable wallet on page load is not worth a toast.
+      if (silent) return;
       console.error("Connect error:", e);
       if (e.code === 4001 || e.code === "ACTION_REJECTED") {
         showToast("Wallet connection cancelled", "info");
@@ -4255,21 +4413,22 @@ ${orderFields}
   /**
    * Sets up event listeners for the selected wallet provider.
    * @param {Object} walletProvider - The EIP-1193 provider object
+   * @param {string|null} [walletId] - Passed through when an account change reconnects
    */
-  function setupProviderListeners(walletProvider) {
+  function setupProviderListeners(walletProvider, walletId = null) {
     walletProvider.on("accountsChanged", (accounts) => {
       if (accounts.length === 0) {
         disconnectWallet();
         $("#sell-modal").classList.add("hidden");
       } else {
-        connectWithProvider(walletProvider, "Wallet");
+        connectWithProvider(walletProvider, "Wallet", walletId);
       }
     });
 
     walletProvider.on("chainChanged", (chainIdHex) => {
       const chainId = parseInt(chainIdHex, 16);
       if (chainId !== EXPECTED_CHAIN_ID) {
-        showToast("Please switch to Ethereum mainnet", "error");
+        showToast("Please switch to " + EXPECTED_CHAIN_LABEL, "error");
         disconnectWallet();
       } else {
         window.location.reload();
@@ -4277,6 +4436,11 @@ ${orderFields}
     });
   }
 
+  /**
+   * Clears wallet state. Deliberately does not touch the stored wallet: this
+   * also runs when the wallet locks or leaves the chain, and the next reload
+   * should reconnect after those. Only the Disconnect button records that.
+   */
   function disconnectWallet() {
     userAddress = null;
     signer = null;
@@ -4747,6 +4911,7 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
     $("#wallet-disconnect").addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      storeWallet(WALLET_DISCONNECTED);
       disconnectWallet();
       $("#wallet-menu").classList.add("hidden");
     });
@@ -5019,73 +5184,7 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
       });
     });
 
-    // Some wallet extensions define window.ethereum as a non-configurable
-    // getter, so mock mode cannot replace it and this path would reconnect the
-    // user's real wallet — real signer, real address, real contract calls — on
-    // a page where everything else is simulated. Mock mode owns this provider
-    // when it is active; window.ethereum stays the default everywhere else.
-    const eagerProvider = window.SWAPBOARD_MOCK_PROVIDER || window.ethereum;
-
-    if (eagerProvider) {
-      provider = new ethers.BrowserProvider(eagerProvider);
-
-      // Check for existing connection
-      provider
-        .send("eth_accounts", [])
-        .then(async (accounts) => {
-          if (accounts && accounts.length > 0) {
-            signer = await provider.getSigner();
-            userAddress = await signer.getAddress();
-
-            const validNetwork = await validateNetwork();
-            if (!validNetwork) return;
-
-            const network = await provider.getNetwork();
-            updateNetworkIndicator(Number(network.chainId));
-            contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-
-            if (!CAPS.nativeEth && !cachedWethAddress) {
-              try {
-                cachedWethAddress = (await contract.getWeth()).toLowerCase();
-              } catch (e) {
-                cachedWethAddress = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
-              }
-            }
-
-            $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
-            $("#sell-btn").classList.remove("hidden");
-            $("#my-orders-label").classList.remove("hidden");
-            updateNotifyText();
-
-            // Subscribe to contract events for real-time updates
-            contract.on("OrderFilled", (orderId, taker) => {
-              if (taker.toLowerCase() !== userAddress.toLowerCase()) {
-                showNotification(
-                  "Order Filled",
-                  `Your order #${orderId} has been filled!`,
-                  "order-" + orderId
-                );
-              }
-              loadOrders();
-              loadStats();
-            });
-
-            contract.on("OrderCanceled", (orderId) => {
-              showToast(`Order #${orderId} canceled`, "info");
-              loadOrders();
-              loadStats();
-            });
-
-            contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
-              loadOrders();
-              loadStats();
-            });
-
-            loadOrders();
-          }
-        })
-        .catch(() => {});
-    }
+    restoreWalletConnection();
 
     loadStats();
     loadPopularPairs();

@@ -102,8 +102,8 @@ Automated deployment script handles contract, subgraph, and frontend:
 cp .env.example .env
 # Edit .env with your private key, RPC URLs, and Graph auth token
 
-# 2. Deploy everything to Sepolia (testnet)
-./deploy.sh sepolia
+# 2. Deploy everything to Sepolia (testnet), from a testnet-only keystore account
+DEPLOYER_ACCOUNT=sepolia-deployer ./deploy.sh sepolia
 
 # Or deploy to mainnet
 ./deploy.sh mainnet
@@ -126,6 +126,19 @@ SKIP_CONTRACT=true ./deploy.sh sepolia    # Reuse existing contract
 SKIP_SUBGRAPH=true ./deploy.sh sepolia    # Skip subgraph deploy
 SKIP_FRONTEND=true ./deploy.sh sepolia    # Skip IPFS upload
 ```
+
+The subgraph manifest and the frontend's chain (`deploy:network` in `frontend/lib.js`)
+are pointed at the network being deployed to.
+
+**Smoke test a testnet deployment:**
+
+```bash
+source .deploy.env   # CONTRACT_ADDRESS from the last deploy
+cd contracts && forge script script/Smoke.s.sol --rpc-url sepolia --account sepolia-deployer --broadcast
+```
+
+Runs every v2 entry point with two throwaway, freely mintable tokens (SMKA/SMKB), then
+leaves two orders open for the subgraph and UI.
 
 **Manual deployment:**
 

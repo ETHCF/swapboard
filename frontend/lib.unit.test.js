@@ -79,7 +79,41 @@ const {
   normalizeStats,
   popularPairsQuery,
   offersEthDirectly,
+  CHAINS,
+  ACTIVE_CHAIN,
+  EXPECTED_CHAIN_ID,
 } = require("./lib");
+
+// ============================================================================
+// Chain target
+// ============================================================================
+
+describe("chain target", () => {
+  // MUTATION: Mistype a chain's hex id
+  // BREAKS: wallet_switchEthereumChain asks the wallet for a chain the page
+  //         then rejects as the wrong network, forever
+  test("every chain's EIP-3085 chainId is its numeric id in hex", () => {
+    for (const { id, chain } of Object.values(CHAINS)) {
+      expect(chain.chainId).toBe("0x" + id.toString(16));
+    }
+  });
+
+  // MUTATION: Swap the mainnet and Sepolia ids or explorers
+  // BREAKS: a Sepolia build links every address to mainnet Etherscan
+  test("mainnet and Sepolia carry their own ids and explorers", () => {
+    expect(CHAINS.mainnet.id).toBe(1);
+    expect(CHAINS.mainnet.chain.blockExplorerUrls).toEqual(["https://etherscan.io"]);
+    expect(CHAINS.sepolia.id).toBe(11155111);
+    expect(CHAINS.sepolia.chain.blockExplorerUrls).toEqual(["https://sepolia.etherscan.io"]);
+  });
+
+  // MUTATION: Leave EXPECTED_CHAIN_ID hardcoded
+  // BREAKS: a Sepolia build still rejects Sepolia as the wrong network
+  test("EXPECTED_CHAIN_ID follows the active chain", () => {
+    expect(Object.values(CHAINS)).toContain(ACTIVE_CHAIN);
+    expect(EXPECTED_CHAIN_ID).toBe(ACTIVE_CHAIN.id);
+  });
+});
 
 // ============================================================================
 // escapeHtml
