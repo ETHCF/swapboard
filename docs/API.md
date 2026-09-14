@@ -429,8 +429,48 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `FillAmountTooHigh(uint256,uint128,uint128)` | `0x535a34f0` | Requested fill amount exceeds remaining liquidity (`amountB` for `fillOrder`, `amountA` for `fillOrderPaying`) |
 | `FillAmountMismatch(uint256,uint128,uint128)` | `0x19113a72` | Quoted tokenA receive is below the taker's `minAmountA` (`fillOrder`) |
 | `FillPayTooHigh(uint256,uint128,uint128)` | `0x489a6af8` | Quoted tokenB payment exceeds the taker's `maxAmountB` (`fillOrderPaying`) |
+| `PermitOnNative()` | `0x62898bac` | EIP-2612 permit supplied for the native ETH sentinel (`v != 0`) |
+| `InvalidPermit()` | `0xddafbaef` | Batch permit entry has `v == 0` |
+| `DuplicatePermitToken(address)` | `0xc87bfe90` | Same token appears more than once in a permit batch |
 
 ## Methods
+
+### EIP-2612 permits
+
+`createOrder`, `createOrders`, `fillOrder`, `fillOrders`, `fillOrderPaying`, `fillOrdersPaying`, `modifyOrder`, and `modifyOrders` have overloads that take an EIP-2612 permit as the last argument so allowance can be set in the same transaction as the pull. Existing signatures are unchanged.
+
+```solidity
+struct Permit {
+    uint256 value;
+    uint256 deadline;
+    uint8 v;          // 27/28; 0 skips the permit
+    bytes32 r;
+    bytes32 s;
+}
+
+struct TokenPermit {
+    address token;
+    uint8 v;          // 27/28; 0 reverts InvalidPermit
+    uint256 value;
+    uint256 deadline;
+    bytes32 r;
+    bytes32 s;
+}
+```
+
+Behavior:
+
+- Spender is always this Swapboard. Owner is `msg.sender`.
+- Single-path: `v == 0` skips (caller must already have allowance). Native ETH with `v != 0` reverts `PermitOnNative`.
+- Batch: empty array means no permits. `v == 0` reverts `InvalidPermit`. Duplicate `token` reverts `DuplicatePermitToken`. `token == 0` reverts `ZeroAddress`. Native ETH reverts `PermitOnNative`.
+- Token `permit` errors bubble (expired, wrong signer, non-permit token).
+- Permits are applied immediately before the corresponding pull (create tokenA, fill tokenB, modify tokenA top-up).
+- If a permit is front-run, the call reverts; retry with `v == 0` once allowance is set.
+
+```solidity
+function createOrder(CreateOrderParams calldata order, Permit calldata permit) external payable returns (uint256);
+function createOrders(CreateOrderParams[] calldata orders, TokenPermit[] calldata permits) external payable returns (uint256[] memory);
+```
 
 ### `fillOrder`
 
@@ -450,9 +490,23 @@ function fillOrder(
     uint256 deadline
 ) external payable;
 
+function fillOrder(
+    uint256 orderId,
+    uint128 amountB,
+    uint128 minAmountA,
+    uint256 deadline,
+    Permit calldata permit
+) external payable;
+
 function fillOrders(
     FillOrderParams[] calldata fills,
     uint256 deadline
+) external payable;
+
+function fillOrders(
+    FillOrderParams[] calldata fills,
+    uint256 deadline,
+    TokenPermit[] calldata permits
 ) external payable;
 ```
 
@@ -483,9 +537,23 @@ function fillOrderPaying(
     uint256 deadline
 ) external payable;
 
+function fillOrderPaying(
+    uint256 orderId,
+    uint128 amountA,
+    uint128 maxAmountB,
+    uint256 deadline,
+    Permit calldata permit
+) external payable;
+
 function fillOrdersPaying(
     FillOrderPayingParams[] calldata fills,
     uint256 deadline
+) external payable;
+
+function fillOrdersPaying(
+    FillOrderPayingParams[] calldata fills,
+    uint256 deadline,
+    TokenPermit[] calldata permits
 ) external payable;
 ```
 
@@ -520,6 +588,13 @@ function modifyOrder(
     OrderAmounts calldata previousAmounts,
     ModifyOrderParams calldata updatedOrder
 ) external payable;
+
+function modifyOrder(
+    uint256 orderId,
+    OrderAmounts calldata previousAmounts,
+    ModifyOrderParams calldata updatedOrder,
+    Permit calldata permit
+) external payable;
 ```
 
 Behavior:
@@ -544,6 +619,11 @@ struct ModifyOrdersParams {
 }
 
 function modifyOrders(ModifyOrdersParams[] calldata mods) external payable;
+
+function modifyOrders(
+    ModifyOrdersParams[] calldata mods,
+    TokenPermit[] calldata permits
+) external payable;
 ```
 
 Behavior:

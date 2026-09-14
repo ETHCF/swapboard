@@ -753,6 +753,9 @@ const ERROR_SIGNATURES = {
   "0x8230dc8f": "ETHAmountMismatch",
   "0x1c988062": "ETHTransferFailed",
   "0x1ab7da6b": "DeadlineExpired",
+  "0x62898bac": "PermitOnNative",
+  "0xddafbaef": "InvalidPermit",
+  "0xc87bfe90": "DuplicatePermitToken",
 };
 
 /**
@@ -774,6 +777,9 @@ const ERROR_MESSAGES = {
   ETHAmountMismatch: "ETH amount does not match required amount",
   ETHTransferFailed: "ETH transfer to recipient failed",
   DeadlineExpired: "Transaction deadline passed. Please try again.",
+  PermitOnNative: "Cannot permit native ETH",
+  InvalidPermit: "Permit signature is invalid",
+  DuplicatePermitToken: "Duplicate permit token",
 };
 
 /**

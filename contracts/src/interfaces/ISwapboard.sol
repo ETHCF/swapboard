@@ -9,6 +9,7 @@ import {ISemver} from "./ISemver.sol";
 /// @dev Implement this interface for composability with the Swapboard protocol.
 ///      All amounts are in base units (wei-equivalent for 18 decimal tokens).
 ///      Native ETH is represented by the sentinel returned from `getEth()`.
+///      Create, fill, and modify have EIP-2612 permit overloads; original signatures are unchanged.
 interface ISwapboard is ISemver {
     /// @notice Represents a single OTC order
     /// @dev `uint128` amounts are sufficient for practical order sizes (e.g. ~3.4e20 wei ≈
@@ -101,6 +102,40 @@ interface ISwapboard is ISemver {
         uint256 orderId;
         OrderAmounts previousAmounts;
         ModifyOrderParams updatedOrder;
+    }
+
+    /// @notice EIP-2612 permit for a single known token (create/fill/modify)
+    /// @dev `v == 0` skips the permit (use when the caller already has allowance). Spender is
+    ///      always this Swapboard. Native ETH with `v != 0` reverts `PermitOnNative`.
+    /// @param value Allowance value signed by the owner
+    /// @param deadline Unix timestamp after which the permit is invalid
+    /// @param v Signature v (27/28); 0 means skip
+    /// @param r Signature r
+    /// @param s Signature s
+    struct Permit {
+        uint256 value;
+        uint256 deadline;
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+    }
+
+    /// @notice EIP-2612 permit for one ERC20 in a batch (createOrders/fillOrders/modifyOrders)
+    /// @dev Every entry is applied (`v == 0` reverts `InvalidPermit`). Duplicate `token` values
+    ///      revert `DuplicatePermitToken`. Empty array means no permits.
+    /// @param token ERC20 to permit (not the ETH sentinel)
+    /// @param v Signature v (27/28)
+    /// @param value Allowance value signed by the owner
+    /// @param deadline Unix timestamp after which the permit is invalid
+    /// @param r Signature r
+    /// @param s Signature s
+    struct TokenPermit {
+        address token;
+        uint8 v;
+        uint256 value;
+        uint256 deadline;
+        bytes32 r;
+        bytes32 s;
     }
 
     // solhint-disable gas-indexed-events
@@ -252,6 +287,16 @@ interface ISwapboard is ISemver {
     /// @param orderId The duplicated order ID
     error DuplicateOrderId(uint256 orderId);
 
+    /// @notice Thrown when an EIP-2612 permit is supplied for the native ETH sentinel
+    error PermitOnNative();
+
+    /// @notice Thrown when a batch permit entry is malformed (`v == 0`)
+    error InvalidPermit();
+
+    /// @notice Thrown when the same token appears more than once in a permit batch
+    /// @param token The duplicated token
+    error DuplicatePermitToken(address token);
+
     /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
     /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer / mid-transfer
     ///      rebase tokens.
@@ -263,6 +308,17 @@ interface ISwapboard is ISemver {
         CreateOrderParams calldata order
     ) external payable returns (uint256);
 
+    /// @notice Creates a new OTC order after applying an EIP-2612 permit for tokenA
+    /// @dev `permit.v == 0` skips the permit. Otherwise `token.permit(msg.sender, this, ...)`.
+    ///      Native tokenA with `permit.v != 0` reverts `PermitOnNative`.
+    /// @param order Order creation arguments
+    /// @param permit EIP-2612 signature for tokenA (`v == 0` to skip)
+    /// @return orderId The unique identifier for the created order
+    function createOrder(
+        CreateOrderParams calldata order,
+        Permit calldata permit
+    ) external payable returns (uint256);
+
     /// @notice Creates multiple OTC orders in one call
     /// @dev Repeated `tokenA` deposits are aggregated into a single ERC20 `transferFrom` per
     ///      unique token. ETH deposits are summed and checked against `msg.value`.
@@ -270,6 +326,16 @@ interface ISwapboard is ISemver {
     /// @return orderIds Identifiers assigned to each created order, in input order
     function createOrders(
         CreateOrderParams[] calldata orders
+    ) external payable returns (uint256[] memory);
+
+    /// @notice Creates multiple OTC orders after applying EIP-2612 permits
+    /// @dev Permits are applied in order before aggregated pulls. One permit per distinct ERC20.
+    /// @param orders Order creation arguments
+    /// @param permits EIP-2612 signatures keyed by token (empty = none)
+    /// @return orderIds Identifiers assigned to each created order, in input order
+    function createOrders(
+        CreateOrderParams[] calldata orders,
+        TokenPermit[] calldata permits
     ) external payable returns (uint256[] memory);
 
     /// @notice Fills an existing order by sending exact amountB
@@ -294,6 +360,22 @@ interface ISwapboard is ISemver {
         uint256 deadline
     ) external payable;
 
+    /// @notice Fills an order by exact amountB after an EIP-2612 permit for tokenB
+    /// @dev `permit.v == 0` skips the permit. Native tokenB with `permit.v != 0` reverts
+    ///      `PermitOnNative`.
+    /// @param orderId The unique identifier of the order to fill
+    /// @param amountB Exact amount of tokenB to send
+    /// @param minAmountA Minimum amount of tokenA the taker will accept
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @param permit EIP-2612 signature for tokenB (`v == 0` to skip)
+    function fillOrder(
+        uint256 orderId,
+        uint128 amountB,
+        uint128 minAmountA,
+        uint256 deadline,
+        Permit calldata permit
+    ) external payable;
+
     /// @notice Fills multiple orders in one call by exact tokenB sent
     /// @dev The same `orderId` may appear more than once when the order allows partial fills and
     ///      still has remaining liquidity; otherwise later legs revert (`FillAmountTooHigh` /
@@ -305,6 +387,16 @@ interface ISwapboard is ISemver {
     function fillOrders(
         FillOrderParams[] calldata fills,
         uint256 deadline
+    ) external payable;
+
+    /// @notice Fills multiple orders by exact tokenB after EIP-2612 permits
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    /// @param permits EIP-2612 signatures keyed by tokenB (empty = none)
+    function fillOrders(
+        FillOrderParams[] calldata fills,
+        uint256 deadline,
+        TokenPermit[] calldata permits
     ) external payable;
 
     /// @notice Fills an existing order by receiving exact amountA
@@ -329,6 +421,22 @@ interface ISwapboard is ISemver {
         uint256 deadline
     ) external payable;
 
+    /// @notice Fills an order by exact amountA after an EIP-2612 permit for tokenB
+    /// @dev `permit.v == 0` skips the permit. Native tokenB with `permit.v != 0` reverts
+    ///      `PermitOnNative`.
+    /// @param orderId The unique identifier of the order to fill
+    /// @param amountA Exact amount of tokenA to receive
+    /// @param maxAmountB Maximum amount of tokenB the taker is willing to send
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @param permit EIP-2612 signature for tokenB (`v == 0` to skip)
+    function fillOrderPaying(
+        uint256 orderId,
+        uint128 amountA,
+        uint128 maxAmountB,
+        uint256 deadline,
+        Permit calldata permit
+    ) external payable;
+
     /// @notice Fills multiple orders in one call by exact tokenA received
     /// @dev Same aggregation and multi-leg rules as `fillOrders`, but each leg specifies `amountA`
     ///      and `maxAmountB`.
@@ -337,6 +445,16 @@ interface ISwapboard is ISemver {
     function fillOrdersPaying(
         FillOrderPayingParams[] calldata fills,
         uint256 deadline
+    ) external payable;
+
+    /// @notice Fills multiple orders by exact tokenA after EIP-2612 permits
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    /// @param permits EIP-2612 signatures keyed by tokenB (empty = none)
+    function fillOrdersPaying(
+        FillOrderPayingParams[] calldata fills,
+        uint256 deadline,
+        TokenPermit[] calldata permits
     ) external payable;
 
     /// @notice Cancels an existing order and returns available tokenA to maker
@@ -374,6 +492,20 @@ interface ISwapboard is ISemver {
         ModifyOrderParams calldata updatedOrder
     ) external payable;
 
+    /// @notice Modifies remaining liquidity after an EIP-2612 permit for tokenA
+    /// @dev Used when topping up escrowed tokenA. `permit.v == 0` skips. Native tokenA with
+    ///      `permit.v != 0` reverts `PermitOnNative`.
+    /// @param orderId The order ID
+    /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
+    /// @param updatedOrder Desired remaining amounts
+    /// @param permit EIP-2612 signature for tokenA (`v == 0` to skip)
+    function modifyOrder(
+        uint256 orderId,
+        OrderAmounts calldata previousAmounts,
+        ModifyOrderParams calldata updatedOrder,
+        Permit calldata permit
+    ) external payable;
+
     /// @notice Modifies multiple orders' remaining liquidity in one call
     /// @dev Only the maker may modify each order. Duplicate `orderId`s revert.
     ///      Per unique tokenA (and ETH), top-ups are netted against refunds so only the net delta
@@ -381,6 +513,15 @@ interface ISwapboard is ISemver {
     /// @param mods Modify arguments in execution order
     function modifyOrders(
         ModifyOrdersParams[] calldata mods
+    ) external payable;
+
+    /// @notice Modifies multiple orders after applying EIP-2612 permits
+    /// @dev Permits are applied before netted tokenA top-ups. One permit per distinct ERC20.
+    /// @param mods Modify arguments in execution order
+    /// @param permits EIP-2612 signatures keyed by tokenA (empty = none)
+    function modifyOrders(
+        ModifyOrdersParams[] calldata mods,
+        TokenPermit[] calldata permits
     ) external payable;
 
     /// @notice Sets whether an active order may be filled in multiple parts
