@@ -170,8 +170,8 @@ contract SwapboardIntegrationTest is Test {
         vm.stopPrank();
 
         vm.startPrank(_charlie);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        _board.fillOrder(orderId, 30_000e6, 10 ether, 0);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
+        _board.fillOrder(orderId, 10 ether, 10 ether, 0);
         vm.stopPrank();
 
         assertFalse(_board.getOrder(orderId).active);
@@ -204,7 +204,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
 
         vm.prank(_alice);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _board.cancelOrder(orderId);
     }
 

@@ -71,9 +71,9 @@ The following are documented design decisions, not vulnerabilities:
 
 1. **Front-running**: Inherent to on-chain orderbooks. Orders can be front-run by MEV bots. Users should consider using private mempools for large orders.
 
-2. **Rebasing tokens**: Mid-transfer rebases on inbound pulls are rejected via `BalanceMismatch`. Post-deposit rebases (while tokenA sits in escrow) may leave the contract under-collateralized or lock surplus; positive rebases can strand excess. Users should not use rebasing tokens.
+2. **Rebasing tokens**: Inbound mid-transfer rebases are rejected via `BalanceMismatch`. Post-deposit rebases (while tokenA sits in escrow) are not: a negative rebase can leave the contract under-collateralized so fill and cancel fail; a positive rebase can strand surplus that fills do not pay out. Users should not use rebasing tokens. See `contracts/test/security-research/`.
 
-3. **Fee-on-transfer and phantom tokens**: Inbound fee-on-transfer, mid-transfer rebase, and phantom transfers are rejected on tokenA deposits and tokenB pulls via balance checks. Outbound fee-on-transfer or mid-transfer rebase on maker payout remains possible after an exact tokenB pull; makers may receive less than quoted `amountB`.
+3. **Outbound fee-on-transfer**: After escrow release, tokenA is sent with `transfer` and is not balance-checked, so outbound-only fee-on-transfer or mid-transfer rebase on that hop can short the taker. Self-fill ERC20 tokenB still routes through the board, so outbound-only FOT on that hop can still short the maker. See `contracts/test/security-research/`.
 
 4. **Malicious tokens**: The contract cannot detect malicious token implementations. Tokens with blacklists, pausability, or admin mint functions can disrupt trades.
 

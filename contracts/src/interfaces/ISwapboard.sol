@@ -171,7 +171,8 @@ interface ISwapboard is ISemver {
     error NotAContract(address token);
 
     /// @notice Thrown when the received token amount differs from expected
-    /// @dev Used to detect fee-on-transfer / mid-transfer rebase / phantom tokens
+    /// @dev Used to detect fee-on-transfer / mid-transfer rebase / phantom tokens on inbound
+    ///      pulls: tokenA deposits into escrow and ERC20 tokenB payments directly to the maker
     /// @param expected The amount that was expected to be received
     /// @param received The amount that was actually received
     error BalanceMismatch(uint256 expected, uint256 received);
@@ -180,7 +181,9 @@ interface ISwapboard is ISemver {
     /// @param orderId The order ID that was not found
     error OrderNotFound(uint256 orderId);
 
-    /// @notice Thrown when attempting to fill or cancel an inactive order
+    /// @notice Thrown when attempting to operate on an inactive order that still exists
+    /// @dev Full fills and cancels `delete` storage, so those paths revert with `OrderNotFound`
+    ///      instead. `OrderNotActive` remains for any residual inactive-but-present shell.
     /// @param orderId The order ID that is not active
     error OrderNotActive(uint256 orderId);
 
@@ -275,8 +278,11 @@ interface ISwapboard is ISemver {
     ///      all remaining `availableA`.
     ///      `minAmountA` is the minimum tokenA the taker accepts. Reverts with `FillAmountMismatch`
     ///      when the floored receive is lower.
-    ///      If tokenB is ETH, requires `msg.value == amountB`.
+    ///      ERC20 tokenB is `transferFrom` the taker straight to the maker with an exact-balance
+    ///      check (`BalanceMismatch`). ETH tokenB requires `msg.value == amountB`.
     ///      If tokenA is ETH, pays the taker in ETH.
+    ///      A fill that exhausts either remaining side `delete`s the order (subsequent reads look
+    ///      like `OrderNotFound`); partial fills keep originals and update availables only.
     /// @param orderId The unique identifier of the order to fill
     /// @param amountB Exact amount of tokenB to send
     /// @param minAmountA Minimum amount of tokenA the taker will accept
@@ -291,9 +297,9 @@ interface ISwapboard is ISemver {
     /// @notice Fills multiple orders in one call by exact tokenB sent
     /// @dev The same `orderId` may appear more than once when the order allows partial fills and
     ///      still has remaining liquidity; otherwise later legs revert (`FillAmountTooHigh` /
-    ///      `OrderNotActive` / `PartialFillNotAllowed`). Repeated tokenB payments are aggregated
-    ///      into a single ERC20 pull per unique token (and one `msg.value` check for ETH). tokenA
-    ///      payouts to the taker and tokenB payouts to makers are similarly aggregated.
+    ///      `OrderNotActive` / `PartialFillNotAllowed`). ERC20 tokenB payments are aggregated per
+    ///      unique `(maker, token)` and pulled directly to each maker; ETH tokenB is summed into
+    ///      one `msg.value` check. tokenA payouts to the taker are aggregated.
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     function fillOrders(
@@ -307,8 +313,11 @@ interface ISwapboard is ISemver {
     ///      remaining tokenB, remaining tokenA is paid out as well so escrow is not left stranded.
     ///      `maxAmountB` is the maximum tokenB the taker will send. Reverts with `FillPayTooHigh`
     ///      when the ceiled payment is higher.
-    ///      If tokenB is ETH, requires `msg.value` equal to the quoted tokenB payment.
+    ///      ERC20 tokenB is `transferFrom` the taker straight to the maker with an exact-balance
+    ///      check (`BalanceMismatch`). ETH tokenB requires `msg.value` equal to the quoted payment.
     ///      If tokenA is ETH, pays the taker in ETH.
+    ///      A fill that exhausts either remaining side `delete`s the order (subsequent reads look
+    ///      like `OrderNotFound`); partial fills keep originals and update availables only.
     /// @param orderId The unique identifier of the order to fill
     /// @param amountA Exact amount of tokenA to receive
     /// @param maxAmountB Maximum amount of tokenB the taker is willing to send
