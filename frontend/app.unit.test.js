@@ -4961,6 +4961,75 @@ describe("final wiring", () => {
       // from another test's late async continuation.
       expect(h.swap.on).not.toHaveBeenCalled();
     });
+
+    /**
+     * Announces `wallet` over EIP-6963 whenever the app requests providers.
+     * @returns {Function} Removes the listener
+     */
+    function announceOnRequest(info, wallet) {
+      const announce = () =>
+        window.dispatchEvent(
+          new CustomEvent("eip6963:announceProvider", { detail: { info, provider: wallet } })
+        );
+      window.addEventListener("eip6963:requestProvider", announce);
+      return () => window.removeEventListener("eip6963:requestProvider", announce);
+    }
+
+    test("reconnects through the remembered EIP-6963 wallet, not window.ethereum", async () => {
+      localStorage.setItem("swapboard_wallet", "io.rabby");
+      const rabby = { request: jest.fn(), on: jest.fn(), removeListener: jest.fn() };
+      const stop = announceOnRequest({ uuid: "r1", name: "Rabby", rdns: "io.rabby" }, rabby);
+      try {
+        const { h } = await eagerBoot();
+        expect(global.ethers.BrowserProvider).toHaveBeenCalledWith(rabby);
+        expect(global.ethers.BrowserProvider).not.toHaveBeenCalledWith(h.wallet);
+        expect(document.querySelector("#connect-btn").textContent).toMatch(/0xf39/i);
+      } finally {
+        stop();
+      }
+    });
+
+    test("stays disconnected after the user pressed Disconnect", async () => {
+      localStorage.setItem("swapboard_wallet", "disconnected");
+      const { h } = await eagerBoot();
+      expect(h.provider.send).not.toHaveBeenCalledWith("eth_accounts", []);
+      expect(h.swap.on).not.toHaveBeenCalled();
+      expect(document.querySelector("#connect-btn").textContent).toMatch(/Connect Wallet/);
+    });
+
+    test("remembers the chosen wallet, and a Disconnect click", async () => {
+      const { mod, h } = await eagerBoot();
+      await mod.connectWithProvider(h.wallet, "MetaMask", "io.metamask");
+      expect(localStorage.getItem("swapboard_wallet")).toBe("io.metamask");
+      document.querySelector("#wallet-disconnect").click();
+      expect(localStorage.getItem("swapboard_wallet")).toBe("disconnected");
+    });
+
+    test("a wallet-side disconnect does not stop the next reload reconnecting", async () => {
+      const { mod, h } = await eagerBoot();
+      await mod.connectWithProvider(h.wallet, "MetaMask", "io.metamask");
+      mod.disconnectWallet();
+      expect(localStorage.getItem("swapboard_wallet")).toBe("io.metamask");
+    });
+
+    test("listens for account and chain changes after reconnecting", async () => {
+      const { h } = await eagerBoot();
+      const events = h.wallet.on.mock.calls.map((c) => c[0]);
+      expect(events).toEqual(expect.arrayContaining(["accountsChanged", "chainChanged"]));
+    });
+
+    test("a wallet on the wrong chain is not prompted on load", async () => {
+      const { h } = await eagerBoot({
+        provider: { getNetwork: jest.fn().mockResolvedValue({ chainId: BigInt(137) }) },
+      });
+      expect(h.wallet.request).not.toHaveBeenCalledWith(
+        expect.objectContaining({ method: "wallet_switchEthereumChain" })
+      );
+      expect(h.provider.send).not.toHaveBeenCalledWith("eth_requestAccounts", []);
+      expect(h.swap.on).not.toHaveBeenCalled();
+      // Still listening, so switching chains in the wallet reloads into a session.
+      expect(h.wallet.on.mock.calls.map((c) => c[0])).toContain("chainChanged");
+    });
   });
 });
 
