@@ -9,7 +9,8 @@ import {ISemver} from "./ISemver.sol";
 /// @dev Implement this interface for composability with the Swapboard protocol.
 ///      All amounts are in base units (wei-equivalent for 18 decimal tokens).
 ///      Native ETH is represented by the sentinel returned from `getEth()`.
-///      Create, fill, and modify have EIP-2612 permit overloads; original signatures are unchanged.
+///      Create, fill, and modify have EIP-2612 and Permit2 SignatureTransfer overloads; original
+///      signatures are unchanged.
 interface ISwapboard is ISemver {
     /// @notice Represents a single OTC order
     /// @dev `uint128` amounts are sufficient for practical order sizes (e.g. ~3.4e20 wei ≈
@@ -136,6 +137,36 @@ interface ISwapboard is ISemver {
         uint256 deadline;
         bytes32 r;
         bytes32 s;
+    }
+
+    /// @notice Permit2 SignatureTransfer payload for a single known token (create/fill/modify)
+    /// @dev Empty `signature` skips (classic `transferFrom` / existing Swapboard allowance). Spender is
+    ///      always this Swapboard. Native ETH with a non-empty signature reverts `PermitOnNative`.
+    /// @param amount Max amount signed in Permit2 `TokenPermissions`
+    /// @param nonce Unordered Permit2 nonce
+    /// @param deadline Unix timestamp after which the signature is invalid
+    /// @param signature EIP-712 signature over Permit2 `PermitTransferFrom` (empty = skip)
+    struct Permit2Permit {
+        uint256 amount;
+        uint256 nonce;
+        uint256 deadline;
+        bytes signature;
+    }
+
+    /// @notice Permit2 SignatureTransfer for one ERC20 in a batch
+    /// @dev Every entry is applied (empty `signature` reverts `InvalidPermit2`). Duplicate `token`
+    ///      values revert `DuplicatePermitToken`. Empty array means no Permit2 pulls.
+    /// @param token ERC20 to pull via Permit2 (not the ETH sentinel)
+    /// @param amount Max amount signed in Permit2 `TokenPermissions`
+    /// @param nonce Unordered Permit2 nonce
+    /// @param deadline Unix timestamp after which the signature is invalid
+    /// @param signature EIP-712 signature over Permit2 `PermitTransferFrom`
+    struct TokenPermit2 {
+        address token;
+        uint256 amount;
+        uint256 nonce;
+        uint256 deadline;
+        bytes signature;
     }
 
     // solhint-disable gas-indexed-events
@@ -297,6 +328,9 @@ interface ISwapboard is ISemver {
     /// @param token The duplicated token
     error DuplicatePermitToken(address token);
 
+    /// @notice Thrown when a batch Permit2 entry has an empty signature
+    error InvalidPermit2();
+
     /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
     /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer / mid-transfer
     ///      rebase tokens.
@@ -319,6 +353,17 @@ interface ISwapboard is ISemver {
         Permit calldata permit
     ) external payable returns (uint256);
 
+    /// @notice Creates a new OTC order pulling tokenA via Permit2 SignatureTransfer
+    /// @dev Empty `permit.signature` skips (classic pull). Native tokenA with a non-empty signature
+    ///      reverts `PermitOnNative`. User must have approved the canonical Permit2 contract.
+    /// @param order Order creation arguments
+    /// @param permit Permit2 signature for tokenA (empty signature to skip)
+    /// @return orderId The unique identifier for the created order
+    function createOrder(
+        CreateOrderParams calldata order,
+        Permit2Permit calldata permit
+    ) external payable returns (uint256);
+
     /// @notice Creates multiple OTC orders in one call
     /// @dev Repeated `tokenA` deposits are aggregated into a single ERC20 `transferFrom` per
     ///      unique token. ETH deposits are summed and checked against `msg.value`.
@@ -336,6 +381,17 @@ interface ISwapboard is ISemver {
     function createOrders(
         CreateOrderParams[] calldata orders,
         TokenPermit[] calldata permits
+    ) external payable returns (uint256[] memory);
+
+    /// @notice Creates multiple OTC orders pulling ERC20 tokenA via Permit2 SignatureTransfer
+    /// @dev One Permit2 entry per distinct ERC20. Signed `amount` must cover the aggregated pull for
+    ///      that token. Tokens without an entry use classic `transferFrom`. Empty array = none.
+    /// @param orders Order creation arguments
+    /// @param permits Permit2 signatures keyed by tokenA (empty = none)
+    /// @return orderIds Identifiers assigned to each created order, in input order
+    function createOrders(
+        CreateOrderParams[] calldata orders,
+        TokenPermit2[] calldata permits
     ) external payable returns (uint256[] memory);
 
     /// @notice Fills an existing order by sending exact amountB
@@ -376,6 +432,22 @@ interface ISwapboard is ISemver {
         Permit calldata permit
     ) external payable;
 
+    /// @notice Fills an order by exact amountB pulling tokenB via Permit2 SignatureTransfer
+    /// @dev Empty `permit.signature` skips. Native tokenB with a non-empty signature reverts
+    ///      `PermitOnNative`. ERC20 tokenB is pulled directly to the maker.
+    /// @param orderId The unique identifier of the order to fill
+    /// @param amountB Exact amount of tokenB to send
+    /// @param minAmountA Minimum amount of tokenA the taker will accept
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @param permit Permit2 signature for tokenB (empty signature to skip)
+    function fillOrder(
+        uint256 orderId,
+        uint128 amountB,
+        uint128 minAmountA,
+        uint256 deadline,
+        Permit2Permit calldata permit
+    ) external payable;
+
     /// @notice Fills multiple orders in one call by exact tokenB sent
     /// @dev The same `orderId` may appear more than once when the order allows partial fills and
     ///      still has remaining liquidity; otherwise later legs revert (`FillAmountTooHigh` /
@@ -397,6 +469,19 @@ interface ISwapboard is ISemver {
         FillOrderParams[] calldata fills,
         uint256 deadline,
         TokenPermit[] calldata permits
+    ) external payable;
+
+    /// @notice Fills multiple orders by exact tokenB via Permit2 SignatureTransfer
+    /// @dev One Permit2 entry per distinct ERC20 tokenB. For each such token the signed amount must
+    ///      cover the total paid across makers; tokens are pulled to this contract then distributed.
+    ///      Tokens without an entry use classic direct-to-maker pulls. Empty array = none.
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    /// @param permits Permit2 signatures keyed by tokenB (empty = none)
+    function fillOrders(
+        FillOrderParams[] calldata fills,
+        uint256 deadline,
+        TokenPermit2[] calldata permits
     ) external payable;
 
     /// @notice Fills an existing order by receiving exact amountA
@@ -437,6 +522,22 @@ interface ISwapboard is ISemver {
         Permit calldata permit
     ) external payable;
 
+    /// @notice Fills an order by exact amountA pulling tokenB via Permit2 SignatureTransfer
+    /// @dev Empty `permit.signature` skips. Native tokenB with a non-empty signature reverts
+    ///      `PermitOnNative`. ERC20 tokenB is pulled directly to the maker.
+    /// @param orderId The unique identifier of the order to fill
+    /// @param amountA Exact amount of tokenA to receive
+    /// @param maxAmountB Maximum amount of tokenB the taker is willing to send
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @param permit Permit2 signature for tokenB (empty signature to skip)
+    function fillOrderPaying(
+        uint256 orderId,
+        uint128 amountA,
+        uint128 maxAmountB,
+        uint256 deadline,
+        Permit2Permit calldata permit
+    ) external payable;
+
     /// @notice Fills multiple orders in one call by exact tokenA received
     /// @dev Same aggregation and multi-leg rules as `fillOrders`, but each leg specifies `amountA`
     ///      and `maxAmountB`.
@@ -455,6 +556,17 @@ interface ISwapboard is ISemver {
         FillOrderPayingParams[] calldata fills,
         uint256 deadline,
         TokenPermit[] calldata permits
+    ) external payable;
+
+    /// @notice Fills multiple orders by exact tokenA via Permit2 SignatureTransfer
+    /// @dev Same Permit2 aggregation rules as `fillOrders` (one entry per distinct ERC20 tokenB).
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    /// @param permits Permit2 signatures keyed by tokenB (empty = none)
+    function fillOrdersPaying(
+        FillOrderPayingParams[] calldata fills,
+        uint256 deadline,
+        TokenPermit2[] calldata permits
     ) external payable;
 
     /// @notice Cancels an existing order and returns available tokenA to maker
@@ -506,6 +618,20 @@ interface ISwapboard is ISemver {
         Permit calldata permit
     ) external payable;
 
+    /// @notice Modifies remaining liquidity pulling tokenA top-up via Permit2 SignatureTransfer
+    /// @dev Empty `permit.signature` skips. Native tokenA with a non-empty signature reverts
+    ///      `PermitOnNative`. Used when topping up escrowed tokenA.
+    /// @param orderId The order ID
+    /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
+    /// @param updatedOrder Desired remaining amounts
+    /// @param permit Permit2 signature for tokenA (empty signature to skip)
+    function modifyOrder(
+        uint256 orderId,
+        OrderAmounts calldata previousAmounts,
+        ModifyOrderParams calldata updatedOrder,
+        Permit2Permit calldata permit
+    ) external payable;
+
     /// @notice Modifies multiple orders' remaining liquidity in one call
     /// @dev Only the maker may modify each order. Duplicate `orderId`s revert.
     ///      Per unique tokenA (and ETH), top-ups are netted against refunds so only the net delta
@@ -522,6 +648,16 @@ interface ISwapboard is ISemver {
     function modifyOrders(
         ModifyOrdersParams[] calldata mods,
         TokenPermit[] calldata permits
+    ) external payable;
+
+    /// @notice Modifies multiple orders pulling net tokenA top-ups via Permit2 SignatureTransfer
+    /// @dev One Permit2 entry per distinct ERC20 tokenA. Signed `amount` must cover the net top-up
+    ///      for that token after refund netting. Empty array = none.
+    /// @param mods Modify arguments in execution order
+    /// @param permits Permit2 signatures keyed by tokenA (empty = none)
+    function modifyOrders(
+        ModifyOrdersParams[] calldata mods,
+        TokenPermit2[] calldata permits
     ) external payable;
 
     /// @notice Sets whether an active order may be filled in multiple parts

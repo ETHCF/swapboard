@@ -429,9 +429,10 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `FillAmountTooHigh(uint256,uint128,uint128)` | `0x535a34f0` | Requested fill amount exceeds remaining liquidity (`amountB` for `fillOrder`, `amountA` for `fillOrderPaying`) |
 | `FillAmountMismatch(uint256,uint128,uint128)` | `0x19113a72` | Quoted tokenA receive is below the taker's `minAmountA` (`fillOrder`) |
 | `FillPayTooHigh(uint256,uint128,uint128)` | `0x489a6af8` | Quoted tokenB payment exceeds the taker's `maxAmountB` (`fillOrderPaying`) |
-| `PermitOnNative()` | `0x62898bac` | EIP-2612 permit supplied for the native ETH sentinel (`v != 0`) |
-| `InvalidPermit()` | `0xddafbaef` | Batch permit entry has `v == 0` |
+| `PermitOnNative()` | `0x62898bac` | EIP-2612 / Permit2 signature supplied for the native ETH sentinel |
+| `InvalidPermit()` | `0xddafbaef` | Batch EIP-2612 permit entry has `v == 0` |
 | `DuplicatePermitToken(address)` | `0xc87bfe90` | Same token appears more than once in a permit batch |
+| `InvalidPermit2()` | `0x32d1c8da` | Batch Permit2 entry has an empty signature, or an unused Permit2 token |
 
 ## Methods
 
@@ -470,6 +471,41 @@ Behavior:
 ```solidity
 function createOrder(CreateOrderParams calldata order, Permit calldata permit) external payable returns (uint256);
 function createOrders(CreateOrderParams[] calldata orders, TokenPermit[] calldata permits) external payable returns (uint256[] memory);
+```
+
+### Permit2 SignatureTransfer
+
+The same eight entrypoints also have Permit2 overloads. Users approve the canonical Permit2 contract (`0x000000000022D473030F116dDEE9F6B43aC78BA3`) once per token, then pass a SignatureTransfer signature so Swapboard can pull without a direct ERC20 allowance to Swapboard.
+
+```solidity
+struct Permit2Permit {
+    uint256 amount;      // signed TokenPermissions.amount
+    uint256 nonce;
+    uint256 deadline;
+    bytes signature;     // empty skips
+}
+
+struct TokenPermit2 {
+    address token;
+    uint256 amount;
+    uint256 nonce;
+    uint256 deadline;
+    bytes signature;     // empty reverts InvalidPermit2
+}
+```
+
+Behavior:
+
+- Spender in the signed message must be this Swapboard. Owner is `msg.sender`.
+- Single-path: empty `signature` skips (classic `transferFrom` / existing Swapboard allowance). Native ETH with a non-empty signature reverts `PermitOnNative`.
+- Batch: empty array means none. Empty signature → `InvalidPermit2`. Duplicate `token` → `DuplicatePermitToken`. Unused Permit2 token (not pulled) → `InvalidPermit2`. Zero/native token → `ZeroAddress` / `PermitOnNative`.
+- Signed `amount` must cover the exact pull (aggregated for batches). Permit2 / token errors bubble.
+- Single fills pull ERC20 tokenB directly to the maker. Batch fills with Permit2 pull each distinct ERC20 tokenB total to Swapboard, then distribute to makers.
+- Create/modify pulls go to escrow on Swapboard.
+
+```solidity
+function createOrder(CreateOrderParams calldata order, Permit2Permit calldata permit) external payable returns (uint256);
+function createOrders(CreateOrderParams[] calldata orders, TokenPermit2[] calldata permits) external payable returns (uint256[] memory);
 ```
 
 ### `fillOrder`

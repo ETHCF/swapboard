@@ -756,6 +756,7 @@ const ERROR_SIGNATURES = {
   "0x62898bac": "PermitOnNative",
   "0xddafbaef": "InvalidPermit",
   "0xc87bfe90": "DuplicatePermitToken",
+  "0x32d1c8da": "InvalidPermit2",
 };
 
 /**
@@ -780,6 +781,7 @@ const ERROR_MESSAGES = {
   PermitOnNative: "Cannot permit native ETH",
   InvalidPermit: "Permit signature is invalid",
   DuplicatePermitToken: "Duplicate permit token",
+  InvalidPermit2: "Permit2 signature is invalid",
 };
 
 /**

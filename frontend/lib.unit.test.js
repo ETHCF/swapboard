@@ -1870,6 +1870,13 @@ describe("decodeContractError", () => {
     });
   });
 
+  test("recognizes InvalidPermit2", () => {
+    expect(decodeContractError("0x32d1c8da")).toEqual({
+      name: "InvalidPermit2",
+      message: "Permit2 signature is invalid",
+    });
+  });
+
   // MUTATION: Return a partial object instead of null
   // BREAKS: An unknown revert renders as "undefined"
   test("returns null for input it cannot decode", () => {
