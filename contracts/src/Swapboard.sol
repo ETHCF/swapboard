@@ -1554,7 +1554,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
-    /// @notice Pulls Permit2 tokenB totals to this contract, then pays makers; classic pull otherwise
+    /// @notice Pulls Permit2 tokenB totals, then pays makers; classic pull otherwise
+    /// @dev Single-recipient Permit2 pulls go straight to that maker. Multi-maker totals for the
+    ///      same token pull to this contract once, then distribute.
     /// @param recipients Maker recipients for ERC20 tokenB
     /// @param uniqueTokens Distinct ERC20 tokenB values
     /// @param uniqueAmounts Amount per `(maker, token)`
@@ -1568,38 +1570,59 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         TokenPermit2[] calldata permits
     ) private {
         uint256 permitLength = permits.length;
-        bool[] memory permitUsed = new bool[](permitLength);
+        uint256 usedBits;
         uint256[] memory boardTotals = new uint256[](permitLength);
+        address[] memory soleRecipient = new address[](permitLength);
+        uint256[] memory recipientCounts = new uint256[](permitLength);
+        uint256[] memory permitIndexByUnique = new uint256[](uniqueCount);
 
         for (uint256 k = 0; k < uniqueCount; ++k) {
             address token = uniqueTokens[k];
             uint256 permitIndex = _indexOfTokenPermit2(permits, token);
+            permitIndexByUnique[k] = permitIndex;
             if (permitIndex == permitLength) {
                 _pullExactTokenTo(Token.wrap(token), recipients[k], uniqueAmounts[k]);
                 continue;
             }
 
-            permitUsed[permitIndex] = true;
+            usedBits |= uint256(1) << permitIndex;
             boardTotals[permitIndex] += uniqueAmounts[k];
+
+            uint256 priorCount = recipientCounts[permitIndex];
+            if (priorCount == 0) {
+                soleRecipient[permitIndex] = recipients[k];
+            }
+            unchecked {
+                recipientCounts[permitIndex] = priorCount + 1;
+            }
         }
 
-        _requireAllPermit2Used(permitUsed);
+        _requireAllPermit2BitsUsed(usedBits, permitLength);
 
         for (uint256 p = 0; p < permitLength; ++p) {
             TokenPermit2 calldata permit = permits[p];
+            uint256 total = boardTotals[p];
+            if (recipientCounts[p] == 1) {
+                _pullExactViaPermit2To(
+                    permit.token,
+                    soleRecipient[p],
+                    total,
+                    permit.amount,
+                    permit.nonce,
+                    permit.deadline,
+                    permit.signature
+                );
+                continue;
+            }
+
             _pullExactViaPermit2(
-                permit.token,
-                address(this),
-                boardTotals[p],
-                permit.amount,
-                permit.nonce,
-                permit.deadline,
-                permit.signature
+                permit.token, address(this), total, permit.amount, permit.nonce, permit.deadline, permit.signature
             );
         }
 
         for (uint256 m = 0; m < uniqueCount; ++m) {
-            if (_indexOfTokenPermit2(permits, uniqueTokens[m]) == permitLength) {
+            uint256 permitIndex = permitIndexByUnique[m];
+            if (permitIndex == permitLength || recipientCounts[permitIndex] == 1) {
                 continue;
             }
             Token.wrap(uniqueTokens[m]).safeTransfer(recipients[m], uniqueAmounts[m]);
@@ -1992,7 +2015,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         TokenPermit2[] calldata permits
     ) private {
         uint256 permitLength = permits.length;
-        bool[] memory permitUsed = new bool[](permitLength);
+        uint256 usedBits;
 
         for (uint256 i = 0; i < deltas.count; ++i) {
             uint256 topUp = deltas.topUps[i];
@@ -2008,7 +2031,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 if (permitIndex == permitLength) {
                     _pullExactToken(token, net);
                 } else {
-                    permitUsed[permitIndex] = true;
+                    usedBits |= uint256(1) << permitIndex;
                     TokenPermit2 calldata permit = permits[permitIndex];
                     _pullExactViaPermit2(
                         tokenAddr, address(this), net, permit.amount, permit.nonce, permit.deadline, permit.signature
@@ -2021,7 +2044,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             }
         }
 
-        _requireAllPermit2Used(permitUsed);
+        _requireAllPermit2BitsUsed(usedBits, permitLength);
     }
 
     /// @notice Settles modify legs after netting same-token top-ups against refunds
@@ -2228,6 +2251,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         TokenPermit2[] calldata permits
     ) private pure {
         uint256 length = permits.length;
+        // Usage bitmaps are a single `uint256` (max 256 entries).
+        if (length > 256) {
+            revert InvalidPermit2();
+        }
+
         for (uint256 i = 0; i < length; ++i) {
             TokenPermit2 calldata p = permits[i];
             address token = p.token;
@@ -2276,20 +2304,17 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         TokenPermit2[] calldata permits
     ) private {
         uint256 permitLength = permits.length;
+        uint256 usedBits;
         uint256[] memory permitIndexByDeposit = new uint256[](aggregated.count);
 
         for (uint256 i = 0; i < aggregated.count; ++i) {
-            permitIndexByDeposit[i] = _indexOfTokenPermit2(permits, aggregated.tokens[i]);
-        }
-
-        bool[] memory permitUsed = new bool[](permitLength);
-        for (uint256 j = 0; j < aggregated.count; ++j) {
-            uint256 permitIndex = permitIndexByDeposit[j];
+            uint256 permitIndex = _indexOfTokenPermit2(permits, aggregated.tokens[i]);
+            permitIndexByDeposit[i] = permitIndex;
             if (permitIndex != permitLength) {
-                permitUsed[permitIndex] = true;
+                usedBits |= uint256(1) << permitIndex;
             }
         }
-        _requireAllPermit2Used(permitUsed);
+        _requireAllPermit2BitsUsed(usedBits, permitLength);
 
         for (uint256 k = 0; k < aggregated.count; ++k) {
             address token = aggregated.tokens[k];
@@ -2307,16 +2332,20 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
-    /// @notice Reverts if any Permit2 batch entry was unused
-    /// @param permitUsed Per-entry usage flags
-    function _requireAllPermit2Used(
-        bool[] memory permitUsed
+    /// @notice Reverts unless every Permit2 batch bit in `[0, length)` is set
+    /// @param usedBits Bitmap of used permit indices
+    /// @param length Number of Permit2 entries
+    function _requireAllPermit2BitsUsed(
+        uint256 usedBits,
+        uint256 length
     ) private pure {
-        uint256 length = permitUsed.length;
-        for (uint256 p = 0; p < length; ++p) {
-            if (!permitUsed[p]) {
-                revert InvalidPermit2();
-            }
+        if (length == 0) {
+            return;
+        }
+
+        uint256 mask = length == 256 ? type(uint256).max : (uint256(1) << length) - 1;
+        if (usedBits != mask) {
+            revert InvalidPermit2();
         }
     }
 
@@ -2333,18 +2362,36 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 requestedAmount,
         Permit2Permit calldata permit
     ) private {
+        _pullExactViaPermit2To(
+            token, to, requestedAmount, permit.amount, permit.nonce, permit.deadline, permit.signature
+        );
+    }
+
+    /// @notice Pulls an exact ERC20 amount via Permit2 to `to`, with self-fill board hop
+    /// @param token ERC20 token address
+    /// @param to Recipient of the pulled tokens
+    /// @param requestedAmount Exact amount to pull
+    /// @param permittedAmount Max amount signed in Permit2 `TokenPermissions`
+    /// @param nonce Permit2 unordered nonce
+    /// @param deadline Permit2 signature deadline
+    /// @param signature EIP-712 Permit2 signature
+    function _pullExactViaPermit2To(
+        address token,
+        address to,
+        uint256 requestedAmount,
+        uint256 permittedAmount,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata signature
+    ) private {
         if (to == msg.sender) {
-            _pullExactViaPermit2(
-                token, address(this), requestedAmount, permit.amount, permit.nonce, permit.deadline, permit.signature
-            );
+            _pullExactViaPermit2(token, address(this), requestedAmount, permittedAmount, nonce, deadline, signature);
             Token.wrap(token).safeTransfer(to, requestedAmount);
 
             return;
         }
 
-        _pullExactViaPermit2(
-            token, to, requestedAmount, permit.amount, permit.nonce, permit.deadline, permit.signature
-        );
+        _pullExactViaPermit2(token, to, requestedAmount, permittedAmount, nonce, deadline, signature);
     }
 
     /// @notice Pulls an exact ERC20 amount via Permit2 SignatureTransfer with BalanceMismatch check
