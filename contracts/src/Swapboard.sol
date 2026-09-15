@@ -1390,9 +1390,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             return;
         }
 
-        _pullExactViaPermit2(
-            quote.tokenB, quote.maker, quote.amountB, permit.amount, permit.nonce, permit.deadline, permit.signature
-        );
+        _pullExactViaPermit2To(quote.tokenB, quote.maker, quote.amountB, permit);
     }
 
     /// @notice Fills orders via Permit2 for ERC20 tokenB where provided
@@ -2320,6 +2318,33 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 revert InvalidPermit2();
             }
         }
+    }
+
+    /// @notice Pulls an exact ERC20 amount via Permit2 to `to`, with self-fill board hop
+    /// @dev When `to == msg.sender`, pulls to this contract then transfers out (same as
+    ///      `_pullExactTokenTo`) so the balance-delta check is meaningful.
+    /// @param token ERC20 token address
+    /// @param to Recipient of the pulled tokens
+    /// @param requestedAmount Exact amount to pull
+    /// @param permit Permit2 signature payload
+    function _pullExactViaPermit2To(
+        address token,
+        address to,
+        uint256 requestedAmount,
+        Permit2Permit calldata permit
+    ) private {
+        if (to == msg.sender) {
+            _pullExactViaPermit2(
+                token, address(this), requestedAmount, permit.amount, permit.nonce, permit.deadline, permit.signature
+            );
+            Token.wrap(token).safeTransfer(to, requestedAmount);
+
+            return;
+        }
+
+        _pullExactViaPermit2(
+            token, to, requestedAmount, permit.amount, permit.nonce, permit.deadline, permit.signature
+        );
     }
 
     /// @notice Pulls an exact ERC20 amount via Permit2 SignatureTransfer with BalanceMismatch check
