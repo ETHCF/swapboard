@@ -1848,6 +1848,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (leg.refund != 0) {
                 token.safeTransfer(msg.sender, leg.refund);
             }
+
             return;
         }
 
@@ -1879,6 +1880,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (leg.refund != 0) {
                 token.safeTransfer(msg.sender, leg.refund);
             }
+
             return;
         }
 
