@@ -757,6 +757,8 @@ const ERROR_SIGNATURES = {
   "0xddafbaef": "InvalidPermit",
   "0xc87bfe90": "DuplicatePermitToken",
   "0x32d1c8da": "InvalidPermit2",
+  "0xc1abc68b": "UnusedPermit2",
+  "0x35d2fb43": "TooManyPermit2",
 };
 
 /**
@@ -781,7 +783,9 @@ const ERROR_MESSAGES = {
   PermitOnNative: "Cannot permit native ETH",
   InvalidPermit: "Permit signature is invalid",
   DuplicatePermitToken: "Duplicate permit token",
-  InvalidPermit2: "Permit2 signature is invalid",
+  InvalidPermit2: "Permit2 signature is missing",
+  UnusedPermit2: "Permit2 signature was not used in this transaction",
+  TooManyPermit2: "Too many Permit2 entries (maximum 256)",
 };
 
 /**

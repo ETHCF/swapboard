@@ -155,7 +155,8 @@ interface ISwapboard is ISemver {
 
     /// @notice Permit2 SignatureTransfer for one ERC20 in a batch
     /// @dev Every entry is applied (empty `signature` reverts `InvalidPermit2`). Duplicate `token`
-    ///      values revert `DuplicatePermitToken`. Empty array means no Permit2 pulls.
+    ///      values revert `DuplicatePermitToken`. An unused entry reverts `UnusedPermit2`. More than
+    ///      256 entries revert `TooManyPermit2`. Empty array means no Permit2 pulls.
     /// @param token ERC20 to pull via Permit2 (not the ETH sentinel)
     /// @param amount Max amount signed in Permit2 `TokenPermissions`
     /// @param nonce Unordered Permit2 nonce
@@ -330,6 +331,12 @@ interface ISwapboard is ISemver {
 
     /// @notice Thrown when a batch Permit2 entry has an empty signature
     error InvalidPermit2();
+
+    /// @notice Thrown when a batch Permit2 entry is not used by any pull
+    error UnusedPermit2();
+
+    /// @notice Thrown when a Permit2 batch has more than 256 entries
+    error TooManyPermit2();
 
     /// @notice Creates a new OTC order by depositing tokenA (ERC20 or native ETH)
     /// @dev For ERC20 tokenA, transfers from caller and rejects fee-on-transfer / mid-transfer

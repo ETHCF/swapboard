@@ -2315,6 +2315,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Validates a Permit2 batch: non-empty signatures, no zero/native/duplicate tokens
+    /// @dev More than 256 entries revert `TooManyPermit2`. Empty signatures revert `InvalidPermit2`.
     /// @param permits Permit2 signatures keyed by token
     function _validateTokenPermit2Batch(
         TokenPermit2[] calldata permits
@@ -2322,7 +2323,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = permits.length;
         // Usage bitmaps are a single `uint256` (max 256 entries).
         if (length > 256) {
-            revert InvalidPermit2();
+            revert TooManyPermit2();
         }
 
         for (uint256 i = 0; i < length; ++i) {
@@ -2402,6 +2403,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Reverts unless every Permit2 batch bit in `[0, length)` is set
+    /// @dev Unused entries revert `UnusedPermit2`.
     /// @param usedBits Bitmap of used permit indices
     /// @param length Number of Permit2 entries
     function _requireAllPermit2BitsUsed(
@@ -2414,7 +2416,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         uint256 mask = length == 256 ? type(uint256).max : (uint256(1) << length) - 1;
         if (usedBits != mask) {
-            revert InvalidPermit2();
+            revert UnusedPermit2();
         }
     }
 

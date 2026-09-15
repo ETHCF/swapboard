@@ -1873,7 +1873,21 @@ describe("decodeContractError", () => {
   test("recognizes InvalidPermit2", () => {
     expect(decodeContractError("0x32d1c8da")).toEqual({
       name: "InvalidPermit2",
-      message: "Permit2 signature is invalid",
+      message: "Permit2 signature is missing",
+    });
+  });
+
+  test("recognizes UnusedPermit2", () => {
+    expect(decodeContractError("0xc1abc68b")).toEqual({
+      name: "UnusedPermit2",
+      message: "Permit2 signature was not used in this transaction",
+    });
+  });
+
+  test("recognizes TooManyPermit2", () => {
+    expect(decodeContractError("0x35d2fb43")).toEqual({
+      name: "TooManyPermit2",
+      message: "Too many Permit2 entries (maximum 256)",
     });
   });
 

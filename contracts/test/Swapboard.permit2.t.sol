@@ -171,13 +171,22 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.createOrders{value: _AMOUNT_A}(_single(_ethOffered()), _single(_dummyTokenPermit2(_eth)));
     }
 
-    /// @notice Unused Permit2 entry (token not deposited) reverts InvalidPermit2
+    /// @notice Unused Permit2 entry (token not deposited) reverts UnusedPermit2
     function test_createOrders_permit2_revert_unusedPermit() public {
         ISwapboard.TokenPermit2[] memory permits = new ISwapboard.TokenPermit2[](1);
         permits[0] = _tokenPermit2(_tokenC, _maker, _MAKER_PK, _AMOUNT_A);
 
         vm.prank(_maker);
-        vm.expectRevert(ISwapboard.InvalidPermit2.selector);
+        vm.expectRevert(ISwapboard.UnusedPermit2.selector);
+        _board.createOrders(_single(_plainOrder()), permits);
+    }
+
+    /// @notice More than 256 Permit2 batch entries reverts TooManyPermit2
+    function test_createOrders_permit2_revert_tooManyPermit2() public {
+        ISwapboard.TokenPermit2[] memory permits = new ISwapboard.TokenPermit2[](257);
+
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.TooManyPermit2.selector);
         _board.createOrders(_single(_plainOrder()), permits);
     }
 
@@ -552,7 +561,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         assertEq(_tokenC.balanceOf(_maker) - (_AMOUNT_A * 10), _AMOUNT_B);
     }
 
-    /// @notice Unused Permit2 entry on fillOrders reverts InvalidPermit2
+    /// @notice Unused Permit2 entry on fillOrders reverts UnusedPermit2
     function test_fillOrders_permit2_revert_unusedPermit() public {
         uint256 orderId = _createWithAllowance();
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
@@ -564,7 +573,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         ISwapboard.TokenPermit2[] memory permits = _single(_tokenPermit2(_tokenC, _taker, _TAKER_PK, _AMOUNT_B));
 
         vm.prank(_taker);
-        vm.expectRevert(ISwapboard.InvalidPermit2.selector);
+        vm.expectRevert(ISwapboard.UnusedPermit2.selector);
         _board.fillOrders(fills, 0, permits);
     }
 
@@ -666,7 +675,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         ISwapboard.TokenPermit2[] memory permits = _single(_tokenPermit2(_tokenC, _taker, _TAKER_PK, _AMOUNT_B));
 
         vm.prank(_taker);
-        vm.expectRevert(ISwapboard.InvalidPermit2.selector);
+        vm.expectRevert(ISwapboard.UnusedPermit2.selector);
         _board.fillOrdersPaying(fills, 0, permits);
     }
 
@@ -824,7 +833,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         ISwapboard.TokenPermit2[] memory permits = _single(_tokenPermit2(_tokenC, _maker, _MAKER_PK, _AMOUNT_A));
 
         vm.prank(_maker);
-        vm.expectRevert(ISwapboard.InvalidPermit2.selector);
+        vm.expectRevert(ISwapboard.UnusedPermit2.selector);
         _board.modifyOrders(mods, permits);
     }
 

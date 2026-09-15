@@ -432,7 +432,9 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `PermitOnNative()` | `0x62898bac` | EIP-2612 / Permit2 signature supplied for the native ETH sentinel |
 | `InvalidPermit()` | `0xddafbaef` | Batch EIP-2612 permit entry has `v == 0` |
 | `DuplicatePermitToken(address)` | `0xc87bfe90` | Same token appears more than once in a permit batch |
-| `InvalidPermit2()` | `0x32d1c8da` | Batch Permit2 entry has an empty signature, or an unused Permit2 token |
+| `InvalidPermit2()` | `0x32d1c8da` | Batch Permit2 entry has an empty signature |
+| `UnusedPermit2()` | `0xc1abc68b` | Batch Permit2 entry was not used by any pull |
+| `TooManyPermit2()` | `0x35d2fb43` | Permit2 batch has more than 256 entries |
 
 ## Methods
 
@@ -498,7 +500,7 @@ Behavior:
 
 - Spender in the signed message must be this Swapboard. Owner is `msg.sender`.
 - Single-path: empty `signature` skips (classic `transferFrom` / existing Swapboard allowance). Native ETH with a non-empty signature reverts `PermitOnNative`.
-- Batch: empty array means none. Empty signature → `InvalidPermit2`. Duplicate `token` → `DuplicatePermitToken`. Unused Permit2 token (not pulled) → `InvalidPermit2`. Zero/native token → `ZeroAddress` / `PermitOnNative`.
+- Batch: empty array means none. Empty signature → `InvalidPermit2`. Unused Permit2 token (not pulled) → `UnusedPermit2`. More than 256 entries → `TooManyPermit2`. Duplicate `token` → `DuplicatePermitToken`. Zero/native token → `ZeroAddress` / `PermitOnNative`.
 - Signed `amount` must cover the exact pull (aggregated for batches). Permit2 / token errors bubble.
 - Single fills pull ERC20 tokenB directly to the maker. Batch fills with Permit2 pull each distinct ERC20 tokenB total to Swapboard, then distribute to makers.
 - Create/modify pulls go to escrow on Swapboard.
