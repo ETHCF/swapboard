@@ -117,6 +117,7 @@ contract MockPermit2 is ISignatureTransfer {
         bytes32 r;
         bytes32 s;
         uint8 v;
+        // forge-lint: disable-next-line(inline-assembly)
         assembly ("memory-safe") {
             r := mload(add(signature, 0x20))
             s := mload(add(signature, 0x40))

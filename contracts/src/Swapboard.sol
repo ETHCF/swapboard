@@ -1570,12 +1570,52 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         TokenPermit2[] calldata permits
     ) private {
         uint256 permitLength = permits.length;
-        uint256 usedBits;
         uint256[] memory boardTotals = new uint256[](permitLength);
         address[] memory soleRecipient = new address[](permitLength);
         uint256[] memory recipientCounts = new uint256[](permitLength);
         uint256[] memory permitIndexByUnique = new uint256[](uniqueCount);
 
+        uint256 usedBits = _accumulatePermit2TokenB(
+            recipients,
+            uniqueTokens,
+            uniqueAmounts,
+            uniqueCount,
+            permits,
+            boardTotals,
+            soleRecipient,
+            recipientCounts,
+            permitIndexByUnique
+        );
+        _requireAllPermit2BitsUsed(usedBits, permitLength);
+        _executePermit2TokenBPulls(permits, boardTotals, soleRecipient, recipientCounts);
+        _distributeMultiMakerPermit2TokenB(
+            recipients, uniqueTokens, uniqueAmounts, uniqueCount, permitIndexByUnique, recipientCounts, permitLength
+        );
+    }
+
+    /// @notice Classic-pulls unmarked tokenB legs and aggregates Permit2 totals / recipient counts
+    /// @param recipients Maker recipients for ERC20 tokenB
+    /// @param uniqueTokens Distinct ERC20 tokenB values
+    /// @param uniqueAmounts Amount per `(maker, token)`
+    /// @param uniqueCount Number of populated ERC20 entries
+    /// @param permits Permit2 signatures keyed by tokenB
+    /// @param boardTotals Out: aggregated Permit2 pull amounts by permit index
+    /// @param soleRecipient Out: first maker for each permit index
+    /// @param recipientCounts Out: number of unique makers per permit index
+    /// @param permitIndexByUnique Out: permit index (or `permits.length`) per unique leg
+    /// @return usedBits Bitmap of Permit2 entries that matched a unique leg
+    function _accumulatePermit2TokenB(
+        address[] memory recipients,
+        address[] memory uniqueTokens,
+        uint256[] memory uniqueAmounts,
+        uint256 uniqueCount,
+        TokenPermit2[] calldata permits,
+        uint256[] memory boardTotals,
+        address[] memory soleRecipient,
+        uint256[] memory recipientCounts,
+        uint256[] memory permitIndexByUnique
+    ) private returns (uint256 usedBits) {
+        uint256 permitLength = permits.length;
         for (uint256 k = 0; k < uniqueCount; ++k) {
             address token = uniqueTokens[k];
             uint256 permitIndex = _indexOfTokenPermit2(permits, token);
@@ -1596,9 +1636,20 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 recipientCounts[permitIndex] = priorCount + 1;
             }
         }
+    }
 
-        _requireAllPermit2BitsUsed(usedBits, permitLength);
-
+    /// @notice Executes Permit2 pulls: direct to sole maker, or to this contract for multi-maker
+    /// @param permits Permit2 signatures keyed by tokenB
+    /// @param boardTotals Aggregated Permit2 pull amounts by permit index
+    /// @param soleRecipient First maker for each permit index
+    /// @param recipientCounts Number of unique makers per permit index
+    function _executePermit2TokenBPulls(
+        TokenPermit2[] calldata permits,
+        uint256[] memory boardTotals,
+        address[] memory soleRecipient,
+        uint256[] memory recipientCounts
+    ) private {
+        uint256 permitLength = permits.length;
         for (uint256 p = 0; p < permitLength; ++p) {
             TokenPermit2 calldata permit = permits[p];
             uint256 total = boardTotals[p];
@@ -1619,7 +1670,25 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 permit.token, address(this), total, permit.amount, permit.nonce, permit.deadline, permit.signature
             );
         }
+    }
 
+    /// @notice Pays multi-maker Permit2 tokenB from board balances after the aggregated pull
+    /// @param recipients Maker recipients for ERC20 tokenB
+    /// @param uniqueTokens Distinct ERC20 tokenB values
+    /// @param uniqueAmounts Amount per `(maker, token)`
+    /// @param uniqueCount Number of populated ERC20 entries
+    /// @param permitIndexByUnique Permit index (or `permitLength`) per unique leg
+    /// @param recipientCounts Number of unique makers per permit index
+    /// @param permitLength Number of Permit2 entries
+    function _distributeMultiMakerPermit2TokenB(
+        address[] memory recipients,
+        address[] memory uniqueTokens,
+        uint256[] memory uniqueAmounts,
+        uint256 uniqueCount,
+        uint256[] memory permitIndexByUnique,
+        uint256[] memory recipientCounts,
+        uint256 permitLength
+    ) private {
         for (uint256 m = 0; m < uniqueCount; ++m) {
             uint256 permitIndex = permitIndexByUnique[m];
             if (permitIndex == permitLength || recipientCounts[permitIndex] == 1) {
@@ -2015,7 +2084,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         TokenPermit2[] calldata permits
     ) private {
         uint256 permitLength = permits.length;
-        uint256 usedBits;
+        uint256 usedBits = 0;
 
         for (uint256 i = 0; i < deltas.count; ++i) {
             uint256 topUp = deltas.topUps[i];
@@ -2304,7 +2373,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         TokenPermit2[] calldata permits
     ) private {
         uint256 permitLength = permits.length;
-        uint256 usedBits;
+        uint256 usedBits = 0;
         uint256[] memory permitIndexByDeposit = new uint256[](aggregated.count);
 
         for (uint256 i = 0; i < aggregated.count; ++i) {
