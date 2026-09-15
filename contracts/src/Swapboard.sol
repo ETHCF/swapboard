@@ -23,7 +23,8 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///        so escrow is not stranded
 ///      - Fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on inbound
 ///        tokenA deposits (`_pullExactToken`) and on ERC20 tokenB payments to the maker
-///        (`_pullExactTokenTo` / `BalanceMismatch`). ETH tokenB uses `msg.value` then `sendValue`.
+///        (`_pullExactTokenTo`, `_transferExactTo` / `BalanceMismatch`), including board→maker
+///        hops (self-fill and multi-maker Permit2). ETH tokenB uses `msg.value` then `sendValue`.
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
 ///      - EIP-2612 `permit` overloads set token allowance in the same transaction as the pull
 ///      - Permit2 SignatureTransfer overloads pull via the canonical Permit2 contract
@@ -40,8 +41,6 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      - Malicious tokens can cause fund loss - users must verify token contracts
 ///      - Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains
 ///        possible after escrow release
-///      - Self-fill ERC20 tokenB still routes through the board, so outbound-only FOT on that hop
-///        can still short the maker
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
 ///        can run `receive`/`fallback`; always after state updates (CEI)
 ///      - Floor rounding on `fillOrder` may leave tokenA dust in escrow; refunding that dust is
@@ -1556,7 +1555,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Pulls Permit2 tokenB totals, then pays makers; classic pull otherwise
     /// @dev Single-recipient Permit2 pulls go straight to that maker. Multi-maker totals for the
-    ///      same token pull to this contract once, then distribute.
+    ///      same token pull to this contract once, then `_transferExactTo` each maker.
     /// @param recipients Maker recipients for ERC20 tokenB
     /// @param uniqueTokens Distinct ERC20 tokenB values
     /// @param uniqueAmounts Amount per `(maker, token)`
@@ -1673,6 +1672,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Pays multi-maker Permit2 tokenB from board balances after the aggregated pull
+    /// @dev Each maker hop uses `_transferExactTo` (`BalanceMismatch` if outbound FOT / phantom).
     /// @param recipients Maker recipients for ERC20 tokenB
     /// @param uniqueTokens Distinct ERC20 tokenB values
     /// @param uniqueAmounts Amount per `(maker, token)`
@@ -1694,7 +1694,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (permitIndex == permitLength || recipientCounts[permitIndex] == 1) {
                 continue;
             }
-            Token.wrap(uniqueTokens[m]).safeTransfer(recipients[m], uniqueAmounts[m]);
+            _transferExactTo(Token.wrap(uniqueTokens[m]), recipients[m], uniqueAmounts[m]);
         }
     }
 
@@ -2419,8 +2419,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Pulls an exact ERC20 amount via Permit2 to `to`, with self-fill board hop
-    /// @dev When `to == msg.sender`, pulls to this contract then transfers out (same as
-    ///      `_pullExactTokenTo`) so the balance-delta check is meaningful.
+    /// @dev When `to == msg.sender`, pulls to this contract then `_transferExactTo` the maker
+    ///      (same as `_pullExactTokenTo`) so both hops exact-check the recipient.
     /// @param token ERC20 token address
     /// @param to Recipient of the pulled tokens
     /// @param requestedAmount Exact amount to pull
@@ -2455,7 +2455,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) private {
         if (to == msg.sender) {
             _pullExactViaPermit2(token, address(this), requestedAmount, permittedAmount, nonce, deadline, signature);
-            Token.wrap(token).safeTransfer(to, requestedAmount);
+            _transferExactTo(Token.wrap(token), to, requestedAmount);
 
             return;
         }
@@ -2512,7 +2512,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ///         mid-transfer rebase / phantom transfers
     /// @dev Used for ERC20 tokenB fill payments (`to` = maker). When `to == msg.sender` (self-fill),
     ///      recipient balance is unchanged by `transferFrom`, so funds route through this contract
-    ///      then out to the maker. Native token is rejected by callers.
+    ///      then `_transferExactTo` the maker. Native token is rejected by callers.
     /// @param token ERC20 token to pull from the caller
     /// @param to Recipient of the pulled tokens
     /// @param amount Expected amount received by `to`
@@ -2523,12 +2523,26 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) private {
         if (to == msg.sender) {
             _transferExactFrom(token, address(this), amount);
-            token.safeTransfer(to, amount);
+            _transferExactTo(token, to, amount);
 
             return;
         }
 
         _transferExactFrom(token, to, amount);
+    }
+
+    /// @notice `transfer` to `to` and require `to`'s balance rises by exactly `amount`
+    /// @param token ERC20 token to send
+    /// @param to Recipient
+    /// @param amount Expected amount received by `to`
+    function _transferExactTo(
+        Token token,
+        address to,
+        uint256 amount
+    ) private {
+        uint256 balanceBefore = token.balanceOf(to);
+        token.safeTransfer(to, amount);
+        _requireExactReceived(token, to, balanceBefore, amount);
     }
 
     /// @notice `transferFrom` caller → `to` and require `to`'s balance rises by exactly `amount`

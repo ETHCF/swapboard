@@ -142,14 +142,14 @@ The Swapboard contract allows:
 - **setPartialFillAllowed**: Maker enables or disables partial fills (amounts unchanged)
 - **cancelOrder**: Maker reclaims tokenA
 
-All operations are atomic. No partial fills. No admin functions.
+All operations are atomic. Partial fills are opt-in via `partialFillAllowed`. No admin functions.
 
 ## Security
 
 - Reentrancy protection via OpenZeppelin
-- Fee-on-transfer / mid-transfer rebase / phantom detection on tokenA deposits and ERC20 tokenB payments (direct taker → maker)
+- Fee-on-transfer / mid-transfer rebase / phantom detection on tokenA deposits and ERC20 tokenB payments to the maker (including board→maker hops)
 - Post-deposit rebase (negative lock / positive surplus in escrow) remains an accepted limitation (see `contracts/test/security-research/`)
-- Outbound fee-on-transfer on tokenA payout to the taker, and on self-fill ERC20 tokenB, remains an accepted limitation (see `contracts/test/security-research/`)
+- Outbound fee-on-transfer on tokenA payout to the taker remains an accepted limitation (see `contracts/test/security-research/`)
 - `Token` helpers for ERC20 and native ETH transfers (zero-amount no-op; ETH via `sendValue`)
 - No proxy, no upgrades, no owner
 

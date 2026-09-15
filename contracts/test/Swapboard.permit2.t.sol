@@ -6,6 +6,7 @@ pragma solidity 0.8.36;
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockPermit2} from "./mocks/MockPermit2.sol";
+import {OutboundFotToken} from "./mocks/OutboundFotToken.sol";
 import {OrderTestLib} from "./helpers/OrderTestLib.sol";
 import {SwapboardTwoPartyTest} from "./helpers/SwapboardTwoPartyTest.sol";
 
@@ -443,6 +444,29 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         assertFalse(_board.getOrder(orderId).active);
     }
 
+    /// @notice Maker self-fill via Permit2 with outbound-only FOT tokenB reverts BalanceMismatch
+    function test_fillOrder_permit2_selfFill_outboundFot_revert_balanceMismatch() public {
+        OutboundFotToken fotB = new OutboundFotToken();
+        vm.prank(_maker);
+        _tokenA.approve(address(_board), _AMOUNT_A);
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(OrderTestLib.order(address(_tokenA), _AMOUNT_A, address(fotB), _AMOUNT_B));
+
+        fotB.mint(_maker, _AMOUNT_B);
+        vm.prank(_maker);
+        fotB.approve(_PERMIT2_ADDR, type(uint256).max);
+
+        ISwapboard.Permit2Permit memory permit = _signPermit2(fotB, _maker, _MAKER_PK, _AMOUNT_B);
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, _AMOUNT_B, _fotNet(_AMOUNT_B)));
+        _board.fillOrder(orderId, _AMOUNT_B, _AMOUNT_A, 0, permit);
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(fotB.balanceOf(_maker), _AMOUNT_B);
+        assertEq(fotB.balanceOf(address(_board)), 0);
+    }
+
     /// @notice fillOrders same tokenB to two makers pulls once to the board then distributes
     function test_fillOrders_permit2_twoMakers_sameTokenB() public {
         address maker2 = vm.addr(0xC0FFEE);
@@ -470,6 +494,41 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         assertEq(_tokenB.balanceOf(_maker), maker0Before + _AMOUNT_B);
         assertEq(_tokenB.balanceOf(maker2), maker2Before + _AMOUNT_B);
         assertEq(_tokenB.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Multi-maker Permit2 tokenB with outbound-only FOT reverts BalanceMismatch on distribute
+    function test_fillOrders_permit2_twoMakers_outboundFot_revert_balanceMismatch() public {
+        OutboundFotToken fotB = new OutboundFotToken();
+        address maker2 = vm.addr(0xC0FFEE);
+        _tokenA.mint(maker2, _AMOUNT_A);
+        fotB.mint(_taker, uint256(_AMOUNT_B) * 2);
+
+        vm.prank(_maker);
+        _tokenA.approve(address(_board), _AMOUNT_A);
+        vm.prank(_maker);
+        uint256 id0 = _board.createOrder(OrderTestLib.order(address(_tokenA), _AMOUNT_A, address(fotB), _AMOUNT_B));
+
+        vm.prank(maker2);
+        _tokenA.approve(address(_board), _AMOUNT_A);
+        vm.prank(maker2);
+        uint256 id1 = _board.createOrder(OrderTestLib.order(address(_tokenA), _AMOUNT_A, address(fotB), _AMOUNT_B));
+
+        vm.prank(_taker);
+        fotB.approve(_PERMIT2_ADDR, type(uint256).max);
+
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
+        fills[0] = ISwapboard.FillOrderParams({orderId: id0, amountB: _AMOUNT_B, minAmountA: _AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderParams({orderId: id1, amountB: _AMOUNT_B, minAmountA: _AMOUNT_A});
+        ISwapboard.TokenPermit2[] memory permits =
+            _single(_tokenPermit2(fotB, _taker, _TAKER_PK, uint256(_AMOUNT_B) * 2));
+
+        vm.prank(_taker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, _AMOUNT_B, _fotNet(_AMOUNT_B)));
+        _board.fillOrders(fills, 0, permits);
+
+        assertTrue(_board.canFill(id0));
+        assertTrue(_board.canFill(id1));
+        assertEq(fotB.balanceOf(address(_board)), 0);
     }
 
     /// @notice fillOrders mixes Permit2 for one tokenB with classic allowance for another
@@ -1011,6 +1070,13 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
 
     function _plainOrder() private view returns (ISwapboard.CreateOrderParams memory) {
         return OrderTestLib.order(address(_tokenA), _AMOUNT_A, address(_tokenB), _AMOUNT_B);
+    }
+
+    /// @notice Net amount after OutboundFotToken's 5% `transfer` fee
+    function _fotNet(
+        uint256 gross
+    ) private pure returns (uint256) {
+        return gross - (gross * 5) / 100;
     }
 
     function _ethOffered() private view returns (ISwapboard.CreateOrderParams memory) {

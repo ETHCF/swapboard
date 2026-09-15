@@ -4185,6 +4185,26 @@ contract SwapboardTest is Test {
         assertEq(fotB.balanceOf(address(_board)), 0);
     }
 
+    /// @notice Tests outbound-only FOT tokenB on self-fill reverts BalanceMismatch on the board hop
+    function test_selfFill_outboundFotTokenB_revert_balanceMismatch() public {
+        OutboundFotToken fotB = new OutboundFotToken();
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(fotB), AMOUNT_B));
+        fotB.mint(_maker, AMOUNT_B);
+        fotB.approve(address(_board), AMOUNT_B);
+        ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_B, _fotNet(AMOUNT_B)));
+        _fillOrderQuoted(orderBefore, orderId, AMOUNT_A);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
+        assertEq(fotB.balanceOf(_maker), AMOUNT_B);
+        assertEq(fotB.balanceOf(address(_board)), 0);
+    }
+
     /// @notice Tests aggregated FOT tokenB pull on fillOrders reverts BalanceMismatch
     function test_fillOrders_fotTokenB_revert_balanceMismatch() public {
         MockFOT fotB = new MockFOT();

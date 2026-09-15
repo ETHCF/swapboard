@@ -473,8 +473,10 @@ interface ISwapboard is ISemver {
 
     /// @notice Fills multiple orders by exact tokenB via Permit2 SignatureTransfer
     /// @dev One Permit2 entry per distinct ERC20 tokenB. For each such token the signed amount must
-    ///      cover the total paid across makers; tokens are pulled to this contract then distributed.
-    ///      Tokens without an entry use classic direct-to-maker pulls. Empty array = none.
+    ///      cover the total paid across makers. Sole-maker pulls go to that maker; multi-maker
+    ///      totals pull here then distribute. Every ERC20 tokenB hop exact-checks the recipient
+    ///      (`BalanceMismatch`). Tokens without an entry use classic direct-to-maker pulls.
+    ///      Empty array = none.
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     /// @param permits Permit2 signatures keyed by tokenB (empty = none)

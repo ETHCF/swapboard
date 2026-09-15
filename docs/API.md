@@ -754,9 +754,9 @@ async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
 
 - All amounts are in base units (wei-style). Multiply by 10^decimals.
 - Orders can be front-run. Consider using Flashbots for fills.
-- Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and on ERC20 tokenB payments to the maker (`BalanceMismatch`). ERC20 tokenB is pulled taker → maker directly.
+- Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and on ERC20 tokenB payments to the maker (`BalanceMismatch`), including self-fill and multi-maker Permit2 board→maker hops.
 - Post-deposit rebases (while tokenA sits in escrow) are not checked: a negative rebase can lock fill/cancel; a positive rebase can strand surplus. See `contracts/test/security-research/`.
-- Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release. Self-fill ERC20 tokenB still routes through the board (see security-research tests).
+- Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release.
 - Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
 - Self-fills are allowed (maker can fill own order).
 - No expiry. Orders remain active until filled or canceled.
