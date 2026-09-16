@@ -1142,7 +1142,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
 
     /// @notice Same-token top-up and refund that net to zero make a tokenA Permit2 unused
     function test_modifyOrders_permit2_netZero_revert_unusedPermit() public {
-        uint256[] memory ids = _createTwoPlainOrdersPermit2();
+        uint256[] memory ids = _createTwoPlainOrdersWithAllowance();
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: ids[0],
@@ -1168,7 +1168,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
 
     /// @notice Same-token net refund (refund dominates) makes a tokenA Permit2 unused
     function test_modifyOrders_permit2_netRefund_revert_unusedPermit() public {
-        uint256[] memory ids = _createTwoPlainOrdersPermit2();
+        uint256[] memory ids = _createTwoPlainOrdersWithAllowance();
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: ids[0],
@@ -1235,14 +1235,15 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         permits[1] = second;
     }
 
-    function _createTwoPlainOrdersPermit2() private returns (uint256[] memory) {
+    /// @notice Creates two plain orders via classic allowance (avoids `_makerNonce` around board calls)
+    function _createTwoPlainOrdersWithAllowance() private returns (uint256[] memory) {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
         orders[0] = _plainOrder();
         orders[1] = _plainOrder();
-        ISwapboard.TokenPermit2[] memory permits =
-            _single(_tokenPermit2(_tokenA, _maker, _MAKER_PK, uint256(_AMOUNT_A) * 2));
         vm.prank(_maker);
-        return _board.createOrders(orders, permits);
+        _tokenA.approve(address(_board), uint256(_AMOUNT_A) * 2);
+        vm.prank(_maker);
+        return _board.createOrders(orders, _noPermit2());
     }
 
     function _noPermit2() private pure returns (ISwapboard.TokenPermit2[] memory) {
