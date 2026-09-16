@@ -1128,6 +1128,105 @@ contract SwapboardTest is Test {
         assertEq(_tokenB.balanceOf(address(_board)), AMOUNT_B);
     }
 
+    /// @notice Tests maker cannot self-fill via fillOrderPaying
+    function test_selfFill_fillOrderPaying_revert() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        _tokenB.mint(_maker, AMOUNT_B);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.expectRevert(ISwapboard.SelfFill.selector);
+        _board.fillOrderPaying(orderId, AMOUNT_A, AMOUNT_B, 0);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
+    }
+
+    /// @notice Tests maker cannot self-fill an ETH sell order via fillOrderPaying
+    function test_selfFill_fillOrderPaying_sellEth_revert() public {
+        vm.startPrank(_maker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
+        vm.expectRevert(ISwapboard.SelfFill.selector);
+        _board.fillOrderPaying(orderId, ETH_AMOUNT, AMOUNT_B, 0);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(address(_board).balance, ETH_AMOUNT);
+    }
+
+    /// @notice Tests maker cannot self-fill an order paid in ETH via fillOrderPaying
+    function test_selfFill_fillOrderPaying_payEth_revert() public {
+        vm.startPrank(_maker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        uint256 orderId = _board.createOrder(_order(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT));
+        vm.expectRevert(ISwapboard.SelfFill.selector);
+        _board.fillOrderPaying{value: ETH_AMOUNT}(orderId, AMOUNT_B, ETH_AMOUNT, 0);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenB.balanceOf(address(_board)), AMOUNT_B);
+    }
+
+    /// @notice Mid-batch SelfFill on fillOrders rolls back earlier legs
+    function test_selfFill_fillOrders_midBatch_revert() public {
+        address maker2 = address(0x3);
+        _tokenA.mint(maker2, AMOUNT_A);
+        vm.prank(maker2);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        vm.prank(maker2);
+        uint256 otherId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 ownId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        _tokenB.mint(_maker, AMOUNT_B * 2);
+        _tokenB.approve(address(_board), AMOUNT_B * 2);
+
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
+        fills[0] = ISwapboard.FillOrderParams({orderId: otherId, amountB: AMOUNT_B, minAmountA: AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderParams({orderId: ownId, amountB: AMOUNT_B, minAmountA: AMOUNT_A});
+
+        vm.expectRevert(ISwapboard.SelfFill.selector);
+        _board.fillOrders(fills, 0);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(otherId));
+        assertTrue(_board.canFill(ownId));
+        assertEq(_tokenA.balanceOf(address(_board)), uint256(AMOUNT_A) * 2);
+        assertEq(_tokenB.balanceOf(maker2), 0);
+    }
+
+    /// @notice Mid-batch SelfFill on fillOrdersPaying rolls back earlier legs
+    function test_selfFill_fillOrdersPaying_midBatch_revert() public {
+        address maker2 = address(0x3);
+        _tokenA.mint(maker2, AMOUNT_A);
+        vm.prank(maker2);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        vm.prank(maker2);
+        uint256 otherId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 ownId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        _tokenB.mint(_maker, AMOUNT_B * 2);
+        _tokenB.approve(address(_board), AMOUNT_B * 2);
+
+        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
+        fills[0] = ISwapboard.FillOrderPayingParams({orderId: otherId, amountA: AMOUNT_A, maxAmountB: AMOUNT_B});
+        fills[1] = ISwapboard.FillOrderPayingParams({orderId: ownId, amountA: AMOUNT_A, maxAmountB: AMOUNT_B});
+
+        vm.expectRevert(ISwapboard.SelfFill.selector);
+        _board.fillOrdersPaying(fills, 0);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(otherId));
+        assertTrue(_board.canFill(ownId));
+        assertEq(_tokenA.balanceOf(address(_board)), uint256(AMOUNT_A) * 2);
+        assertEq(_tokenB.balanceOf(maker2), 0);
+    }
+
     /// @notice Tests ETH sell order views: getOrder, canFill, getOrders
     function test_views_sellEthOrder() public {
         vm.prank(_maker);
@@ -4106,6 +4205,28 @@ contract SwapboardTest is Test {
         ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_B, 0));
         _fillOrderQuoted(orderBefore, orderId, AMOUNT_A);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenA.balanceOf(_taker), AMOUNT_A * 10);
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
+        assertEq(phantomB.balanceOf(_maker), 0);
+        assertEq(phantomB.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Tests phantom tokenB on fillOrderPaying reverts BalanceMismatch (received 0)
+    function test_fillOrderPaying_phantomTokenB_revert_balanceMismatch() public {
+        PhantomToken phantomB = new PhantomToken();
+
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(phantomB), AMOUNT_B));
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        phantomB.approve(address(_board), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_B, 0));
+        _board.fillOrderPaying(orderId, AMOUNT_A, AMOUNT_B, 0);
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));

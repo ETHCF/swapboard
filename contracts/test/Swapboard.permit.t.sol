@@ -251,6 +251,67 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         assertEq(_tokenB.allowance(_taker, address(_board)), 0);
     }
 
+    /// @notice Maker cannot self-fill via fillOrder with EIP-2612 permit (beginFill before permit)
+    function test_fillOrder_permit_selfFill_revert_nonceUnchanged() public {
+        uint256 orderId = _createPairOrder();
+        _permitB.mint(_maker, _AMOUNT_B);
+        ISwapboard.Permit memory permit = _signPermit(_permitB, _maker, _MAKER_PK, _AMOUNT_B);
+
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.SelfFill.selector);
+        _board.fillOrder(orderId, _AMOUNT_B, _AMOUNT_A, 0, permit);
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_permitB.nonces(_maker), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
+    }
+
+    /// @notice Batch EIP-2612 SelfFill reverts after permits would apply; full tx rolls nonce back
+    function test_fillOrders_permit_selfFill_revert_nonceUnchanged() public {
+        uint256 orderId = _createPairOrder();
+        _permitB.mint(_maker, _AMOUNT_B);
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
+        fills[0] = ISwapboard.FillOrderParams({orderId: orderId, amountB: _AMOUNT_B, minAmountA: _AMOUNT_A});
+        ISwapboard.TokenPermit[] memory permits = _single(_tokenPermit(_permitB, _maker, _MAKER_PK, _AMOUNT_B));
+
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.SelfFill.selector);
+        _board.fillOrders(fills, 0, permits);
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_permitB.nonces(_maker), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
+    }
+
+    /// @notice Mid-batch EIP-2612 SelfFill rolls back earlier legs and permit nonce
+    function test_fillOrders_permit_selfFill_midBatch_revert() public {
+        address maker2 = vm.addr(0xC0FFEE);
+        _tokenA.mint(maker2, _AMOUNT_A);
+        vm.prank(maker2);
+        _tokenA.approve(address(_board), _AMOUNT_A);
+        vm.prank(maker2);
+        uint256 otherId = _board.createOrder(_pairOrder());
+
+        uint256 ownId = _createPairOrder();
+        _permitB.mint(_maker, uint256(_AMOUNT_B) * 2);
+
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
+        fills[0] = ISwapboard.FillOrderParams({orderId: otherId, amountB: _AMOUNT_B, minAmountA: _AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderParams({orderId: ownId, amountB: _AMOUNT_B, minAmountA: _AMOUNT_A});
+        ISwapboard.TokenPermit[] memory permits =
+            _single(_tokenPermit(_permitB, _maker, _MAKER_PK, uint256(_AMOUNT_B) * 2));
+
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.SelfFill.selector);
+        _board.fillOrders(fills, 0, permits);
+
+        assertTrue(_board.canFill(otherId));
+        assertTrue(_board.canFill(ownId));
+        assertEq(_permitB.nonces(_maker), 0);
+        assertEq(_tokenA.balanceOf(address(_board)), uint256(_AMOUNT_A) * 2);
+        assertEq(_tokenB.balanceOf(maker2), 0);
+    }
+
     /// @notice fillOrder permit on ETH tokenB reverts
     function test_fillOrder_permit_native_revert() public {
         uint256 orderId = _createEthWantedOrder();
