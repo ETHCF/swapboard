@@ -175,6 +175,27 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         assertEq(_permitC.nonces(_maker), 0);
     }
 
+    /// @notice A used create permit plus an unused extra entry reverts before either nonce is consumed
+    function test_createOrders_permit_revert_unusedPermit_mixed() public {
+        ISwapboard.TokenPermit[] memory permits = _pair(
+            _tokenPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A), _tokenPermit(_permitC, _maker, _MAKER_PK, _AMOUNT_A)
+        );
+
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.UnusedPermit.selector);
+        _board.createOrders(_single(_plainOrder()), permits);
+
+        assertEq(_permitA.nonces(_maker), 0);
+        assertEq(_permitC.nonces(_maker), 0);
+    }
+
+    /// @notice Empty createOrders with a valid unused permit batch reverts ZeroAmount (after validation)
+    function test_createOrders_permit_revert_emptyOrders() public {
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.createOrders(new ISwapboard.CreateOrderParams[](0), _single(_dummyTokenPermit(address(_tokenA))));
+    }
+
     /// @notice Invalid create args revert before permit, so the token nonce is unchanged
     function test_createOrder_permit_revert_zeroAddress_doesNotConsumeNonce() public {
         ISwapboard.Permit memory permit = _signPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A);
@@ -340,6 +361,22 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         assertEq(_permitC.nonces(_taker), 0);
     }
 
+    /// @notice A used fill permit plus an unused extra entry reverts before either nonce is consumed
+    function test_fillOrders_permit_revert_unusedPermit_mixed() public {
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
+        fills[0] = ISwapboard.FillOrderParams({orderId: _createPairOrder(), amountB: _AMOUNT_B, minAmountA: _AMOUNT_A});
+        ISwapboard.TokenPermit[] memory permits = _pair(
+            _tokenPermit(_permitB, _taker, _TAKER_PK, _AMOUNT_B), _tokenPermit(_permitC, _taker, _TAKER_PK, _AMOUNT_B)
+        );
+
+        vm.prank(_taker);
+        vm.expectRevert(ISwapboard.UnusedPermit.selector);
+        _board.fillOrders(fills, 0, permits);
+
+        assertEq(_permitB.nonces(_taker), 0);
+        assertEq(_permitC.nonces(_taker), 0);
+    }
+
     /// @notice Duplicate token in a fillOrders permit batch reverts
     function test_fillOrders_permit_revert_duplicateToken() public {
         ISwapboard.TokenPermit[] memory permits = new ISwapboard.TokenPermit[](2);
@@ -435,6 +472,23 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         vm.expectRevert(ISwapboard.UnusedPermit.selector);
         _board.fillOrdersPaying(fills, 0, permits);
 
+        assertEq(_permitC.nonces(_taker), 0);
+    }
+
+    /// @notice A used fillPaying permit plus an unused extra entry reverts before either nonce is consumed
+    function test_fillOrdersPaying_permit_revert_unusedPermit_mixed() public {
+        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](1);
+        fills[0] =
+            ISwapboard.FillOrderPayingParams({orderId: _createPairOrder(), amountA: _AMOUNT_A, maxAmountB: _AMOUNT_B});
+        ISwapboard.TokenPermit[] memory permits = _pair(
+            _tokenPermit(_permitB, _taker, _TAKER_PK, _AMOUNT_B), _tokenPermit(_permitC, _taker, _TAKER_PK, _AMOUNT_B)
+        );
+
+        vm.prank(_taker);
+        vm.expectRevert(ISwapboard.UnusedPermit.selector);
+        _board.fillOrdersPaying(fills, 0, permits);
+
+        assertEq(_permitB.nonces(_taker), 0);
         assertEq(_permitC.nonces(_taker), 0);
     }
 
@@ -615,6 +669,157 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         assertEq(_permitA.nonces(_maker), 1);
     }
 
+    /// @notice Same-token top-up and refund that net to zero make a tokenA permit unused
+    function test_modifyOrders_permit_netZero_revert_unusedPermit() public {
+        uint256[] memory ids = _createTwoPlainOrdersWithPermit();
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = ISwapboard.ModifyOrdersParams({
+            orderId: ids[0],
+            previousAmounts: _amounts(_board.getOrder(ids[0])),
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A + (_AMOUNT_A / 2), availableB: _AMOUNT_B
+            })
+        });
+        mods[1] = ISwapboard.ModifyOrdersParams({
+            orderId: ids[1],
+            previousAmounts: _amounts(_board.getOrder(ids[1])),
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B})
+        });
+
+        ISwapboard.TokenPermit[] memory permits = _single(_tokenPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A));
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.UnusedPermit.selector);
+        _board.modifyOrders(mods, permits);
+
+        assertEq(_permitA.nonces(_maker), 1);
+        assertEq(_board.getOrder(ids[0]).availableA, _AMOUNT_A);
+        assertEq(_board.getOrder(ids[1]).availableA, _AMOUNT_A);
+    }
+
+    /// @notice Same-token net refund (refund dominates) makes a tokenA permit unused
+    function test_modifyOrders_permit_netRefund_revert_unusedPermit() public {
+        uint256[] memory ids = _createTwoPlainOrdersWithPermit();
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = ISwapboard.ModifyOrdersParams({
+            orderId: ids[0],
+            previousAmounts: _amounts(_board.getOrder(ids[0])),
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A + (_AMOUNT_A / 4), availableB: _AMOUNT_B
+            })
+        });
+        mods[1] = ISwapboard.ModifyOrdersParams({
+            orderId: ids[1],
+            previousAmounts: _amounts(_board.getOrder(ids[1])),
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B})
+        });
+
+        ISwapboard.TokenPermit[] memory permits = _single(_tokenPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A));
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.UnusedPermit.selector);
+        _board.modifyOrders(mods, permits);
+
+        assertEq(_permitA.nonces(_maker), 1);
+        assertEq(_board.getOrder(ids[0]).availableA, _AMOUNT_A);
+        assertEq(_board.getOrder(ids[1]).availableA, _AMOUNT_A);
+    }
+
+    /// @notice Mixed-token modify: permit only the net ERC20 top-up; refund the other token without a permit
+    function test_modifyOrders_permit_netRefundWithTopUp() public {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _plainOrder();
+        orders[1] = OrderTestLib.order(address(_tokenC), _AMOUNT_A, address(_plainB), _AMOUNT_B);
+        ISwapboard.TokenPermit[] memory createPermits = _pair(
+            _tokenPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A), _tokenPermit(_permitC, _maker, _MAKER_PK, _AMOUNT_A)
+        );
+        vm.prank(_maker);
+        uint256[] memory ids = _board.createOrders(orders, createPermits);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = ISwapboard.ModifyOrdersParams({
+            orderId: ids[0],
+            previousAmounts: _amounts(_board.getOrder(ids[0])),
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B})
+        });
+        mods[1] = ISwapboard.ModifyOrdersParams({
+            orderId: ids[1],
+            previousAmounts: _amounts(_board.getOrder(ids[1])),
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2})
+        });
+
+        uint256 makerCBefore = _tokenC.balanceOf(_maker);
+        ISwapboard.TokenPermit[] memory permits = _single(_tokenPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A));
+        vm.prank(_maker);
+        _board.modifyOrders(mods, permits);
+
+        assertEq(_board.getOrder(ids[0]).availableA, _AMOUNT_A * 2);
+        assertEq(_board.getOrder(ids[1]).availableA, _AMOUNT_A / 2);
+        assertEq(_tokenA.balanceOf(address(_board)), uint256(_AMOUNT_A) * 2);
+        assertEq(_tokenC.balanceOf(address(_board)), _AMOUNT_A / 2);
+        assertEq(_tokenC.balanceOf(_maker), makerCBefore + _AMOUNT_A / 2);
+        assertEq(_permitA.nonces(_maker), 2);
+        assertEq(_permitC.nonces(_maker), 1);
+    }
+
+    /// @notice Refund-only modifyOrder with v == 0 skips permit and returns tokenA
+    function test_modifyOrder_permit_refundOnly_v0_skips() public {
+        ISwapboard.Permit memory createPermit = _signPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A);
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(_plainOrder(), createPermit);
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+
+        vm.prank(_maker);
+        _board.modifyOrder(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            _skipPermit()
+        );
+
+        assertEq(_board.getOrder(orderId).availableA, _AMOUNT_A / 2);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore + _AMOUNT_A / 2);
+        assertEq(_permitA.nonces(_maker), 1);
+    }
+
+    /// @notice Empty permit array still refunds without a top-up permit
+    function test_modifyOrders_permit_refundOnly_emptyArray() public {
+        ISwapboard.TokenPermit[] memory createPermits = _single(_tokenPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A));
+        vm.prank(_maker);
+        uint256[] memory ids = _board.createOrders(_single(_plainOrder()), createPermits);
+        ISwapboard.Order memory snapshot = _board.getOrder(ids[0]);
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](1);
+        mods[0] = ISwapboard.ModifyOrdersParams({
+            orderId: ids[0],
+            previousAmounts: _amounts(snapshot),
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2})
+        });
+
+        vm.prank(_maker);
+        _board.modifyOrders(mods, _noPermits());
+
+        assertEq(_board.getOrder(ids[0]).availableA, _AMOUNT_A / 2);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore + _AMOUNT_A / 2);
+        assertEq(_permitA.nonces(_maker), 1);
+    }
+
+    /// @notice Native refund-only modifyOrder with v != 0 reverts PermitOnNative
+    function test_modifyOrder_permit_refundOnly_native_revert() public {
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder{value: _AMOUNT_A}(_ethOffered(), _skipPermit());
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.PermitOnNative.selector);
+        _board.modifyOrder(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            _nonzeroDummyPermit()
+        );
+    }
+
     /// @notice Empty permit array still modifies when allowance is already set
     function test_modifyOrders_permit_emptyArray_usesAllowance() public {
         vm.prank(_maker);
@@ -672,6 +877,13 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         _board.modifyOrders(new ISwapboard.ModifyOrdersParams[](0), _single(_dummyTokenPermit(_eth)));
     }
 
+    /// @notice Empty modifyOrders with a valid unused permit batch reverts ZeroAmount (after validation)
+    function test_modifyOrders_permit_revert_emptyMods() public {
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.modifyOrders(new ISwapboard.ModifyOrdersParams[](0), _single(_dummyTokenPermit(address(_tokenA))));
+    }
+
     /// @notice Expired permit reverts from the token
     function test_createOrder_permit_revert_expired() public {
         ISwapboard.Permit memory permit = _signPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A, block.timestamp);
@@ -717,6 +929,25 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
     ) private pure returns (ISwapboard.TokenPermit[] memory permits) {
         permits = new ISwapboard.TokenPermit[](1);
         permits[0] = permit;
+    }
+
+    function _pair(
+        ISwapboard.TokenPermit memory first,
+        ISwapboard.TokenPermit memory second
+    ) private pure returns (ISwapboard.TokenPermit[] memory permits) {
+        permits = new ISwapboard.TokenPermit[](2);
+        permits[0] = first;
+        permits[1] = second;
+    }
+
+    function _createTwoPlainOrdersWithPermit() private returns (uint256[] memory) {
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _plainOrder();
+        orders[1] = _plainOrder();
+        ISwapboard.TokenPermit[] memory permits =
+            _single(_tokenPermit(_permitA, _maker, _MAKER_PK, uint256(_AMOUNT_A) * 2));
+        vm.prank(_maker);
+        return _board.createOrders(orders, permits);
     }
 
     function _noPermits() private pure returns (ISwapboard.TokenPermit[] memory) {
