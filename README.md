@@ -149,6 +149,7 @@ All operations are atomic. Partial fills are opt-in via `partialFillAllowed`. No
 - Reentrancy protection via OpenZeppelin
 - Fee-on-transfer / mid-transfer rebase / phantom detection on tokenA deposits and ERC20 tokenB payments to the maker (including board→maker hops)
 - Post-deposit rebase (negative lock / positive surplus in escrow) remains an accepted limitation (see `contracts/test/security-research/`)
+- Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying transfer can take all escrow of that token; makers of the same scam token race whatever balance remains after a rebase. Other tokens in escrow are not affected
 - Outbound fee-on-transfer on tokenA payout to the taker remains an accepted limitation (see `contracts/test/security-research/`)
 - `Token` helpers for ERC20 and native ETH transfers (zero-amount no-op; ETH via `sendValue`)
 - No proxy, no upgrades, no owner

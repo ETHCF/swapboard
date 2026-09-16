@@ -431,9 +431,10 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `FillPayTooHigh(uint256,uint128,uint128)` | `0x489a6af8` | Quoted tokenB payment exceeds the taker's `maxAmountB` (`fillOrderPaying`) |
 | `PermitOnNative()` | `0x62898bac` | EIP-2612 / Permit2 signature supplied for the native ETH sentinel |
 | `InvalidPermit()` | `0xddafbaef` | Batch EIP-2612 permit entry has `v == 0` |
+| `UnusedPermit()` | `0xb1df4e7e` | EIP-2612 permit was not used by any pull (batch unused entry or refund-only `modifyOrder`) |
 | `DuplicatePermitToken(address)` | `0xc87bfe90` | Same token appears more than once in a permit batch |
 | `InvalidPermit2()` | `0x32d1c8da` | Batch Permit2 entry has an empty signature |
-| `UnusedPermit2()` | `0xc1abc68b` | Batch Permit2 entry was not used by any pull |
+| `UnusedPermit2()` | `0xc1abc68b` | Permit2 signature was not used by any pull (batch unused entry or refund-only `modifyOrder`) |
 | `TooManyPermit2()` | `0x35d2fb43` | Permit2 batch has more than 256 entries |
 
 ## Methods
@@ -464,8 +465,8 @@ struct TokenPermit {
 Behavior:
 
 - Spender is always this Swapboard. Owner is `msg.sender`.
-- Single-path: `v == 0` skips (caller must already have allowance). Native ETH with `v != 0` reverts `PermitOnNative`.
-- Batch: empty array means no permits. `v == 0` reverts `InvalidPermit`. Duplicate `token` reverts `DuplicatePermitToken`. `token == 0` reverts `ZeroAddress`. Native ETH reverts `PermitOnNative`.
+- Single-path: `v == 0` skips (caller must already have allowance). Native ETH with `v != 0` reverts `PermitOnNative`. A non-skip permit on a refund-only `modifyOrder` (no top-up) reverts `UnusedPermit`.
+- Batch: empty array means no permits. `v == 0` reverts `InvalidPermit`. Duplicate `token` reverts `DuplicatePermitToken`. `token == 0` reverts `ZeroAddress`. Native ETH reverts `PermitOnNative`. Unused permit (token not pulled) reverts `UnusedPermit`.
 - Token `permit` errors bubble (expired, wrong signer, non-permit token).
 - Permits are applied immediately before the corresponding pull (create tokenA, fill tokenB, modify tokenA top-up).
 - If a permit is front-run, the call reverts; retry with `v == 0` once allowance is set.
@@ -499,7 +500,7 @@ struct TokenPermit2 {
 Behavior:
 
 - Spender in the signed message must be this Swapboard. Owner is `msg.sender`.
-- Single-path: empty `signature` skips (classic `transferFrom` / existing Swapboard allowance). Native ETH with a non-empty signature reverts `PermitOnNative`.
+- Single-path: empty `signature` skips (classic `transferFrom` / existing Swapboard allowance). Native ETH with a non-empty signature reverts `PermitOnNative`. A non-empty signature on a refund-only `modifyOrder` (no top-up) reverts `UnusedPermit2`.
 - Batch: empty array means none. Empty signature → `InvalidPermit2`. Unused Permit2 token (not pulled) → `UnusedPermit2`. More than 256 entries → `TooManyPermit2`. Duplicate `token` → `DuplicatePermitToken`. Zero/native token → `ZeroAddress` / `PermitOnNative`.
 - Signed `amount` must cover the exact pull (aggregated for batches). Permit2 / token errors bubble.
 - Single fills pull ERC20 tokenB directly to the maker. Batch fills with Permit2 pull each distinct ERC20 tokenB total to Swapboard, then distribute to makers.
@@ -758,6 +759,7 @@ async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
 - Orders can be front-run. Consider using Flashbots for fills.
 - Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and on ERC20 tokenB payments to the maker (`BalanceMismatch`), including self-fill and multi-maker Permit2 board→maker hops.
 - Post-deposit rebases (while tokenA sits in escrow) are not checked: a negative rebase can lock fill/cancel; a positive rebase can strand surplus. See `contracts/test/security-research/`.
+- Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying `transfer` can take all escrow of that token. Makers of the same scam token share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected.
 - Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release.
 - Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
 - Self-fills are allowed (maker can fill own order).

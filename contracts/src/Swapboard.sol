@@ -38,7 +38,11 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      - Inbound mid-transfer rebase is rejected via `BalanceMismatch`. Post-deposit rebase of
 ///        escrowed tokenA is not: a negative rebase can lock fill/cancel; a positive rebase can
 ///        strand surplus
-///      - Malicious tokens can cause fund loss - users must verify token contracts
+///      - Malicious tokens can cause fund loss - users must verify token contracts. Escrowed
+///        tokenA of a given address is commingled: that token is the real custodian. Admin
+///        seize/burn or a lying `transfer` can take all escrow of that token. Makers of the same
+///        scam token share one pool; after a rebase they race whatever balance remains. Other
+///        tokens in escrow are not affected
 ///      - Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains
 ///        possible after escrow release
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
@@ -209,9 +213,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         CreateOrderParams[] calldata orders,
         TokenPermit[] calldata permits
     ) external payable nonReentrant returns (uint256[] memory) {
-        _applyPermits(permits);
+        if (permits.length == 0) {
+            return _createOrders(orders);
+        }
 
-        return _createOrders(orders);
+        return _createOrdersWithPermits(orders, permits);
     }
 
     /// @inheritdoc ISwapboard
@@ -279,8 +285,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 deadline,
         TokenPermit[] calldata permits
     ) external payable nonReentrant {
-        _applyPermits(permits);
-        _fillOrders(fills, deadline);
+        if (permits.length == 0) {
+            _fillOrders(fills, deadline);
+
+            return;
+        }
+
+        _fillOrdersWithPermits(fills, deadline, permits);
     }
 
     /// @inheritdoc ISwapboard
@@ -349,8 +360,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 deadline,
         TokenPermit[] calldata permits
     ) external payable nonReentrant {
-        _applyPermits(permits);
-        _fillOrdersPaying(fills, deadline);
+        if (permits.length == 0) {
+            _fillOrdersPaying(fills, deadline);
+
+            return;
+        }
+
+        _fillOrdersPayingWithPermits(fills, deadline, permits);
     }
 
     /// @inheritdoc ISwapboard
@@ -407,6 +423,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         Permit calldata permit
     ) external payable nonReentrant {
         ModifyLeg memory leg = _applyOneModifyEffect(orderId, previousAmounts, updatedOrder);
+        // Non-skip permit with no top-up would burn the nonce without a pull.
+        if (permit.v != 0 && leg.topUp == 0) {
+            if (Token.wrap(leg.tokenA).isNative()) {
+                revert PermitOnNative();
+            }
+            revert UnusedPermit();
+        }
         _permit(leg.tokenA, permit);
         _settleModifyLeg(leg);
     }
@@ -434,8 +457,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         ModifyOrdersParams[] calldata mods,
         TokenPermit[] calldata permits
     ) external payable nonReentrant {
-        _applyPermits(permits);
-        _modifyOrders(mods);
+        if (permits.length == 0) {
+            _modifyOrders(mods);
+
+            return;
+        }
+
+        _modifyOrdersWithPermits(mods, permits);
     }
 
     /// @inheritdoc ISwapboard
@@ -692,6 +720,29 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         _pullAggregatedTokens(_requireCreateBatchDeposits(orders));
+
+        return _storeOrders(orders);
+    }
+
+    /// @notice Creates orders after EIP-2612 permits for every deposited ERC20
+    /// @dev Unused permit entries revert `UnusedPermit` before any `permit` call.
+    /// @param orders Order creation arguments
+    /// @param permits EIP-2612 signatures keyed by tokenA
+    /// @return orderIds Identifiers assigned to each created order
+    function _createOrdersWithPermits(
+        CreateOrderParams[] calldata orders,
+        TokenPermit[] calldata permits
+    ) private returns (uint256[] memory) {
+        _validateTokenPermitBatch(permits);
+        uint256 length = orders.length;
+        if (length == 0) {
+            revert ZeroAmount();
+        }
+
+        AggregatedAmounts memory deposits = _requireCreateBatchDeposits(orders);
+        _requirePermitsUsed(permits, deposits.tokens, deposits.count);
+        _applyValidatedPermits(permits);
+        _pullAggregatedTokens(deposits);
 
         return _storeOrders(orders);
     }
@@ -1131,6 +1182,79 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         _settleFills(_applyFillPayingEffects(fills));
+    }
+
+    /// @notice Fills orders after EIP-2612 permits for every pulled ERC20 tokenB
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    /// @param permits EIP-2612 signatures keyed by tokenB
+    function _fillOrdersWithPermits(
+        FillOrderParams[] calldata fills,
+        uint256 deadline,
+        TokenPermit[] calldata permits
+    ) private {
+        _validateTokenPermitBatch(permits);
+        uint256 length = fills.length;
+        _requireFillBatch(deadline, length);
+
+        address[] memory tokens = new address[](length);
+        uint256 count = 0;
+        for (uint256 i = 0; i < length; ++i) {
+            count = _addUniqueErc20TokenB(fills[i].orderId, tokens, count);
+        }
+
+        _requirePermitsUsed(permits, tokens, count);
+        _applyValidatedPermits(permits);
+        _fillOrders(fills, deadline);
+    }
+
+    /// @notice Fills paying after EIP-2612 permits for every pulled ERC20 tokenB
+    /// @param fills Fill arguments in execution order
+    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    /// @param permits EIP-2612 signatures keyed by tokenB
+    function _fillOrdersPayingWithPermits(
+        FillOrderPayingParams[] calldata fills,
+        uint256 deadline,
+        TokenPermit[] calldata permits
+    ) private {
+        _validateTokenPermitBatch(permits);
+        uint256 length = fills.length;
+        _requireFillBatch(deadline, length);
+
+        address[] memory tokens = new address[](length);
+        uint256 count = 0;
+        for (uint256 i = 0; i < length; ++i) {
+            count = _addUniqueErc20TokenB(fills[i].orderId, tokens, count);
+        }
+
+        _requirePermitsUsed(permits, tokens, count);
+        _applyValidatedPermits(permits);
+        _fillOrdersPaying(fills, deadline);
+    }
+
+    /// @notice Adds `order.tokenB` to `tokens` when it is a new ERC20
+    /// @param orderId Order whose tokenB may be pulled
+    /// @param tokens Distinct ERC20 tokenB values
+    /// @param count Number of populated entries
+    /// @return newCount Updated count
+    function _addUniqueErc20TokenB(
+        uint256 orderId,
+        address[] memory tokens,
+        uint256 count
+    ) private view returns (uint256) {
+        address tokenB = _requireActiveOrder(orderId).tokenB;
+        if (Token.wrap(tokenB).isNative()) {
+            return count;
+        }
+        if (_indexOfToken(tokens, count, tokenB) != count) {
+            return count;
+        }
+
+        tokens[count] = tokenB;
+
+        unchecked {
+            return count + 1;
+        }
     }
 
     /// @notice Validates one exact-tokenB fill, updates order storage, emits `OrderFilled`, and returns the quote
@@ -1811,6 +1935,90 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _settleModifyLegs(legs);
     }
 
+    /// @notice Modifies orders after EIP-2612 permits for every net ERC20 top-up
+    /// @param mods Modify arguments in execution order
+    /// @param permits EIP-2612 signatures keyed by tokenA
+    function _modifyOrdersWithPermits(
+        ModifyOrdersParams[] calldata mods,
+        TokenPermit[] calldata permits
+    ) private {
+        _validateTokenPermitBatch(permits);
+        uint256 length = mods.length;
+        if (length == 0) {
+            revert ZeroAmount();
+        }
+
+        _validateModifyOrders(mods);
+        (address[] memory tokens, uint256 count) = _previewNetErc20TopUpTokens(mods);
+        _requirePermitsUsed(permits, tokens, count);
+        _applyValidatedPermits(permits);
+
+        ModifyLeg[] memory legs = new ModifyLeg[](length);
+        for (uint256 i = 0; i < length; ++i) {
+            ModifyOrdersParams calldata mod = mods[i];
+            legs[i] = _applyOneModifyEffect(mod.orderId, mod.previousAmounts, mod.updatedOrder);
+        }
+
+        _settleModifyLegs(legs);
+    }
+
+    /// @notice Distinct ERC20 tokenA values that would have a net top-up (no storage writes)
+    /// @param mods Modify arguments in execution order
+    /// @return tokens Tokens that will be pulled
+    /// @return count Number of populated entries
+    function _previewNetErc20TopUpTokens(
+        ModifyOrdersParams[] calldata mods
+    ) private view returns (address[] memory tokens, uint256 count) {
+        uint256 length = mods.length;
+        AggregatedModifyDeltas memory deltas;
+        deltas.tokens = new address[](length);
+        deltas.topUps = new uint256[](length);
+        deltas.refunds = new uint256[](length);
+
+        for (uint256 i = 0; i < length; ++i) {
+            ModifyOrdersParams calldata mod = mods[i];
+            Order storage order = _requireActiveOrder(mod.orderId);
+            address tokenA = order.tokenA;
+            if (Token.wrap(tokenA).isNative()) {
+                continue;
+            }
+
+            EscrowADelta memory delta = _escrowADelta(mod.updatedOrder.availableA, order.availableA);
+            uint256 existing = _indexOfToken(deltas.tokens, deltas.count, tokenA);
+            if (existing == deltas.count) {
+                deltas.tokens[deltas.count] = tokenA;
+                deltas.topUps[deltas.count] = delta.topUp;
+                deltas.refunds[deltas.count] = delta.refund;
+                unchecked {
+                    ++deltas.count;
+                }
+            } else {
+                deltas.topUps[existing] += delta.topUp;
+                deltas.refunds[existing] += delta.refund;
+            }
+        }
+
+        return _netErc20TopUpTokens(deltas);
+    }
+
+    /// @notice Distinct ERC20 tokenA values with a net modify top-up
+    /// @param deltas Aggregated modify deltas
+    /// @return tokens Tokens that will be pulled
+    /// @return count Number of populated entries
+    function _netErc20TopUpTokens(
+        AggregatedModifyDeltas memory deltas
+    ) private pure returns (address[] memory tokens, uint256 count) {
+        tokens = new address[](deltas.count);
+        for (uint256 i = 0; i < deltas.count; ++i) {
+            if (deltas.topUps[i] > deltas.refunds[i]) {
+                tokens[count] = deltas.tokens[i];
+                unchecked {
+                    ++count;
+                }
+            }
+        }
+    }
+
     /// @notice Validates every order in a modify batch for duplicate IDs
     /// @param mods Modify arguments to check
     function _validateModifyOrders(
@@ -1992,6 +2200,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 );
             }
         } else if (leg.refund != 0) {
+            if (permit.signature.length != 0) {
+                revert UnusedPermit2();
+            }
             token.safeTransfer(msg.sender, leg.refund);
         }
     }
@@ -2284,14 +2495,15 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert PermitOnNative();
         }
 
+        // forge-lint: disable-next-line(reentrancy-no-eth)
         IERC20Permit(token).permit(msg.sender, address(this), value, deadline, v, r, s);
     }
 
-    /// @notice Applies a batch of EIP-2612 permits before aggregated pulls
+    /// @notice Validates a batch of EIP-2612 permits: non-zero v, no zero/native/duplicate tokens
     /// @param permits Permits keyed by token
-    function _applyPermits(
+    function _validateTokenPermitBatch(
         TokenPermit[] calldata permits
-    ) private {
+    ) private pure {
         uint256 length = permits.length;
         for (uint256 i = 0; i < length; ++i) {
             TokenPermit calldata p = permits[i];
@@ -2299,9 +2511,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (token == address(0)) {
                 revert ZeroAddress();
             }
-            uint8 v = p.v;
-            if (v == 0) {
+            if (p.v == 0) {
                 revert InvalidPermit();
+            }
+            if (Token.wrap(token).isNative()) {
+                revert PermitOnNative();
             }
 
             for (uint256 j = i + 1; j < length; ++j) {
@@ -2309,8 +2523,35 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                     revert DuplicatePermitToken(token);
                 }
             }
+        }
+    }
 
-            _callPermit(token, p.value, p.deadline, v, p.r, p.s);
+    /// @notice Reverts unless every EIP-2612 batch entry matches a pulled ERC20
+    /// @param permits Permits keyed by token
+    /// @param pulledTokens Distinct ERC20 tokens that will be pulled
+    /// @param pulledCount Number of populated pull tokens
+    function _requirePermitsUsed(
+        TokenPermit[] calldata permits,
+        address[] memory pulledTokens,
+        uint256 pulledCount
+    ) private pure {
+        uint256 length = permits.length;
+        for (uint256 i = 0; i < length; ++i) {
+            if (_indexOfToken(pulledTokens, pulledCount, permits[i].token) == pulledCount) {
+                revert UnusedPermit();
+            }
+        }
+    }
+
+    /// @notice Calls `permit` for a batch already validated by `_validateTokenPermitBatch`
+    /// @param permits Permits keyed by token
+    function _applyValidatedPermits(
+        TokenPermit[] calldata permits
+    ) private {
+        uint256 length = permits.length;
+        for (uint256 i = 0; i < length; ++i) {
+            TokenPermit calldata p = permits[i];
+            _callPermit(p.token, p.value, p.deadline, p.v, p.r, p.s);
         }
     }
 

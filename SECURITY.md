@@ -75,7 +75,7 @@ The following are documented design decisions, not vulnerabilities:
 
 3. **Outbound fee-on-transfer**: After escrow release, tokenA is sent with `transfer` and is not balance-checked, so outbound-only fee-on-transfer or mid-transfer rebase on that hop can short the taker. ERC20 tokenB payments to the maker (including self-fill and multi-maker Permit2 board hops) exact-check the recipient and revert `BalanceMismatch`. See `contracts/test/security-research/`.
 
-4. **Malicious tokens**: The contract cannot detect malicious token implementations. Tokens with blacklists, pausability, or admin mint functions can disrupt trades.
+4. **Malicious tokenA is the real custodian of its escrow**: All orders selling the same ERC20 share one board balance of that token. Swapboard only tracks nominal `availableA`; it cannot stop the token from seizing, burning, or lying about that balance. Admin seize/burn or a lying `transfer` can take all escrow of that address. Makers of the same scam token therefore share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected. Blacklists, pausability, and admin mint can also disrupt fill/cancel. Users must verify token contracts.
 
 5. **Partial fills are opt-in**: Orders default to all-or-nothing. Makers can allow partial fills at create or later via `setPartialFillAllowed`. Partial `fillOrder` floors tokenA; `fillOrderPaying` ceils tokenB. Rounding dust stays in escrow until a later fill or cancel.
 

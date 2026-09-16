@@ -123,7 +123,8 @@ interface ISwapboard is ISemver {
 
     /// @notice EIP-2612 permit for one ERC20 in a batch (createOrders/fillOrders/modifyOrders)
     /// @dev Every entry is applied (`v == 0` reverts `InvalidPermit`). Duplicate `token` values
-    ///      revert `DuplicatePermitToken`. Empty array means no permits.
+    ///      revert `DuplicatePermitToken`. An unused entry reverts `UnusedPermit`. Empty array means
+    ///      no permits.
     /// @param token ERC20 to permit (not the ETH sentinel)
     /// @param v Signature v (27/28)
     /// @param value Allowance value signed by the owner
@@ -325,6 +326,9 @@ interface ISwapboard is ISemver {
     /// @notice Thrown when a batch permit entry is malformed (`v == 0`)
     error InvalidPermit();
 
+    /// @notice Thrown when a batch EIP-2612 permit is not used by any pull
+    error UnusedPermit();
+
     /// @notice Thrown when the same token appears more than once in a permit batch
     /// @param token The duplicated token
     error DuplicatePermitToken(address token);
@@ -382,6 +386,7 @@ interface ISwapboard is ISemver {
 
     /// @notice Creates multiple OTC orders after applying EIP-2612 permits
     /// @dev Permits are applied in order before aggregated pulls. One permit per distinct ERC20.
+    ///      An unused entry reverts `UnusedPermit`.
     /// @param orders Order creation arguments
     /// @param permits EIP-2612 signatures keyed by token (empty = none)
     /// @return orderIds Identifiers assigned to each created order, in input order
@@ -469,6 +474,7 @@ interface ISwapboard is ISemver {
     ) external payable;
 
     /// @notice Fills multiple orders by exact tokenB after EIP-2612 permits
+    /// @dev One permit per distinct ERC20 tokenB. An unused entry reverts `UnusedPermit`.
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     /// @param permits EIP-2612 signatures keyed by tokenB (empty = none)
@@ -558,6 +564,7 @@ interface ISwapboard is ISemver {
     ) external payable;
 
     /// @notice Fills multiple orders by exact tokenA after EIP-2612 permits
+    /// @dev One permit per distinct ERC20 tokenB. An unused entry reverts `UnusedPermit`.
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     /// @param permits EIP-2612 signatures keyed by tokenB (empty = none)
@@ -615,7 +622,8 @@ interface ISwapboard is ISemver {
 
     /// @notice Modifies remaining liquidity after an EIP-2612 permit for tokenA
     /// @dev Used when topping up escrowed tokenA. `permit.v == 0` skips. Native tokenA with
-    ///      `permit.v != 0` reverts `PermitOnNative`.
+    ///      `permit.v != 0` reverts `PermitOnNative`. A non-skip permit on a refund-only modify
+    ///      (no top-up) reverts `UnusedPermit`.
     /// @param orderId The order ID
     /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
     /// @param updatedOrder Desired remaining amounts
@@ -629,7 +637,8 @@ interface ISwapboard is ISemver {
 
     /// @notice Modifies remaining liquidity pulling tokenA top-up via Permit2 SignatureTransfer
     /// @dev Empty `permit.signature` skips. Native tokenA with a non-empty signature reverts
-    ///      `PermitOnNative`. Used when topping up escrowed tokenA.
+    ///      `PermitOnNative`. A non-empty signature on a refund-only modify (no top-up) reverts
+    ///      `UnusedPermit2`.
     /// @param orderId The order ID
     /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
     /// @param updatedOrder Desired remaining amounts
@@ -651,7 +660,8 @@ interface ISwapboard is ISemver {
     ) external payable;
 
     /// @notice Modifies multiple orders after applying EIP-2612 permits
-    /// @dev Permits are applied before netted tokenA top-ups. One permit per distinct ERC20.
+    /// @dev Permits are applied before netted tokenA top-ups. One permit per distinct ERC20 with a
+    ///      net top-up. An unused entry reverts `UnusedPermit`.
     /// @param mods Modify arguments in execution order
     /// @param permits EIP-2612 signatures keyed by tokenA (empty = none)
     function modifyOrders(

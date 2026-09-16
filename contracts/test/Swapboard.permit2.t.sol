@@ -736,6 +736,22 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A / 2);
     }
 
+    /// @notice modifyOrder refund-only with a non-empty Permit2 signature reverts UnusedPermit2
+    function test_modifyOrder_permit2_refundOnly_revert_unusedPermit() public {
+        uint256 orderId = _createWithAllowance();
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        ISwapboard.Permit2Permit memory permit = _signPermit2(_tokenA, _maker, _MAKER_PK, _AMOUNT_A);
+
+        vm.prank(_maker);
+        vm.expectRevert(ISwapboard.UnusedPermit2.selector);
+        _board.modifyOrder(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            permit
+        );
+    }
+
     /// @notice modifyOrder native refund-only with empty Permit2 returns ETH
     function test_modifyOrder_permit2_refundOnly_native() public {
         vm.deal(_maker, 200 ether);

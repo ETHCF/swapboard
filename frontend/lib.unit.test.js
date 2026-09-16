@@ -1863,6 +1863,13 @@ describe("decodeContractError", () => {
     });
   });
 
+  test("recognizes UnusedPermit", () => {
+    expect(decodeContractError("0xb1df4e7e")).toEqual({
+      name: "UnusedPermit",
+      message: "Permit signature was not used in this transaction",
+    });
+  });
+
   test("recognizes DuplicatePermitToken", () => {
     expect(decodeContractError("0xc87bfe90")).toEqual({
       name: "DuplicatePermitToken",

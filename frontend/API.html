@@ -506,6 +506,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast</code></pre
       <li>Orders can be front-run. Consider using Flashbots for fills.</li>
       <li>EIP-2612 <code>permit</code> and Permit2 SignatureTransfer overloads on create, fill, and modify pull in the same transaction (existing signatures unchanged). Native ETH with a non-skip permit reverts <code>PermitOnNative</code>.</li>
       <li>Post-deposit rebases (while tokenA sits in escrow) are not checked: a negative rebase can lock fill/cancel; a positive rebase can strand surplus. See <code>contracts/test/security-research/</code>.</li>
+      <li>Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying <code>transfer</code> can take all escrow of that token. Makers of the same scam token share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected.</li>
       <li>Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release.</li>
       <li>Partial fills are allowed only when <code>partialFillAllowed</code> is true (set at create or via <code>setPartialFillAllowed</code>).</li>
       <li>Self-fills are allowed (maker can fill own order).</li>
