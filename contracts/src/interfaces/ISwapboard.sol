@@ -261,6 +261,12 @@ interface ISwapboard is ISemver {
     /// @param maker The actual maker of the order
     error NotMaker(uint256 orderId, address caller, address maker);
 
+    /// @notice Thrown when the maker attempts to fill their own order
+    /// @dev A self-fill would `transferFrom` tokenB to the same address. Typical ERC20s do not
+    ///      change that balance, so the exact-receive check would revert even for honest tokens.
+    ///      Banning maker==taker keeps every fill payment a one-hop pull to a distinct maker.
+    error SelfFill();
+
     /// @notice Thrown when msg.value does not match the required ETH amount
     /// @param required The required ETH amount (0 when ETH is not used)
     /// @param sent The actual msg.value
@@ -414,6 +420,9 @@ interface ISwapboard is ISemver {
     ///      when the floored receive is lower.
     ///      ERC20 tokenB is `transferFrom` the taker straight to the maker with an exact-balance
     ///      check (`BalanceMismatch`). ETH tokenB requires `msg.value == amountB`.
+    ///      The maker cannot fill their own order (`SelfFill`): a self-`transferFrom` of tokenB
+    ///      does not increase the recipient, so the exact-receive check would fail. Forbidding it
+    ///      keeps tokenB a one-hop pull to a distinct maker.
     ///      If tokenA is ETH, pays the taker in ETH.
     ///      A fill that exhausts either remaining side `delete`s the order (subsequent reads look
     ///      like `OrderNotFound`); partial fills keep originals and update availables only.
@@ -507,6 +516,9 @@ interface ISwapboard is ISemver {
     ///      when the ceiled payment is higher.
     ///      ERC20 tokenB is `transferFrom` the taker straight to the maker with an exact-balance
     ///      check (`BalanceMismatch`). ETH tokenB requires `msg.value` equal to the quoted payment.
+    ///      The maker cannot fill their own order (`SelfFill`): a self-`transferFrom` of tokenB
+    ///      does not increase the recipient, so the exact-receive check would fail. Forbidding it
+    ///      keeps tokenB a one-hop pull to a distinct maker.
     ///      If tokenA is ETH, pays the taker in ETH.
     ///      A fill that exhausts either remaining side `delete`s the order (subsequent reads look
     ///      like `OrderNotFound`); partial fills keep originals and update availables only.

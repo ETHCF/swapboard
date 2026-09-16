@@ -423,6 +423,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `OrderNotFound(uint256)` | `0x4e90badc` | Order doesn't exist |
 | `OrderNotActive(uint256)` | `0xd2c02610` | Order already filled/cancelled |
 | `NotMaker(uint256,address,address)` | `0x98cd7222` | Caller is not order maker |
+| `SelfFill()` | `0x9d7a930f` | Maker attempted to fill their own order. Banned so tokenB can always be pulled directly to a distinct maker (`transferFrom(self, self)` does not increase the recipient, so an exact-receive check would fail) |
 | `ETHAmountMismatch(uint256,uint256)` | `0x8230dc8f` | `msg.value` does not match the required ETH amount |
 | `OrderStateMismatch(uint256,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128)` | `0xe796ec17` | `modifyOrder` / `modifyOrders` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` |
 | `DuplicateOrderId(uint256)` | `0x54b9c511` | Same `orderId` appears more than once in a `cancelOrders` or `modifyOrders` batch |
@@ -757,12 +758,12 @@ async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
 
 - All amounts are in base units (wei-style). Multiply by 10^decimals.
 - Orders can be front-run. Consider using Flashbots for fills.
-- Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and on ERC20 tokenB payments to the maker (`BalanceMismatch`), including self-fill and multi-maker Permit2 board→maker hops.
+- Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and on ERC20 tokenB payments to the maker (`BalanceMismatch`), including multi-maker Permit2 board→maker distribution.
 - Post-deposit rebases (while tokenA sits in escrow) are not checked: a negative rebase can lock fill/cancel; a positive rebase can strand surplus. See `contracts/test/security-research/`.
 - Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying `transfer` can take all escrow of that token. Makers of the same scam token share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected.
 - Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release.
 - Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
-- Self-fills are allowed (maker can fill own order).
+- The maker cannot fill their own order (`SelfFill`). A self-`transferFrom` of tokenB typically does not increase the recipient, so the exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board and back. Banning it keeps every fill payment a single pull to a distinct maker. (Multi-maker Permit2 still hops through the board to split one pull across makers.)
 - No expiry. Orders remain active until filled or canceled.
 - To close an order or reclaim all escrow, call `cancelOrder` / `cancelOrders`. `modifyOrder` / `modifyOrders` cannot set remaining to 0 (`ZeroAmount`).
 - Contract has no admin functions. No pause. No upgrades.

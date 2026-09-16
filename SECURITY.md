@@ -73,15 +73,17 @@ The following are documented design decisions, not vulnerabilities:
 
 2. **Rebasing tokens**: Inbound mid-transfer rebases are rejected via `BalanceMismatch`. Post-deposit rebases (while tokenA sits in escrow) are not: a negative rebase can leave the contract under-collateralized so fill and cancel fail; a positive rebase can strand surplus that fills do not pay out. Users should not use rebasing tokens. See `contracts/test/security-research/`.
 
-3. **Outbound fee-on-transfer**: After escrow release, tokenA is sent with `transfer` and is not balance-checked, so outbound-only fee-on-transfer or mid-transfer rebase on that hop can short the taker. ERC20 tokenB payments to the maker (including self-fill and multi-maker Permit2 board hops) exact-check the recipient and revert `BalanceMismatch`. See `contracts/test/security-research/`.
+3. **Outbound fee-on-transfer**: After escrow release, tokenA is sent with `transfer` and is not balance-checked, so outbound-only fee-on-transfer or mid-transfer rebase on that hop can short the taker. ERC20 tokenB payments to the maker (including multi-maker Permit2 board hops) exact-check the recipient and revert `BalanceMismatch`. See `contracts/test/security-research/`.
 
-4. **Malicious tokenA is the real custodian of its escrow**: All orders selling the same ERC20 share one board balance of that token. Swapboard only tracks nominal `availableA`; it cannot stop the token from seizing, burning, or lying about that balance. Admin seize/burn or a lying `transfer` can take all escrow of that address. Makers of the same scam token therefore share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected. Blacklists, pausability, and admin mint can also disrupt fill/cancel. Users must verify token contracts.
+4. **No self-fill**: The maker cannot fill their own order (`SelfFill`). Typical ERC20 `transferFrom(self, self)` does not increase the recipient, so an exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board then back to the maker. Banning it keeps every fill payment a single pull to a distinct counterparty. Multi-maker Permit2 still hops through the board to split one pull across makers.
 
-5. **Partial fills are opt-in**: Orders default to all-or-nothing. Makers can allow partial fills at create or later via `setPartialFillAllowed`. Partial `fillOrder` floors tokenA; `fillOrderPaying` ceils tokenB. Rounding dust stays in escrow until a later fill or cancel.
+5. **Malicious tokenA is the real custodian of its escrow**: All orders selling the same ERC20 share one board balance of that token. Swapboard only tracks nominal `availableA`; it cannot stop the token from seizing, burning, or lying about that balance. Admin seize/burn or a lying `transfer` can take all escrow of that address. Makers of the same scam token therefore share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected. Blacklists, pausability, and admin mint can also disrupt fill/cancel. Users must verify token contracts.
 
-6. **No expiration**: Orders remain active until filled or cancelled. There is no automatic expiration mechanism.
+6. **Partial fills are opt-in**: Orders default to all-or-nothing. Makers can allow partial fills at create or later via `setPartialFillAllowed`. Partial `fillOrder` floors tokenA; `fillOrderPaying` ceils tokenB. Rounding dust stays in escrow until a later fill or cancel.
 
-7. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
+7. **No expiration**: Orders remain active until filled or cancelled. There is no automatic expiration mechanism.
+
+8. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
 
 ## Bug Bounty
 

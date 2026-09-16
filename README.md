@@ -147,7 +147,8 @@ All operations are atomic. Partial fills are opt-in via `partialFillAllowed`. No
 ## Security
 
 - Reentrancy protection via OpenZeppelin
-- Fee-on-transfer / mid-transfer rebase / phantom detection on tokenA deposits and ERC20 tokenB payments to the maker (including board→maker hops)
+- Fee-on-transfer / mid-transfer rebase / phantom detection on tokenA deposits and ERC20 tokenB payments to the maker (including multi-maker Permit2 board→maker distribution)
+- The maker cannot fill their own order (`SelfFill`): a self-`transferFrom` of tokenB does not increase the recipient, so supporting self-fill needed a board hop. Forbidding it keeps tokenB a one-hop pull to a distinct maker
 - Post-deposit rebase (negative lock / positive surplus in escrow) remains an accepted limitation (see `contracts/test/security-research/`)
 - Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying transfer can take all escrow of that token; makers of the same scam token race whatever balance remains after a rebase. Other tokens in escrow are not affected
 - Outbound fee-on-transfer on tokenA payout to the taker remains an accepted limitation (see `contracts/test/security-research/`)

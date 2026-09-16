@@ -1898,6 +1898,13 @@ describe("decodeContractError", () => {
     });
   });
 
+  test("recognizes SelfFill", () => {
+    expect(decodeContractError("0x9d7a930f")).toEqual({
+      name: "SelfFill",
+      message: "You cannot fill your own order",
+    });
+  });
+
   // MUTATION: Return a partial object instead of null
   // BREAKS: An unknown revert renders as "undefined"
   test("returns null for input it cannot decode", () => {

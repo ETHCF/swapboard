@@ -23,8 +23,12 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///        so escrow is not stranded
 ///      - Fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on inbound
 ///        tokenA deposits (`_pullExactToken`) and on ERC20 tokenB payments to the maker
-///        (`_pullExactTokenTo`, `_transferExactTo` / `BalanceMismatch`), including board→maker
-///        hops (self-fill and multi-maker Permit2). ETH tokenB uses `msg.value` then `sendValue`.
+///        (`_transferExactFrom`, `_transferExactTo` / `BalanceMismatch`), including multi-maker
+///        Permit2 board→maker distribution. ETH tokenB uses `msg.value` then `sendValue`.
+///      - The maker cannot fill their own order (`SelfFill`). A self-`transferFrom` of tokenB
+///        does not increase the recipient, so supporting self-fill needed a board hop just to
+///        satisfy the exact-receive check. Forbidding it keeps every fill payment a one-hop
+///        pull to a distinct maker.
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
 ///      - EIP-2612 `permit` overloads set token allowance in the same transaction as the pull
 ///      - Permit2 SignatureTransfer overloads pull via the canonical Permit2 contract
@@ -233,7 +237,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc ISwapboard
-    /// @dev ERC20 tokenB is pulled directly to the maker via `_pullExactTokenTo` (rejects
+    /// @dev ERC20 tokenB is pulled directly to the maker via `_transferExactFrom` (rejects
     ///      fee-on-transfer / mid-transfer rebase / phantom via `BalanceMismatch`). ETH tokenB
     ///      uses `msg.value` then `sendValue`. Residual risk is fee-on-transfer / mid-transfer
     ///      rebase only on the outbound tokenA `transfer` to the taker.
@@ -310,7 +314,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc ISwapboard
-    /// @dev ERC20 tokenB is pulled directly to the maker via `_pullExactTokenTo` (rejects
+    /// @dev ERC20 tokenB is pulled directly to the maker via `_transferExactFrom` (rejects
     ///      fee-on-transfer / mid-transfer rebase / phantom via `BalanceMismatch`). tokenA out
     ///      is the exact `amountA` the taker specified (or all remaining tokenA when the ceiled
     ///      payment closes the order). tokenB in uses ceil division so the taker never underpays
@@ -557,6 +561,24 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         if (!active) {
             revert OrderNotActive(orderId);
+        }
+
+        return order;
+    }
+
+    /// @notice Reverts unless the order is active and the caller is not its maker
+    /// @dev Self-fill would `transferFrom` tokenB to `msg.sender`. Typical ERC20s do not change
+    ///      that balance, so `BalanceMismatch` would fire even for honest tokens. Supporting it
+    ///      required taker→board→maker hops. `SelfFill` keeps tokenB a single pull to a distinct
+    ///      maker (Permit2 still hops through the board only when splitting one pull across makers).
+    /// @param orderId Order to load for a fill
+    /// @return order Storage pointer to the fillable order
+    function _requireFillableOrder(
+        uint256 orderId
+    ) private view returns (Order storage) {
+        Order storage order = _requireActiveOrder(orderId);
+        if (order.maker == msg.sender) {
+            revert SelfFill();
         }
 
         return order;
@@ -981,19 +1003,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId,
         uint128 amountB
     ) private view returns (FillQuote memory quote) {
-        quote.maker = order.maker;
-        quote.tokenA = order.tokenA;
-        quote.tokenB = order.tokenB;
-        quote.availableA = order.availableA;
-        quote.availableB = order.availableB;
-        bool partialFillAllowed = order.partialFillAllowed;
-
-        if (amountB > quote.availableB) {
-            revert FillAmountTooHigh(orderId, amountB, quote.availableB);
-        }
-        if (!partialFillAllowed && amountB != quote.availableB) {
-            revert PartialFillNotAllowed(orderId);
-        }
+        quote = _loadFillQuote(order);
+        _requireFillRequest(orderId, amountB, quote.availableB, order.partialFillAllowed);
 
         quote.amountB = amountB;
         quote.amountA = _floorA(amountB, quote.availableA, quote.availableB);
@@ -1015,24 +1026,45 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId,
         uint128 amountA
     ) private view returns (FillQuote memory quote) {
-        quote.maker = order.maker;
-        quote.tokenA = order.tokenA;
-        quote.tokenB = order.tokenB;
-        quote.availableA = order.availableA;
-        quote.availableB = order.availableB;
-        bool partialFillAllowed = order.partialFillAllowed;
-
-        if (amountA > quote.availableA) {
-            revert FillAmountTooHigh(orderId, amountA, quote.availableA);
-        }
-        if (!partialFillAllowed && amountA != quote.availableA) {
-            revert PartialFillNotAllowed(orderId);
-        }
+        quote = _loadFillQuote(order);
+        _requireFillRequest(orderId, amountA, quote.availableA, order.partialFillAllowed);
 
         quote.amountB = _ceilB(amountA, quote.availableA, quote.availableB);
         quote.amountA = quote.amountB == quote.availableB ? quote.availableA : amountA;
         if (quote.amountB == 0) {
             revert ZeroAmount();
+        }
+    }
+
+    /// @notice Copies maker/tokens/availables from storage into a fill quote
+    /// @param order Order to quote
+    /// @return quote Quote with settlement fields unset
+    function _loadFillQuote(
+        Order storage order
+    ) private view returns (FillQuote memory quote) {
+        quote.maker = order.maker;
+        quote.tokenA = order.tokenA;
+        quote.tokenB = order.tokenB;
+        quote.availableA = order.availableA;
+        quote.availableB = order.availableB;
+    }
+
+    /// @notice Reverts when a fill request exceeds remaining liquidity or violates all-or-nothing
+    /// @param orderId Order id for error payloads
+    /// @param requested Requested fill amount on the driving side
+    /// @param remaining Remaining liquidity on that side
+    /// @param partialFillAllowed Whether partial fills are allowed
+    function _requireFillRequest(
+        uint256 orderId,
+        uint128 requested,
+        uint128 remaining,
+        bool partialFillAllowed
+    ) private pure {
+        if (requested > remaining) {
+            revert FillAmountTooHigh(orderId, requested, remaining);
+        }
+        if (!partialFillAllowed && requested != remaining) {
+            revert PartialFillNotAllowed(orderId);
         }
     }
 
@@ -1197,14 +1229,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = fills.length;
         _requireFillBatch(deadline, length);
 
-        address[] memory tokens = new address[](length);
-        uint256 count = 0;
+        uint256[] memory orderIds = new uint256[](length);
         for (uint256 i = 0; i < length; ++i) {
-            count = _addUniqueErc20TokenB(fills[i].orderId, tokens, count);
+            orderIds[i] = fills[i].orderId;
         }
-
-        _requirePermitsUsed(permits, tokens, count);
-        _applyValidatedPermits(permits);
+        _requireAndApplyFillPermits(orderIds, permits);
         _fillOrders(fills, deadline);
     }
 
@@ -1221,15 +1250,31 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = fills.length;
         _requireFillBatch(deadline, length);
 
+        uint256[] memory orderIds = new uint256[](length);
+        for (uint256 i = 0; i < length; ++i) {
+            orderIds[i] = fills[i].orderId;
+        }
+        _requireAndApplyFillPermits(orderIds, permits);
+        _fillOrdersPaying(fills, deadline);
+    }
+
+    /// @notice Requires every EIP-2612 permit matches a pulled ERC20 tokenB, then applies them
+    /// @dev Caller must already have validated the permit batch.
+    /// @param orderIds Orders whose tokenB may be pulled
+    /// @param permits EIP-2612 signatures keyed by tokenB
+    function _requireAndApplyFillPermits(
+        uint256[] memory orderIds,
+        TokenPermit[] calldata permits
+    ) private {
+        uint256 length = orderIds.length;
         address[] memory tokens = new address[](length);
         uint256 count = 0;
         for (uint256 i = 0; i < length; ++i) {
-            count = _addUniqueErc20TokenB(fills[i].orderId, tokens, count);
+            count = _addUniqueErc20TokenB(orderIds[i], tokens, count);
         }
 
         _requirePermitsUsed(permits, tokens, count);
         _applyValidatedPermits(permits);
-        _fillOrdersPaying(fills, deadline);
     }
 
     /// @notice Adds `order.tokenB` to `tokens` when it is a new ERC20
@@ -1267,7 +1312,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountB,
         uint128 minAmountA
     ) private returns (FillQuote memory quote) {
-        Order storage order = _requireActiveOrder(orderId);
+        Order storage order = _requireFillableOrder(orderId);
         quote = _quoteFill(order, orderId, amountB);
 
         if (quote.amountA < minAmountA) {
@@ -1289,7 +1334,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountA,
         uint128 maxAmountB
     ) private returns (FillQuote memory quote) {
-        Order storage order = _requireActiveOrder(orderId);
+        Order storage order = _requireFillableOrder(orderId);
         quote = _quoteFillPaying(order, orderId, amountA);
 
         if (quote.amountB > maxAmountB) {
@@ -1337,21 +1382,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId,
         uint128 amountB,
         uint128 minAmountA
-    ) private returns (FillLeg memory leg) {
-        Order storage order = _requireActiveOrder(orderId);
-        FillQuote memory quote = _quoteFill(order, orderId, amountB);
-
-        if (quote.amountA < minAmountA) {
-            revert FillAmountMismatch(orderId, quote.amountA, minAmountA);
-        }
-
-        _commitFill(order, orderId, quote);
-
-        leg.maker = quote.maker;
-        leg.tokenA = quote.tokenA;
-        leg.amountA = quote.amountA;
-        leg.tokenB = quote.tokenB;
-        leg.amountB = quote.amountB;
+    ) private returns (FillLeg memory) {
+        return _fillLegFromQuote(_applyOneFillEffect(orderId, amountB, minAmountA));
     }
 
     /// @notice Validates one exact-tokenA fill into a batch settlement leg
@@ -1363,21 +1395,23 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId,
         uint128 amountA,
         uint128 maxAmountB
-    ) private returns (FillLeg memory leg) {
-        Order storage order = _requireActiveOrder(orderId);
-        FillQuote memory quote = _quoteFillPaying(order, orderId, amountA);
+    ) private returns (FillLeg memory) {
+        return _fillLegFromQuote(_applyOneFillPayingEffect(orderId, amountA, maxAmountB));
+    }
 
-        if (quote.amountB > maxAmountB) {
-            revert FillPayTooHigh(orderId, quote.amountB, maxAmountB);
-        }
-
-        _commitFill(order, orderId, quote);
-
-        leg.maker = quote.maker;
-        leg.tokenA = quote.tokenA;
-        leg.amountA = quote.amountA;
-        leg.tokenB = quote.tokenB;
-        leg.amountB = quote.amountB;
+    /// @notice Packs a settled fill quote into a batch transfer leg
+    /// @param quote Settled fill quote
+    /// @return leg Maker/token/amount fields for settlement
+    function _fillLegFromQuote(
+        FillQuote memory quote
+    ) private pure returns (FillLeg memory) {
+        return FillLeg({
+            maker: quote.maker,
+            tokenA: quote.tokenA,
+            amountA: quote.amountA,
+            tokenB: quote.tokenB,
+            amountB: quote.amountB
+        });
     }
 
     /// @notice Validates fills, updates order storage, and collects transfer legs
@@ -1470,18 +1504,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) private {
         Token tokenB = Token.wrap(quote.tokenB);
         if (tokenB.isNative()) {
-            if (msg.value != quote.amountB) {
-                revert ETHAmountMismatch(quote.amountB, msg.value);
-            }
-            tokenB.safeTransfer(quote.maker, quote.amountB);
+            _payNativeFillTokenB(tokenB, quote.maker, quote.amountB);
 
             return;
         }
 
-        if (msg.value != 0) {
-            revert ETHAmountMismatch(0, msg.value);
-        }
-        _pullExactTokenTo(tokenB, quote.maker, quote.amountB);
+        _requireNoStrayEth();
+        _transferExactFrom(tokenB, quote.maker, quote.amountB);
     }
 
     /// @notice Collects tokenB for a single fill via Permit2 (empty signature = classic)
@@ -1496,24 +1525,43 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (permit.signature.length != 0) {
                 revert PermitOnNative();
             }
-            if (msg.value != quote.amountB) {
-                revert ETHAmountMismatch(quote.amountB, msg.value);
-            }
-            tokenB.safeTransfer(quote.maker, quote.amountB);
+            _payNativeFillTokenB(tokenB, quote.maker, quote.amountB);
 
             return;
         }
 
+        _requireNoStrayEth();
+        if (permit.signature.length == 0) {
+            _transferExactFrom(tokenB, quote.maker, quote.amountB);
+
+            return;
+        }
+
+        _pullExactViaPermit2(
+            quote.tokenB, quote.maker, quote.amountB, permit.amount, permit.nonce, permit.deadline, permit.signature
+        );
+    }
+
+    /// @notice Forwards native tokenB from `msg.value` to the maker
+    /// @param tokenB Native ETH sentinel
+    /// @param maker Order maker
+    /// @param amountB Exact ETH amount required
+    function _payNativeFillTokenB(
+        Token tokenB,
+        address maker,
+        uint256 amountB
+    ) private {
+        if (msg.value != amountB) {
+            revert ETHAmountMismatch(amountB, msg.value);
+        }
+        tokenB.safeTransfer(maker, amountB);
+    }
+
+    /// @notice Reverts when ERC20 fills are called with a non-zero `msg.value`
+    function _requireNoStrayEth() private view {
         if (msg.value != 0) {
             revert ETHAmountMismatch(0, msg.value);
         }
-        if (permit.signature.length == 0) {
-            _pullExactTokenTo(tokenB, quote.maker, quote.amountB);
-
-            return;
-        }
-
-        _pullExactViaPermit2To(quote.tokenB, quote.maker, quote.amountB, permit);
     }
 
     /// @notice Fills orders via Permit2 for ERC20 tokenB where provided
@@ -1606,7 +1654,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         MakerTokenBPayments memory payments = _aggregateMakerTokenB(legs);
         _sendMakerEthTokenB(payments);
         for (uint256 k = 0; k < payments.uniqueCount; ++k) {
-            _pullExactTokenTo(Token.wrap(payments.uniqueTokens[k]), payments.recipients[k], payments.uniqueAmounts[k]);
+            _transferExactFrom(Token.wrap(payments.uniqueTokens[k]), payments.recipients[k], payments.uniqueAmounts[k]);
         }
     }
 
@@ -1744,7 +1792,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             uint256 permitIndex = _indexOfTokenPermit2(permits, token);
             permitIndexByUnique[k] = permitIndex;
             if (permitIndex == permitLength) {
-                _pullExactTokenTo(Token.wrap(token), recipients[k], uniqueAmounts[k]);
+                _transferExactFrom(Token.wrap(token), recipients[k], uniqueAmounts[k]);
                 continue;
             }
 
@@ -1777,7 +1825,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             TokenPermit2 calldata permit = permits[p];
             uint256 total = boardTotals[p];
             if (recipientCounts[p] == 1) {
-                _pullExactViaPermit2To(
+                _pullExactViaPermit2(
                     permit.token,
                     soleRecipient[p],
                     total,
@@ -2025,10 +2073,23 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         ModifyOrdersParams[] calldata mods
     ) private pure {
         uint256 length = mods.length;
+        uint256[] memory orderIds = new uint256[](length);
         for (uint256 i = 0; i < length; ++i) {
-            uint256 orderId = mods[i].orderId;
+            orderIds[i] = mods[i].orderId;
+        }
+        _requireUniqueOrderIds(orderIds);
+    }
+
+    /// @notice Reverts when any order id appears more than once
+    /// @param orderIds Identifiers to check
+    function _requireUniqueOrderIds(
+        uint256[] memory orderIds
+    ) private pure {
+        uint256 length = orderIds.length;
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 orderId = orderIds[i];
             for (uint256 j = i + 1; j < length; ++j) {
-                if (mods[j].orderId == orderId) {
+                if (orderIds[j] == orderId) {
                     revert DuplicateOrderId(orderId);
                 }
             }
@@ -2431,15 +2492,15 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         address[] memory tokens = new address[](length);
         uint256[] memory amounts = new uint256[](length);
+        uint256[] memory ids = new uint256[](length);
 
         for (uint256 i = 0; i < length; ++i) {
-            uint256 orderId = orderIds[i];
-            for (uint256 j = i + 1; j < length; ++j) {
-                if (orderIds[j] == orderId) {
-                    revert DuplicateOrderId(orderId);
-                }
-            }
+            ids[i] = orderIds[i];
+        }
+        _requireUniqueOrderIds(ids);
 
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 orderId = ids[i];
             Order storage order = _requireActiveOrder(orderId);
             _requireMaker(orderId, order.maker);
             tokens[i] = order.tokenA;
@@ -2449,7 +2510,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         AggregatedAmounts memory refunds = _aggregateTokenAmounts(tokens, amounts);
 
         for (uint256 k = 0; k < length; ++k) {
-            uint256 orderId = orderIds[k];
+            uint256 orderId = ids[k];
             // forge-lint: disable-next-line(costly-loop)
             delete _orders[orderId];
 
@@ -2659,51 +2720,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
-    /// @notice Pulls an exact ERC20 amount via Permit2 to `to`, with self-fill board hop
-    /// @dev When `to == msg.sender`, pulls to this contract then `_transferExactTo` the maker
-    ///      (same as `_pullExactTokenTo`) so both hops exact-check the recipient.
-    /// @param token ERC20 token address
-    /// @param to Recipient of the pulled tokens
-    /// @param requestedAmount Exact amount to pull
-    /// @param permit Permit2 signature payload
-    function _pullExactViaPermit2To(
-        address token,
-        address to,
-        uint256 requestedAmount,
-        Permit2Permit calldata permit
-    ) private {
-        _pullExactViaPermit2To(
-            token, to, requestedAmount, permit.amount, permit.nonce, permit.deadline, permit.signature
-        );
-    }
-
-    /// @notice Pulls an exact ERC20 amount via Permit2 to `to`, with self-fill board hop
-    /// @param token ERC20 token address
-    /// @param to Recipient of the pulled tokens
-    /// @param requestedAmount Exact amount to pull
-    /// @param permittedAmount Max amount signed in Permit2 `TokenPermissions`
-    /// @param nonce Permit2 unordered nonce
-    /// @param deadline Permit2 signature deadline
-    /// @param signature EIP-712 Permit2 signature
-    function _pullExactViaPermit2To(
-        address token,
-        address to,
-        uint256 requestedAmount,
-        uint256 permittedAmount,
-        uint256 nonce,
-        uint256 deadline,
-        bytes calldata signature
-    ) private {
-        if (to == msg.sender) {
-            _pullExactViaPermit2(token, address(this), requestedAmount, permittedAmount, nonce, deadline, signature);
-            _transferExactTo(Token.wrap(token), to, requestedAmount);
-
-            return;
-        }
-
-        _pullExactViaPermit2(token, to, requestedAmount, permittedAmount, nonce, deadline, signature);
-    }
-
     /// @notice Pulls an exact ERC20 amount via Permit2 SignatureTransfer with BalanceMismatch check
     /// @param token ERC20 token address
     /// @param to Recipient of the pulled tokens
@@ -2747,29 +2763,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 amount
     ) private {
         _transferExactFrom(token, address(this), amount);
-    }
-
-    /// @notice Pulls an exact ERC20 amount from the caller to `to`, rejecting fee-on-transfer /
-    ///         mid-transfer rebase / phantom transfers
-    /// @dev Used for ERC20 tokenB fill payments (`to` = maker). When `to == msg.sender` (self-fill),
-    ///      recipient balance is unchanged by `transferFrom`, so funds route through this contract
-    ///      then `_transferExactTo` the maker. Native token is rejected by callers.
-    /// @param token ERC20 token to pull from the caller
-    /// @param to Recipient of the pulled tokens
-    /// @param amount Expected amount received by `to`
-    function _pullExactTokenTo(
-        Token token,
-        address to,
-        uint256 amount
-    ) private {
-        if (to == msg.sender) {
-            _transferExactFrom(token, address(this), amount);
-            _transferExactTo(token, to, amount);
-
-            return;
-        }
-
-        _transferExactFrom(token, to, amount);
     }
 
     /// @notice `transfer` to `to` and require `to`'s balance rises by exactly `amount`

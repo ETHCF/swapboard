@@ -498,6 +498,11 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast</code></pre
         <td><code>0x3d693ada</code></td>
         <td>Caller is not order maker</td>
       </tr>
+      <tr>
+        <td><code>SelfFill()</code></td>
+        <td><code>0x9d7a930f</code></td>
+        <td>Maker attempted to fill their own order. Banned so tokenB can always be pulled directly to a distinct maker (<code>transferFrom(self, self)</code> does not increase the recipient)</td>
+      </tr>
     </table>
 
     <h2>Notes</h2>
@@ -509,7 +514,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast</code></pre
       <li>Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying <code>transfer</code> can take all escrow of that token. Makers of the same scam token share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected.</li>
       <li>Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release.</li>
       <li>Partial fills are allowed only when <code>partialFillAllowed</code> is true (set at create or via <code>setPartialFillAllowed</code>).</li>
-      <li>Self-fills are allowed (maker can fill own order).</li>
+      <li>The maker cannot fill their own order (<code>SelfFill</code>). A self-<code>transferFrom</code> of tokenB typically does not increase the recipient, so the exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board and back. Banning it keeps every fill payment a single pull to a distinct maker.</li>
       <li>No expiry. Orders remain active until filled or canceled.</li>
       <li>Contract has no admin functions. No pause. No upgrades.</li>
     </ul>

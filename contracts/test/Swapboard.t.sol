@@ -780,26 +780,20 @@ contract SwapboardTest is Test {
         }
     }
 
-    /// @notice Tests filling an order as both _maker and _taker
-    function test_selfFill() public {
+    /// @notice Tests that the maker cannot fill their own order
+    function test_selfFill_revert() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
         _tokenB.mint(_maker, AMOUNT_B);
         _tokenB.approve(address(_board), AMOUNT_B);
 
         uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
-        uint256 tokenAPullsBefore = _tf(_tokenA);
-        uint256 tokenBPullsBefore = _tf(_tokenB);
-        _fillOrder(orderId, AMOUNT_A);
+        vm.expectRevert(ISwapboard.SelfFill.selector);
+        _board.fillOrder(orderId, AMOUNT_B, AMOUNT_A, 0);
         vm.stopPrank();
 
-        ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
-        assertEq(order.availableA, 0);
-        assertEq(_tf(_tokenA), tokenAPullsBefore);
-        assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
-        assertEq(_tokenA.balanceOf(_maker), AMOUNT_A * 10 - AMOUNT_A + AMOUNT_A);
-        assertEq(_tokenB.balanceOf(_maker), AMOUNT_B * 10 + AMOUNT_B);
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A);
     }
 
     /// @notice Tests events orderCreated
@@ -1107,44 +1101,31 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
-    /// @notice Tests maker can self-fill an ETH sell order
-    function test_selfFill_sellEth() public {
-        uint256 makerEthBefore = _maker.balance;
-        uint256 makerTokenBefore = _tokenB.balanceOf(_maker);
-
+    /// @notice Tests maker cannot self-fill an ETH sell order
+    function test_selfFill_sellEth_revert() public {
         vm.startPrank(_maker);
         _tokenB.approve(address(_board), AMOUNT_B);
         uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(_tokenB), AMOUNT_B));
-        uint256 tokenBPullsBefore = _tf(_tokenB);
         ISwapboard.Order memory order = _board.getOrder(orderId);
+        vm.expectRevert(ISwapboard.SelfFill.selector);
         _fillOrderQuoted(order, orderId, ETH_AMOUNT);
         vm.stopPrank();
 
-        assertFalse(_board.canFill(orderId));
-        assertFalse(_board.getOrder(orderId).active);
-        assertEq(_board.getOrder(orderId).availableA, 0);
-        assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
-        assertEq(address(_board).balance, 0);
-        assertEq(_maker.balance, makerEthBefore);
-        assertEq(_tokenB.balanceOf(_maker), makerTokenBefore);
+        assertTrue(_board.canFill(orderId));
+        assertEq(address(_board).balance, ETH_AMOUNT);
     }
 
-    /// @notice Tests maker can self-fill an order paid in ETH
-    function test_selfFill_payEth() public {
-        uint256 makerEthBefore = _maker.balance;
-        uint256 makerTokenBefore = _tokenB.balanceOf(_maker);
-
+    /// @notice Tests maker cannot self-fill an order paid in ETH
+    function test_selfFill_payEth_revert() public {
         vm.startPrank(_maker);
         _tokenB.approve(address(_board), AMOUNT_B);
         uint256 orderId = _board.createOrder(_order(address(_tokenB), AMOUNT_B, _eth, ETH_AMOUNT));
+        vm.expectRevert(ISwapboard.SelfFill.selector);
         _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
         vm.stopPrank();
 
-        assertFalse(_board.canFill(orderId));
-        assertFalse(_board.getOrder(orderId).active);
-        assertEq(_board.getOrder(orderId).availableA, 0);
-        assertEq(_tokenB.balanceOf(_maker), makerTokenBefore);
-        assertEq(_maker.balance, makerEthBefore);
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenB.balanceOf(address(_board)), AMOUNT_B);
     }
 
     /// @notice Tests ETH sell order views: getOrder, canFill, getOrders
@@ -4185,8 +4166,8 @@ contract SwapboardTest is Test {
         assertEq(fotB.balanceOf(address(_board)), 0);
     }
 
-    /// @notice Tests outbound-only FOT tokenB on self-fill reverts BalanceMismatch on the board hop
-    function test_selfFill_outboundFotTokenB_revert_balanceMismatch() public {
+    /// @notice Tests outbound-only FOT tokenB on self-fill reverts SelfFill before any transfer
+    function test_selfFill_outboundFotTokenB_revert_selfFill() public {
         OutboundFotToken fotB = new OutboundFotToken();
 
         vm.startPrank(_maker);
@@ -4195,7 +4176,7 @@ contract SwapboardTest is Test {
         fotB.mint(_maker, AMOUNT_B);
         fotB.approve(address(_board), AMOUNT_B);
         ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_B, _fotNet(AMOUNT_B)));
+        vm.expectRevert(ISwapboard.SelfFill.selector);
         _fillOrderQuoted(orderBefore, orderId, AMOUNT_A);
         vm.stopPrank();
 

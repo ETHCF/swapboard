@@ -446,26 +446,25 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _assertFilled();
     }
 
-    /// @notice Maker self-fills via Permit2 (tokenB pulls to msg.sender)
-    function test_fillOrder_permit2_selfFill() public {
+    /// @notice Maker cannot self-fill via Permit2
+    function test_fillOrder_permit2_selfFill_revert() public {
         uint256 orderId = _createWithAllowance();
         _tokenB.mint(_maker, _AMOUNT_B);
         vm.prank(_maker);
         _tokenB.approve(_PERMIT2_ADDR, type(uint256).max);
 
         ISwapboard.Permit2Permit memory permit = _signPermit2(_tokenB, _maker, _MAKER_PK, _AMOUNT_B);
-        uint256 makerABefore = _tokenA.balanceOf(_maker);
 
         vm.prank(_maker);
+        vm.expectRevert(ISwapboard.SelfFill.selector);
         _board.fillOrder(orderId, _AMOUNT_B, _AMOUNT_A, 0, permit);
 
-        assertEq(_tokenA.balanceOf(_maker), makerABefore + _AMOUNT_A);
-        assertEq(_tokenB.balanceOf(address(_board)), 0);
-        assertFalse(_board.getOrder(orderId).active);
+        assertTrue(_board.canFill(orderId));
+        assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
     }
 
-    /// @notice Maker self-fill via Permit2 with outbound-only FOT tokenB reverts BalanceMismatch
-    function test_fillOrder_permit2_selfFill_outboundFot_revert_balanceMismatch() public {
+    /// @notice Maker self-fill via Permit2 with outbound-only FOT tokenB reverts SelfFill before pull
+    function test_fillOrder_permit2_selfFill_outboundFot_revert_selfFill() public {
         OutboundFotToken fotB = new OutboundFotToken();
         vm.prank(_maker);
         _tokenA.approve(address(_board), _AMOUNT_A);
@@ -479,7 +478,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         ISwapboard.Permit2Permit memory permit = _signPermit2(fotB, _maker, _MAKER_PK, _AMOUNT_B);
 
         vm.prank(_maker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, _AMOUNT_B, _fotNet(_AMOUNT_B)));
+        vm.expectRevert(ISwapboard.SelfFill.selector);
         _board.fillOrder(orderId, _AMOUNT_B, _AMOUNT_A, 0, permit);
 
         assertTrue(_board.canFill(orderId));
