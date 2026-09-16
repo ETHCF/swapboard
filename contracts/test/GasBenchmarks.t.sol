@@ -966,7 +966,7 @@ contract GasBenchmarks is Test {
     }
 
     /// @notice Benchmarks gas used by getNextOrderId
-    function test_gas_getNextOrderId() public {
+    function test_gas_getNextOrderId() public view {
         uint256 gasBefore = gasleft();
         _board.getNextOrderId();
         uint256 gasUsed = gasBefore - gasleft();
@@ -976,7 +976,7 @@ contract GasBenchmarks is Test {
     }
 
     /// @notice Benchmarks gas used by getEth
-    function test_gas_getEth() public {
+    function test_gas_getEth() public view {
         uint256 gasBefore = gasleft();
         _board.getEth();
         uint256 gasUsed = gasBefore - gasleft();
@@ -986,7 +986,7 @@ contract GasBenchmarks is Test {
     }
 
     /// @notice Benchmarks gas used by version
-    function test_gas_version() public {
+    function test_gas_version() public view {
         uint256 gasBefore = gasleft();
         _board.version();
         uint256 gasUsed = gasBefore - gasleft();
