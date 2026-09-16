@@ -348,6 +348,40 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         assertEq(_tokenC.balanceOf(_maker), makerCBefore + _AMOUNT_B);
     }
 
+    /// @notice fillOrders with two same-tokenB orders uses one permit (duplicate skip in unique set)
+    function test_fillOrders_permit_sameTokenB_twoOrders() public {
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
+        fills[0] = ISwapboard.FillOrderParams({orderId: _createPairOrder(), amountB: _AMOUNT_B, minAmountA: _AMOUNT_A});
+        fills[1] = ISwapboard.FillOrderParams({orderId: _createPairOrder(), amountB: _AMOUNT_B, minAmountA: _AMOUNT_A});
+        ISwapboard.TokenPermit[] memory permits =
+            _single(_tokenPermit(_permitB, _taker, _TAKER_PK, uint256(_AMOUNT_B) * 2));
+
+        vm.prank(_taker);
+        _board.fillOrders(fills, 0, permits);
+
+        assertEq(_tokenA.balanceOf(_taker), uint256(_AMOUNT_A) * 2);
+        assertEq(_tokenB.balanceOf(_maker), uint256(_AMOUNT_B) * 2);
+        assertEq(_permitB.nonces(_taker), 1);
+    }
+
+    /// @notice fillOrders permit batch skips native tokenB when building the used-token set
+    function test_fillOrders_permit_mixedNativeTokenB() public {
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
+        fills[0] = ISwapboard.FillOrderParams({orderId: _createPairOrder(), amountB: _AMOUNT_B, minAmountA: _AMOUNT_A});
+        fills[1] =
+            ISwapboard.FillOrderParams({orderId: _createEthWantedOrder(), amountB: _AMOUNT_A, minAmountA: _AMOUNT_A});
+        ISwapboard.TokenPermit[] memory permits = _single(_tokenPermit(_permitB, _taker, _TAKER_PK, _AMOUNT_B));
+
+        uint256 makerEthBefore = _maker.balance;
+        vm.prank(_taker);
+        _board.fillOrders{value: _AMOUNT_A}(fills, 0, permits);
+
+        assertEq(_tokenA.balanceOf(_taker), uint256(_AMOUNT_A) * 2);
+        assertEq(_tokenB.balanceOf(_maker), _AMOUNT_B);
+        assertEq(_maker.balance, makerEthBefore + _AMOUNT_A);
+        assertEq(_permitB.nonces(_taker), 1);
+    }
+
     /// @notice Unused fillOrders permit (tokenB not pulled) reverts UnusedPermit without consuming nonce
     function test_fillOrders_permit_revert_unusedPermit() public {
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
@@ -758,6 +792,40 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         assertEq(_tokenC.balanceOf(_maker), makerCBefore + _AMOUNT_A / 2);
         assertEq(_permitA.nonces(_maker), 2);
         assertEq(_permitC.nonces(_maker), 1);
+    }
+
+    /// @notice modifyOrders with permits skips native tokenA when previewing net ERC20 top-ups
+    function test_modifyOrders_permit_mixedNativeTokenA() public {
+        vm.deal(_maker, 200 ether);
+
+        ISwapboard.TokenPermit[] memory createPermits = _single(_tokenPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A));
+        vm.prank(_maker);
+        uint256 erc20Id = _board.createOrders(_single(_plainOrder()), createPermits)[0];
+
+        vm.prank(_maker);
+        uint256 ethId = _board.createOrder{value: _AMOUNT_A}(_ethOffered(), _skipPermit());
+
+        ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](2);
+        mods[0] = ISwapboard.ModifyOrdersParams({
+            orderId: erc20Id,
+            previousAmounts: _amounts(_board.getOrder(erc20Id)),
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B})
+        });
+        mods[1] = ISwapboard.ModifyOrdersParams({
+            orderId: ethId,
+            previousAmounts: _amounts(_board.getOrder(ethId)),
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A + 1 ether, availableB: _AMOUNT_B})
+        });
+
+        ISwapboard.TokenPermit[] memory permits = _single(_tokenPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A));
+        vm.prank(_maker);
+        _board.modifyOrders{value: 1 ether}(mods, permits);
+
+        assertEq(_board.getOrder(erc20Id).availableA, _AMOUNT_A * 2);
+        assertEq(_board.getOrder(ethId).availableA, _AMOUNT_A + 1 ether);
+        assertEq(_tokenA.balanceOf(address(_board)), uint256(_AMOUNT_A) * 2);
+        assertEq(address(_board).balance, uint256(_AMOUNT_A) + 1 ether);
+        assertEq(_permitA.nonces(_maker), 2);
     }
 
     /// @notice Refund-only modifyOrder with v == 0 skips permit and returns tokenA

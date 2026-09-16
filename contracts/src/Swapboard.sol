@@ -2651,10 +2651,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 usedBits,
         uint256 length
     ) private pure {
-        if (length == 0) {
-            return;
-        }
-
+        // Empty batches never reach here (public overloads short-circuit). `length == 0` still
+        // yields mask 0, so an early return is unnecessary.
         uint256 mask = length == 256 ? type(uint256).max : (uint256(1) << length) - 1;
         if (usedBits != mask) {
             revert UnusedPermit2();
