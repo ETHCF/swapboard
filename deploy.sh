@@ -116,7 +116,15 @@ log "Using START_BLOCK=$START_BLOCK"
 
 log "Step 2: Updating subgraph configuration..."
 
-SUBGRAPH_YAML="$SCRIPT_DIR/subgraph/subgraph.yaml"
+SUBGRAPH_VERSION="${SUBGRAPH_VERSION:-v2}"
+SUBGRAPH_DIR="$SCRIPT_DIR/subgraph/$SUBGRAPH_VERSION"
+SUBGRAPH_YAML="$SUBGRAPH_DIR/subgraph.yaml"
+
+if [[ ! -d "$SUBGRAPH_DIR" ]]; then
+    error "No such subgraph: $SUBGRAPH_DIR (set SUBGRAPH_VERSION to v1 or v2)"
+fi
+
+log "Subgraph version: $SUBGRAPH_VERSION"
 
 # Update contract address
 sed -i.bak "s/address: \"0x[a-fA-F0-9]\{40\}\"/address: \"$CONTRACT_ADDRESS\"/" "$SUBGRAPH_YAML"
@@ -134,61 +142,105 @@ log "Updated subgraph.yaml with address and startBlock"
 
 log "Step 3: Updating frontend configuration..."
 
-FRONTEND_JS="$SCRIPT_DIR/frontend/app.js"
+# The deployment coordinates live in lib.js, on VERSION_CAPS — not app.js.
+FRONTEND_JS="$SCRIPT_DIR/frontend/lib.js"
 
-# Update contract address
-sed -i.bak "s/CONTRACT_ADDRESS: \"0x[a-fA-F0-9]\{40\}\"/CONTRACT_ADDRESS: \"$CONTRACT_ADDRESS\"/" "$FRONTEND_JS"
+# Rewrites one marker-anchored string literal in the frontend config.
+#
+# The frontend serves v1 and v2 side by side, so it holds a contract address and
+# a subgraph URL per version. Each value carries a trailing `// deploy:<ver>:<key>`
+# marker; this anchors on that marker so only the version being deployed is
+# touched, and verifies the write landed. A silent no-op is exactly how the
+# previous version of this script shipped deploys that looked green and changed
+# nothing — so both the missing marker and the failed write are hard errors.
+patch_frontend_config() {
+    local marker=$1 value=$2
 
-rm -f "$FRONTEND_JS.bak"
+    grep -qF "// $marker" "$FRONTEND_JS" \
+        || error "Marker '$marker' not found in $FRONTEND_JS"
 
-log "Updated app.js with contract address"
+    # Escape what sed treats as special in a replacement: a backslash, the `&`
+    # backreference, and the `|` delimiter. Verification below greps for the
+    # unescaped value, so a botched escape fails the run rather than corrupting
+    # the config.
+    local escaped=${value//\\/\\\\}
+    escaped=${escaped//&/\\&}
+    escaped=${escaped//|/\\|}
+
+    sed -i.bak "s|\"[^\"]*\"\(,\{0,1\} *// $marker\)|\"$escaped\"\1|" "$FRONTEND_JS"
+    rm -f "$FRONTEND_JS.bak"
+
+    grep -F "\"$value\"" "$FRONTEND_JS" | grep -qF "// $marker" \
+        || error "Failed to write $marker into $FRONTEND_JS"
+
+    log "Updated $marker -> $value"
+}
+
+patch_frontend_config "deploy:$SUBGRAPH_VERSION:contract" "$CONTRACT_ADDRESS"
 
 # ============================================================
 # STEP 4: Deploy Subgraph
 # ============================================================
 
+# Goldsky subgraph to publish under, as <name>/<version>. v1 is already live at
+# Swapboard/1.0.0; v2 gets its own name so the two index side by side.
+if [[ -z "${GOLDSKY_SUBGRAPH:-}" ]]; then
+    case "$SUBGRAPH_VERSION" in
+        v1) GOLDSKY_SUBGRAPH="Swapboard/1.0.0" ;;
+        v2) GOLDSKY_SUBGRAPH="swapboard-v2/2.0.0" ;;
+        *)  error "Set GOLDSKY_SUBGRAPH explicitly for subgraph version $SUBGRAPH_VERSION" ;;
+    esac
+fi
+
 if [[ "$SKIP_SUBGRAPH" != "true" ]]; then
-    log "Step 4: Deploying subgraph..."
+    log "Step 4: Deploying subgraph to Goldsky as $GOLDSKY_SUBGRAPH..."
 
-    check_env "GRAPH_AUTH_TOKEN"
+    # The Goldsky CLI reads GOLDSKY_API_KEY from the environment, so there is no
+    # separate auth step.
+    check_env "GOLDSKY_API_KEY"
 
-    cd "$SCRIPT_DIR/subgraph"
+    command -v goldsky > /dev/null 2>&1 \
+        || error "goldsky CLI not found. Install it with: pnpm add -g @goldskycom/cli"
 
-    # Authenticate
-    graph auth --studio "$GRAPH_AUTH_TOKEN"
+    cd "$SUBGRAPH_DIR"
 
     # Generate and build
     pnpm codegen
     pnpm build
 
     # Deploy
-    SUBGRAPH_OUTPUT=$(pnpm deploy 2>&1) || {
+    SUBGRAPH_OUTPUT=$(goldsky subgraph deploy "$GOLDSKY_SUBGRAPH" --path . 2>&1) || {
         echo "$SUBGRAPH_OUTPUT"
         error "Subgraph deployment failed"
     }
 
-    # Extract subgraph URL - format varies, try common patterns
-    SUBGRAPH_URL=$(echo "$SUBGRAPH_OUTPUT" | grep -oE "https://api\.(studio\.)?thegraph\.com/query/[^[:space:]]+" | head -1)
-
-    if [[ -z "$SUBGRAPH_URL" ]]; then
-        warn "Could not extract subgraph URL from output. Check The Graph Studio for the URL."
-        SUBGRAPH_URL="https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest"
-    fi
+    SUBGRAPH_URL=$(echo "$SUBGRAPH_OUTPUT" \
+        | grep -oE "https://api\.goldsky\.com/api/public/project_[A-Za-z0-9]+/subgraphs/[^[:space:]]+" \
+        | head -1)
 
     cd "$SCRIPT_DIR"
 
-    log "Subgraph deployed: $SUBGRAPH_URL"
-    echo "SUBGRAPH_URL=$SUBGRAPH_URL" >> "$SCRIPT_DIR/.deploy.env"
+    if [[ -z "$SUBGRAPH_URL" ]]; then
+        echo "$SUBGRAPH_OUTPUT"
+        # Deliberately not falling back to a placeholder: writing one into the
+        # frontend would replace a working URL with a broken one.
+        warn "Could not extract subgraph URL from Goldsky output."
+        warn "Find it in the Goldsky dashboard, then re-run with SKIP_SUBGRAPH=true SUBGRAPH_URL=<url>."
+    else
+        log "Subgraph deployed: $SUBGRAPH_URL"
+        echo "SUBGRAPH_URL=$SUBGRAPH_URL" >> "$SCRIPT_DIR/.deploy.env"
+    fi
 else
     log "Step 4: Skipping subgraph deployment (SKIP_SUBGRAPH=true)"
-    SUBGRAPH_URL="${SUBGRAPH_URL:-https://api.studio.thegraph.com/query/YOUR_ID/swapboard/version/latest}"
 fi
 
-# Update frontend with subgraph URL
-sed -i.bak "s|SUBGRAPH_URL: \"[^\"]*\"|SUBGRAPH_URL: \"$SUBGRAPH_URL\"|" "$FRONTEND_JS"
-rm -f "$FRONTEND_JS.bak"
-
-log "Updated app.js with subgraph URL"
+# Update frontend with subgraph URL. Left alone when this run produced no URL,
+# so a failed extraction cannot clobber the value already in lib.js.
+if [[ -n "${SUBGRAPH_URL:-}" ]]; then
+    patch_frontend_config "deploy:$SUBGRAPH_VERSION:subgraph" "$SUBGRAPH_URL"
+else
+    warn "No SUBGRAPH_URL for $SUBGRAPH_VERSION; leaving frontend subgraph URL unchanged"
+fi
 
 # ============================================================
 # STEP 5: Generate Build Hashes and Deploy Frontend to IPFS
@@ -275,7 +327,8 @@ echo ""
 echo "Network:          $NETWORK"
 echo "Contract:         $CONTRACT_ADDRESS"
 echo "Start Block:      $START_BLOCK"
-echo "Subgraph:         $SUBGRAPH_URL"
+echo "Subgraph:         $GOLDSKY_SUBGRAPH ($SUBGRAPH_VERSION)"
+echo "Subgraph URL:     ${SUBGRAPH_URL:-(unchanged)}"
 echo "IPFS CID:         $IPFS_CID"
 echo ""
 echo "Deployment state saved to .deploy.env"
@@ -291,7 +344,8 @@ fi
 
 echo "Next steps:"
 echo "  1. Verify contract on Etherscan (if not auto-verified)"
-echo "  2. Wait for subgraph to sync (check The Graph Studio)"
+echo "  2. Wait for subgraph to sync (check the Goldsky dashboard)"
+echo "     (frontend/lib.js was patched in place; run 'pnpm format' there before committing)"
 echo "  3. Test frontend at IPFS gateway"
 echo "  4. (Optional) Update ENS contenthash to ipfs://$IPFS_CID"
 echo ""
