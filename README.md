@@ -138,6 +138,7 @@ The Swapboard contract allows:
 - **fillOrder** / **fillOrders**: Send exact tokenB (`amountB`), with `minAmountA`
 - **fillOrderPaying** / **fillOrdersPaying**: Receive exact tokenA (`amountA`), with `maxAmountB`
 - **modifyOrder** / **modifyOrders**: Maker updates remaining liquidity (cannot set remaining to 0 — cancel instead)
+- EIP-2612 `permit` overloads on create, fill, and modify set allowance in the same transaction (`v == 0` skips; existing signatures unchanged)
 - **setPartialFillAllowed**: Maker enables or disables partial fills (amounts unchanged)
 - **cancelOrder**: Maker reclaims tokenA
 

@@ -271,6 +271,21 @@ contract SwapboardTest is Test {
         return ISwapboard.ModifyOrderParams({availableA: availableA, availableB: availableB});
     }
 
+    /// @notice Overwrites one packed `Order` storage field via stdstore
+    /// @dev Depth follows `getOrder` struct layout (maker=0, active=1, …, availableB=8).
+    function _forceOrderField(
+        uint256 orderId,
+        uint256 depth,
+        uint256 value
+    ) private {
+        _stdstore.enable_packed_slots();
+        _stdstore.target(address(_board));
+        _stdstore.sig(_board.getOrder.selector);
+        _stdstore.with_key(orderId);
+        _stdstore.depth(depth);
+        _stdstore.checked_write(value);
+    }
+
     function _amounts(
         ISwapboard.Order memory order
     ) private pure returns (ISwapboard.OrderAmounts memory) {
@@ -3557,12 +3572,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         // Order.availableB is struct field depth 8 (maker=0 … availableA=7, availableB=8).
-        _stdstore.enable_packed_slots();
-        _stdstore.target(address(_board));
-        _stdstore.sig(_board.getOrder.selector);
-        _stdstore.with_key(orderId);
-        _stdstore.depth(8);
-        _stdstore.checked_write(uint256(0));
+        _forceOrderField(orderId, 8, 0);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.availableB, 0);
@@ -3572,6 +3582,25 @@ contract SwapboardTest is Test {
         _tokenB.approve(address(_board), AMOUNT_B);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, uint128(1), uint128(0)));
         _board.fillOrder(orderId, 1, 0, 0);
+        vm.stopPrank();
+    }
+
+    /// @notice Tests fillOrderPaying reverts ZeroAmount when ceiled tokenB payment is 0
+    /// @dev Unreachable via normal fills (availableB=0 implies inactive). Force availableB=0 and
+    ///      request a partial amountA so `_ceilB` returns 0 instead of hitting FillAmountTooHigh.
+    function test_fillOrderPaying_revert_zeroAmountBIn() public {
+        uint256 orderId = _createOrderAsMaker(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        _forceOrderField(orderId, 8, 0);
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.availableB, 0);
+        assertTrue(order.active);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.fillOrderPaying(orderId, 1, AMOUNT_B, 0);
         vm.stopPrank();
     }
 
@@ -6446,6 +6475,48 @@ contract SwapboardTest is Test {
         vm.prank(_maker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _board.setPartialFillAllowed(orderId, true);
+    }
+
+    /// @notice Tests setPartialFillAllowed reverts OrderNotActive when maker remains but active is false
+    /// @dev Cancel/full-fill delete storage (OrderNotFound). Force `active=false` while keeping maker.
+    function test_setPartialFillAllowed_reverts_orderNotActive() public {
+        uint256 orderId = _createOrderAsMaker(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+
+        // Order.active is struct field depth 1.
+        _forceOrderField(orderId, 1, 0);
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, _maker);
+        assertFalse(order.active);
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        _board.setPartialFillAllowed(orderId, true);
+    }
+
+    /// @notice Tests modifyOrder reverts OrderNotActive when maker remains but active is false
+    /// @dev Cancel/full-fill delete storage (OrderNotFound). Force `active=false` while keeping maker.
+    function test_modifyOrder_reverts_orderNotActive() public {
+        uint256 orderId = _createOrderAsMaker(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+
+        _forceOrderField(orderId, 1, 0);
+
+        assertEq(_board.getOrder(orderId).maker, _maker);
+        assertFalse(_board.getOrder(orderId).active);
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        _board.modifyOrder(
+            orderId,
+            ISwapboard.OrderAmounts({
+                amountA: snapshot.amountA,
+                amountB: snapshot.amountB,
+                availableA: snapshot.availableA,
+                availableB: snapshot.availableB
+            }),
+            _modify(snapshot.availableA / 2, snapshot.availableB / 2)
+        );
     }
 
     /// @notice Tests modifyOrder reverts for a non-existent order

@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {ISwapboard} from "./interfaces/ISwapboard.sol";
 import {Semver} from "./Semver.sol";
 import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
@@ -23,6 +24,7 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///        tokenA deposits (`_pullExactToken`) and on ERC20 tokenB payments to the maker
 ///        (`_pullExactTokenTo` / `BalanceMismatch`). ETH tokenB uses `msg.value` then `sendValue`.
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
+///      - EIP-2612 `permit` overloads set token allowance in the same transaction as the pull
 ///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
 ///        remaining amounts are packed separately so fill % is readable on-chain
 ///      - Reentrancy protected via OpenZeppelin ReentrancyGuardTransient (EIP-1153)
@@ -144,29 +146,35 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function createOrder(
         CreateOrderParams calldata order
     ) external payable nonReentrant returns (uint256) {
+        return _createOrder(order);
+    }
+
+    /// @inheritdoc ISwapboard
+    function createOrder(
+        CreateOrderParams calldata order,
+        Permit calldata permit
+    ) external payable nonReentrant returns (uint256) {
         address tokenA = order.tokenA;
-        uint128 amountA = order.amountA;
-        _validateCreateOrder(tokenA, amountA, order.tokenB, order.amountB);
+        _validateCreateOrder(tokenA, order.amountA, order.tokenB, order.amountB);
+        _permit(tokenA, permit);
 
-        Token token = Token.wrap(tokenA);
-        if (token.isNative()) {
-            if (msg.value != amountA) {
-                revert ETHAmountMismatch(amountA, msg.value);
-            }
-        } else {
-            if (msg.value != 0) {
-                revert ETHAmountMismatch(0, msg.value);
-            }
-            _pullExactToken(token, amountA);
-        }
-
-        return _storeOrder(order);
+        return _depositAndStore(order);
     }
 
     /// @inheritdoc ISwapboard
     function createOrders(
         CreateOrderParams[] calldata orders
     ) external payable nonReentrant returns (uint256[] memory) {
+        return _createOrders(orders);
+    }
+
+    /// @inheritdoc ISwapboard
+    function createOrders(
+        CreateOrderParams[] calldata orders,
+        TokenPermit[] calldata permits
+    ) external payable nonReentrant returns (uint256[] memory) {
+        _applyPermits(permits);
+
         return _createOrders(orders);
     }
 
@@ -184,13 +192,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 minAmountA,
         uint256 deadline
     ) external payable nonReentrant {
-        _requireDeadline(deadline);
+        _fillOrder(orderId, amountB, minAmountA, deadline);
+    }
 
-        if (amountB == 0) {
-            revert ZeroAmount();
-        }
-
-        _settleFillQuote(_applyOneFillEffect(orderId, amountB, minAmountA));
+    /// @inheritdoc ISwapboard
+    function fillOrder(
+        uint256 orderId,
+        uint128 amountB,
+        uint128 minAmountA,
+        uint256 deadline,
+        Permit calldata permit
+    ) external payable nonReentrant {
+        _permitAndSettleFill(_beginFill(orderId, amountB, minAmountA, deadline), permit);
     }
 
     /// @inheritdoc ISwapboard
@@ -198,6 +211,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         FillOrderParams[] calldata fills,
         uint256 deadline
     ) external payable nonReentrant {
+        _fillOrders(fills, deadline);
+    }
+
+    /// @inheritdoc ISwapboard
+    function fillOrders(
+        FillOrderParams[] calldata fills,
+        uint256 deadline,
+        TokenPermit[] calldata permits
+    ) external payable nonReentrant {
+        _applyPermits(permits);
         _fillOrders(fills, deadline);
     }
 
@@ -213,13 +236,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 maxAmountB,
         uint256 deadline
     ) external payable nonReentrant {
-        _requireDeadline(deadline);
+        _fillOrderPaying(orderId, amountA, maxAmountB, deadline);
+    }
 
-        if (amountA == 0) {
-            revert ZeroAmount();
-        }
-
-        _settleFillQuote(_applyOneFillPayingEffect(orderId, amountA, maxAmountB));
+    /// @inheritdoc ISwapboard
+    function fillOrderPaying(
+        uint256 orderId,
+        uint128 amountA,
+        uint128 maxAmountB,
+        uint256 deadline,
+        Permit calldata permit
+    ) external payable nonReentrant {
+        _permitAndSettleFill(_beginFillPaying(orderId, amountA, maxAmountB, deadline), permit);
     }
 
     /// @inheritdoc ISwapboard
@@ -227,6 +255,16 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         FillOrderPayingParams[] calldata fills,
         uint256 deadline
     ) external payable nonReentrant {
+        _fillOrdersPaying(fills, deadline);
+    }
+
+    /// @inheritdoc ISwapboard
+    function fillOrdersPaying(
+        FillOrderPayingParams[] calldata fills,
+        uint256 deadline,
+        TokenPermit[] calldata permits
+    ) external payable nonReentrant {
+        _applyPermits(permits);
         _fillOrdersPaying(fills, deadline);
     }
 
@@ -258,13 +296,34 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         OrderAmounts calldata previousAmounts,
         ModifyOrderParams calldata updatedOrder
     ) external payable nonReentrant {
-        _settleModifyLeg(_applyOneModifyEffect(orderId, previousAmounts, updatedOrder));
+        _modifyOrder(orderId, previousAmounts, updatedOrder);
+    }
+
+    /// @inheritdoc ISwapboard
+    function modifyOrder(
+        uint256 orderId,
+        OrderAmounts calldata previousAmounts,
+        ModifyOrderParams calldata updatedOrder,
+        Permit calldata permit
+    ) external payable nonReentrant {
+        ModifyLeg memory leg = _applyOneModifyEffect(orderId, previousAmounts, updatedOrder);
+        _permit(leg.tokenA, permit);
+        _settleModifyLeg(leg);
     }
 
     /// @inheritdoc ISwapboard
     function modifyOrders(
         ModifyOrdersParams[] calldata mods
     ) external payable nonReentrant {
+        _modifyOrders(mods);
+    }
+
+    /// @inheritdoc ISwapboard
+    function modifyOrders(
+        ModifyOrdersParams[] calldata mods,
+        TokenPermit[] calldata permits
+    ) external payable nonReentrant {
+        _applyPermits(permits);
         _modifyOrders(mods);
     }
 
@@ -360,6 +419,19 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
+    /// @notice Reverts when the fill amount is zero or the deadline has passed
+    /// @param amount Requested fill amount
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    function _requireLiveFill(
+        uint128 amount,
+        uint256 deadline
+    ) private view {
+        _requireDeadline(deadline);
+        if (amount == 0) {
+            revert ZeroAmount();
+        }
+    }
+
     /// @notice Reverts on an expired deadline or empty fill batch
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     /// @param length Number of fill legs
@@ -415,6 +487,42 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
+    /// @notice Validates, deposits escrow, and stores one order
+    /// @param order Order creation arguments
+    /// @return orderId Identifier assigned to the created order
+    function _createOrder(
+        CreateOrderParams calldata order
+    ) private returns (uint256) {
+        _validateCreateOrder(order.tokenA, order.amountA, order.tokenB, order.amountB);
+
+        return _depositAndStore(order);
+    }
+
+    /// @notice Pulls tokenA (or checks `msg.value` for ETH) and stores the order
+    /// @dev Caller must already have validated create args and applied any permit.
+    /// @param order Order creation arguments
+    /// @return orderId Identifier assigned to the created order
+    function _depositAndStore(
+        CreateOrderParams calldata order
+    ) private returns (uint256) {
+        address tokenA = order.tokenA;
+        uint128 amountA = order.amountA;
+
+        Token token = Token.wrap(tokenA);
+        if (token.isNative()) {
+            if (msg.value != amountA) {
+                revert ETHAmountMismatch(amountA, msg.value);
+            }
+        } else {
+            if (msg.value != 0) {
+                revert ETHAmountMismatch(0, msg.value);
+            }
+            _pullExactToken(token, amountA);
+        }
+
+        return _storeOrder(order);
+    }
+
     /// @notice Creates orders after aggregating ERC20 pulls and exact ETH payment
     /// @param orders Order creation arguments
     /// @return orderIds Identifiers assigned to each created order
@@ -424,6 +532,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = orders.length;
         if (length == 0) {
             revert ZeroAmount();
+        }
+        if (length == 1) {
+            uint256[] memory orderIds = new uint256[](1);
+            orderIds[0] = _createOrder(orders[0]);
+            return orderIds;
         }
 
         AggregatedAmounts memory deposits = _aggregateDepositAssets(orders);
@@ -743,6 +856,68 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return uint128(quotedA);
     }
 
+    /// @notice Checks deadline/amount, then applies one exact-tokenB fill effect
+    /// @param orderId Order to fill
+    /// @param amountB Exact tokenB to send
+    /// @param minAmountA Minimum tokenA the taker will accept
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @return quote Settled fill quote
+    function _beginFill(
+        uint256 orderId,
+        uint128 amountB,
+        uint128 minAmountA,
+        uint256 deadline
+    ) private returns (FillQuote memory quote) {
+        _requireLiveFill(amountB, deadline);
+
+        return _applyOneFillEffect(orderId, amountB, minAmountA);
+    }
+
+    /// @notice Checks deadline/amount, then applies one exact-tokenA fill effect
+    /// @param orderId Order to fill
+    /// @param amountA Exact tokenA to receive
+    /// @param maxAmountB Maximum tokenB the taker will send
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @return quote Settled fill quote
+    function _beginFillPaying(
+        uint256 orderId,
+        uint128 amountA,
+        uint128 maxAmountB,
+        uint256 deadline
+    ) private returns (FillQuote memory quote) {
+        _requireLiveFill(amountA, deadline);
+
+        return _applyOneFillPayingEffect(orderId, amountA, maxAmountB);
+    }
+
+    /// @notice Fills one order by exact tokenB
+    /// @param orderId Order to fill
+    /// @param amountB Exact tokenB to send
+    /// @param minAmountA Minimum tokenA the taker will accept
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    function _fillOrder(
+        uint256 orderId,
+        uint128 amountB,
+        uint128 minAmountA,
+        uint256 deadline
+    ) private {
+        _settleFillQuote(_beginFill(orderId, amountB, minAmountA, deadline));
+    }
+
+    /// @notice Fills one order by exact tokenA
+    /// @param orderId Order to fill
+    /// @param amountA Exact tokenA to receive
+    /// @param maxAmountB Maximum tokenB the taker will send
+    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    function _fillOrderPaying(
+        uint256 orderId,
+        uint128 amountA,
+        uint128 maxAmountB,
+        uint256 deadline
+    ) private {
+        _settleFillQuote(_beginFillPaying(orderId, amountA, maxAmountB, deadline));
+    }
+
     /// @notice Fills orders after committing legs and settling tokenB/tokenA transfers
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
@@ -754,10 +929,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _requireFillBatch(deadline, length);
         if (length == 1) {
             FillOrderParams calldata fill = fills[0];
-            if (fill.amountB == 0) {
-                revert ZeroAmount();
-            }
-            _settleFillQuote(_applyOneFillEffect(fill.orderId, fill.amountB, fill.minAmountA));
+            _fillOrder(fill.orderId, fill.amountB, fill.minAmountA, deadline);
 
             return;
         }
@@ -776,10 +948,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _requireFillBatch(deadline, length);
         if (length == 1) {
             FillOrderPayingParams calldata fill = fills[0];
-            if (fill.amountA == 0) {
-                revert ZeroAmount();
-            }
-            _settleFillQuote(_applyOneFillPayingEffect(fill.orderId, fill.amountA, fill.maxAmountB));
+            _fillOrderPaying(fill.orderId, fill.amountA, fill.maxAmountB, deadline);
+
             return;
         }
 
@@ -950,6 +1120,17 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         return legs;
+    }
+
+    /// @notice Permits tokenB then pays maker tokenB and taker tokenA
+    /// @param quote Settled fill quote
+    /// @param permit EIP-2612 payload for `quote.tokenB` (`v == 0` skips)
+    function _permitAndSettleFill(
+        FillQuote memory quote,
+        Permit calldata permit
+    ) private {
+        _permit(quote.tokenB, permit);
+        _settleFillQuote(quote);
     }
 
     /// @notice Pays maker tokenB and taker tokenA for a single settled fill quote
@@ -1133,6 +1314,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return length;
     }
 
+    /// @notice Modifies one order's remaining liquidity
+    /// @param orderId Order to modify
+    /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
+    /// @param updatedOrder Desired remaining amounts
+    function _modifyOrder(
+        uint256 orderId,
+        OrderAmounts calldata previousAmounts,
+        ModifyOrderParams calldata updatedOrder
+    ) private {
+        _settleModifyLeg(_applyOneModifyEffect(orderId, previousAmounts, updatedOrder));
+    }
+
     /// @notice Modifies orders after validating duplicates and aggregating escrow deltas
     /// @param mods Modify arguments in execution order
     function _modifyOrders(
@@ -1144,7 +1337,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
         if (length == 1) {
             ModifyOrdersParams calldata mod = mods[0];
-            _settleModifyLeg(_applyOneModifyEffect(mod.orderId, mod.previousAmounts, mod.updatedOrder));
+            _modifyOrder(mod.orderId, mod.previousAmounts, mod.updatedOrder);
             return;
         }
 
@@ -1449,6 +1642,72 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         _sendAggregated(refunds, msg.sender);
+    }
+
+    /// @notice Applies an EIP-2612 permit for `token` from `msg.sender` to this contract
+    /// @dev `v == 0` is a no-op (other fields are not read). Native ETH with `v != 0` reverts
+    ///      `PermitOnNative`.
+    /// @param token Token to permit
+    /// @param permit Signature payload
+    function _permit(
+        address token,
+        Permit calldata permit
+    ) private {
+        uint8 v = permit.v;
+        if (v == 0) {
+            return;
+        }
+
+        _callPermit(token, permit.value, permit.deadline, v, permit.r, permit.s);
+    }
+
+    /// @notice Calls token `permit` after native-ETH check. Caller must ensure `v != 0`.
+    /// @param token Token to permit
+    /// @param value Signed allowance
+    /// @param deadline Permit deadline
+    /// @param v Signature v
+    /// @param r Signature r
+    /// @param s Signature s
+    function _callPermit(
+        address token,
+        uint256 value,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) private {
+        if (Token.wrap(token).isNative()) {
+            revert PermitOnNative();
+        }
+
+        IERC20Permit(token).permit(msg.sender, address(this), value, deadline, v, r, s);
+    }
+
+    /// @notice Applies a batch of EIP-2612 permits before aggregated pulls
+    /// @param permits Permits keyed by token
+    function _applyPermits(
+        TokenPermit[] calldata permits
+    ) private {
+        uint256 length = permits.length;
+        for (uint256 i = 0; i < length; ++i) {
+            TokenPermit calldata p = permits[i];
+            address token = p.token;
+            if (token == address(0)) {
+                revert ZeroAddress();
+            }
+            uint8 v = p.v;
+            if (v == 0) {
+                revert InvalidPermit();
+            }
+
+            for (uint256 j = i + 1; j < length; ++j) {
+                if (permits[j].token == token) {
+                    revert DuplicatePermitToken(token);
+                }
+            }
+
+            _callPermit(token, p.value, p.deadline, v, p.r, p.s);
+        }
     }
 
     /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer
