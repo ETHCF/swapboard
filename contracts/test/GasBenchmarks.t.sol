@@ -436,140 +436,6 @@ contract GasBenchmarks is Test {
         assertLt(gasUsed, 150_000);
     }
 
-    /// @notice Benchmarks gas used by fillOrderPaying
-    function test_gas_fillOrderPaying() public {
-        vm.prank(_maker);
-        uint256 orderId = _board.createOrder(_order());
-
-        vm.startPrank(_taker);
-        uint256 gasBefore = gasleft();
-        _board.fillOrderPaying(orderId, ORDER_A, ORDER_B, 0);
-        uint256 gasUsed = gasBefore - gasleft();
-        vm.stopPrank();
-
-        console2.log("fillOrderPaying gas:", gasUsed);
-        assertLt(gasUsed, 150_000);
-    }
-
-    /// @notice Benchmarks gas used by a partial fillOrderPaying
-    function test_gas_fillOrderPaying_partial() public {
-        vm.prank(_maker);
-        uint256 orderId = _board.createOrder(_orderPartial());
-
-        uint128 payB = 40 ether;
-        vm.startPrank(_taker);
-        uint256 gasBefore = gasleft();
-        _board.fillOrderPaying(orderId, payB, payB, 0);
-        uint256 gasUsed = gasBefore - gasleft();
-        vm.stopPrank();
-
-        console2.log("fillOrderPaying partial gas:", gasUsed);
-        assertLt(gasUsed, 155_000);
-    }
-
-    /// @notice Benchmarks gas used by fillOrdersPaying for three same-tokenB orders
-    function test_gas_fillOrdersPaying() public {
-        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i = 0; i < 3; ++i) {
-            orders[i] = _order();
-        }
-
-        vm.prank(_maker);
-        uint256[] memory ids = _board.createOrders(orders);
-
-        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](3);
-        for (uint256 j = 0; j < 3; ++j) {
-            fills[j] = FillTestLib.fillPayingParams(_board.getOrder(ids[j]), ids[j], ORDER_B);
-        }
-
-        vm.prank(_taker);
-        uint256 gasBefore = gasleft();
-        _board.fillOrdersPaying(fills, 0);
-        uint256 gasUsed = gasBefore - gasleft();
-
-        console2.log("fillOrdersPaying(3) gas:", gasUsed);
-        assertLt(gasUsed, 400_000);
-    }
-
-    /// @notice Benchmarks gas used by fillOrdersPaying paying ETH as tokenB
-    function test_gas_fillOrdersPaying_payEth() public {
-        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i = 0; i < 3; ++i) {
-            orders[i] = OrderTestLib.order(address(_tokenA), ORDER_A, _eth, ETH_AMOUNT);
-        }
-
-        vm.prank(_maker);
-        uint256[] memory ids = _board.createOrders(orders);
-
-        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](3);
-        for (uint256 j = 0; j < 3; ++j) {
-            fills[j] = FillTestLib.fillPayingParams(_board.getOrder(ids[j]), ids[j], ETH_AMOUNT);
-        }
-
-        vm.prank(_taker);
-        uint256 gasBefore = gasleft();
-        _board.fillOrdersPaying{value: ETH_AMOUNT * 3}(fills, 0);
-        uint256 gasUsed = gasBefore - gasleft();
-
-        console2.log("fillOrdersPaying payEth(3) gas:", gasUsed);
-        assertLt(gasUsed, 400_000);
-    }
-
-    /// @notice Benchmarks gas used by fillOrdersPaying receiving ETH as tokenA
-    function test_gas_fillOrdersPaying_receiveEth() public {
-        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i = 0; i < 3; ++i) {
-            orders[i] = OrderTestLib.order(_eth, ETH_AMOUNT, address(_tokenB), ORDER_B);
-        }
-
-        vm.prank(_maker);
-        uint256[] memory ids = _board.createOrders{value: ETH_AMOUNT * 3}(orders);
-
-        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](3);
-        for (uint256 j = 0; j < 3; ++j) {
-            fills[j] = FillTestLib.fillPayingParams(_board.getOrder(ids[j]), ids[j], ORDER_B);
-        }
-
-        vm.prank(_taker);
-        uint256 gasBefore = gasleft();
-        _board.fillOrdersPaying(fills, 0);
-        uint256 gasUsed = gasBefore - gasleft();
-
-        console2.log("fillOrdersPaying receiveEth(3) gas:", gasUsed);
-        assertLt(gasUsed, 400_000);
-    }
-
-    /// @notice Benchmarks gas used by fillOrderPaying paying ETH as tokenB
-    function test_gas_fillOrderPaying_payEth() public {
-        vm.prank(_maker);
-        uint256 orderId = _board.createOrder(OrderTestLib.order(address(_tokenA), ORDER_A, _eth, ETH_AMOUNT));
-
-        vm.startPrank(_taker);
-        uint256 gasBefore = gasleft();
-        _board.fillOrderPaying{value: ETH_AMOUNT}(orderId, ORDER_A, ETH_AMOUNT, 0);
-        uint256 gasUsed = gasBefore - gasleft();
-        vm.stopPrank();
-
-        console2.log("fillOrderPaying payEth gas:", gasUsed);
-        assertLt(gasUsed, 150_000);
-    }
-
-    /// @notice Benchmarks gas used by fillOrderPaying receiving ETH as tokenA
-    function test_gas_fillOrderPaying_receiveEth() public {
-        vm.prank(_maker);
-        uint256 orderId =
-            _board.createOrder{value: ETH_AMOUNT}(OrderTestLib.order(_eth, ETH_AMOUNT, address(_tokenB), ORDER_B));
-
-        vm.startPrank(_taker);
-        uint256 gasBefore = gasleft();
-        FillTestLib.fillPaying(_board, orderId, ORDER_B);
-        uint256 gasUsed = gasBefore - gasleft();
-        vm.stopPrank();
-
-        console2.log("fillOrderPaying receiveEth gas:", gasUsed);
-        assertLt(gasUsed, 150_000);
-    }
-
     /// @notice Benchmarks gas used by cancelOrder
     function test_gas_cancelOrder() public {
         vm.prank(_maker);
@@ -1055,33 +921,6 @@ contract GasBenchmarks is Test {
         assertLt(gasUsed, 160_000);
     }
 
-    /// @notice Benchmarks gas used by fillOrdersPaying with EIP-2612 permits
-    function test_gas_fillOrdersPaying_permit() public {
-        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i = 0; i < 3; ++i) {
-            orders[i] = _order();
-        }
-        vm.prank(_maker);
-        uint256[] memory ids = _board.createOrders(orders);
-
-        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](3);
-        for (uint256 j = 0; j < 3; ++j) {
-            fills[j] = FillTestLib.fillPayingParams(_board.getOrder(ids[j]), ids[j], ORDER_B);
-        }
-        vm.prank(_taker);
-        _tokenB.approve(address(_board), 0);
-        ISwapboard.TokenPermit[] memory permits = new ISwapboard.TokenPermit[](1);
-        permits[0] = _tokenPermit(_tokenB, _taker, _TAKER_PK, uint256(ORDER_B) * 3);
-
-        vm.prank(_taker);
-        uint256 gasBefore = gasleft();
-        _board.fillOrdersPaying(fills, 0, permits);
-        uint256 gasUsed = gasBefore - gasleft();
-
-        console2.log("fillOrdersPaying permit(3) gas:", gasUsed);
-        assertLt(gasUsed, 450_000);
-    }
-
     // ============ Permit2 ============
 
     /// @notice Benchmarks gas used by createOrder via Permit2
@@ -1147,23 +986,6 @@ contract GasBenchmarks is Test {
         assertLt(gasUsed, 250_000);
     }
 
-    /// @notice Benchmarks gas used by fillOrderPaying via Permit2
-    function test_gas_fillOrderPaying_permit2() public {
-        vm.prank(_maker);
-        uint256 orderId = _board.createOrder(_order());
-        vm.prank(_taker);
-        _tokenB.approve(address(_board), 0);
-        ISwapboard.Permit2Permit memory permit = _signPermit2(_tokenB, _taker, _TAKER_PK, ORDER_B);
-
-        vm.prank(_taker);
-        uint256 gasBefore = gasleft();
-        _board.fillOrderPaying(orderId, ORDER_A, ORDER_B, 0, permit);
-        uint256 gasUsed = gasBefore - gasleft();
-
-        console2.log("fillOrderPaying Permit2 gas:", gasUsed);
-        assertLt(gasUsed, 250_000);
-    }
-
     /// @notice Benchmarks gas used by fillOrder with empty Permit2 signature
     function test_gas_fillOrder_permit2_emptySig() public {
         vm.prank(_maker);
@@ -1226,57 +1048,6 @@ contract GasBenchmarks is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("fillOrders Permit2 twoMakers gas:", gasUsed);
-        assertLt(gasUsed, 400_000);
-    }
-
-    /// @notice Benchmarks Permit2 fillOrdersPaying for three same-maker orders
-    function test_gas_fillOrdersPaying_permit2() public {
-        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](3);
-        for (uint256 i = 0; i < 3; ++i) {
-            orders[i] = _order();
-        }
-        vm.prank(_maker);
-        uint256[] memory ids = _board.createOrders(orders);
-
-        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](3);
-        for (uint256 j = 0; j < 3; ++j) {
-            fills[j] = FillTestLib.fillPayingParams(_board.getOrder(ids[j]), ids[j], ORDER_B);
-        }
-        vm.prank(_taker);
-        _tokenB.approve(address(_board), 0);
-        ISwapboard.TokenPermit2[] memory permits =
-            _singlePermit2(_tokenPermit2(_tokenB, _taker, _TAKER_PK, uint256(ORDER_B) * 3));
-
-        vm.prank(_taker);
-        uint256 gasBefore = gasleft();
-        _board.fillOrdersPaying(fills, 0, permits);
-        uint256 gasUsed = gasBefore - gasleft();
-
-        console2.log("fillOrdersPaying Permit2(3) gas:", gasUsed);
-        assertLt(gasUsed, 450_000);
-    }
-
-    /// @notice Benchmarks Permit2 fillOrdersPaying for two makers (board hop)
-    function test_gas_fillOrdersPaying_permit2_twoMakers() public {
-        vm.prank(_maker);
-        uint256 id0 = _board.createOrder(_order());
-        vm.prank(_maker2);
-        uint256 id1 = _board.createOrder(_order());
-
-        ISwapboard.FillOrderPayingParams[] memory fills = new ISwapboard.FillOrderPayingParams[](2);
-        fills[0] = FillTestLib.fillPayingParams(_board.getOrder(id0), id0, ORDER_B);
-        fills[1] = FillTestLib.fillPayingParams(_board.getOrder(id1), id1, ORDER_B);
-        vm.prank(_taker);
-        _tokenB.approve(address(_board), 0);
-        ISwapboard.TokenPermit2[] memory permits =
-            _singlePermit2(_tokenPermit2(_tokenB, _taker, _TAKER_PK, uint256(ORDER_B) * 2));
-
-        vm.prank(_taker);
-        uint256 gasBefore = gasleft();
-        _board.fillOrdersPaying(fills, 0, permits);
-        uint256 gasUsed = gasBefore - gasleft();
-
-        console2.log("fillOrdersPaying Permit2 twoMakers gas:", gasUsed);
         assertLt(gasUsed, 400_000);
     }
 

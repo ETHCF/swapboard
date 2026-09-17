@@ -427,9 +427,8 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `ETHAmountMismatch(uint256,uint256)` | `0x8230dc8f` | `msg.value` does not match the required ETH amount |
 | `OrderStateMismatch(uint256,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128)` | `0xe796ec17` | `modifyOrder` / `modifyOrders` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` |
 | `DuplicateOrderId(uint256)` | `0x54b9c511` | Same `orderId` appears more than once in a `cancelOrders` or `modifyOrders` batch |
-| `FillAmountTooHigh(uint256,uint128,uint128)` | `0x535a34f0` | Requested fill amount exceeds remaining liquidity (`amountB` for `fillOrder`, `amountA` for `fillOrderPaying`) |
+| `FillAmountTooHigh(uint256,uint128,uint128)` | `0x535a34f0` | Requested `amountB` exceeds remaining liquidity (`fillOrder` / `fillOrders`) |
 | `FillAmountMismatch(uint256,uint128,uint128)` | `0x19113a72` | Quoted tokenA receive is below the taker's `minAmountA` (`fillOrder`) |
-| `FillPayTooHigh(uint256,uint128,uint128)` | `0x489a6af8` | Quoted tokenB payment exceeds the taker's `maxAmountB` (`fillOrderPaying`) |
 | `PermitOnNative()` | `0x62898bac` | EIP-2612 / Permit2 signature supplied for the native ETH sentinel |
 | `InvalidPermit()` | `0xddafbaef` | Batch EIP-2612 permit entry has `v == 0` |
 | `UnusedPermit()` | `0xb1df4e7e` | EIP-2612 permit was not used by any pull (batch unused entry or refund-only `modifyOrder`) |
@@ -442,7 +441,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 
 ### EIP-2612 permits
 
-`createOrder`, `createOrders`, `fillOrder`, `fillOrders`, `fillOrderPaying`, `fillOrdersPaying`, `modifyOrder`, and `modifyOrders` have overloads that take an EIP-2612 permit as the last argument so allowance can be set in the same transaction as the pull. Existing signatures are unchanged.
+`createOrder`, `createOrders`, `fillOrder`, `fillOrders`, `modifyOrder`, and `modifyOrders` have overloads that take an EIP-2612 permit as the last argument so allowance can be set in the same transaction as the pull. Existing signatures are unchanged.
 
 ```solidity
 struct Permit {
@@ -479,7 +478,7 @@ function createOrders(CreateOrderParams[] calldata orders, TokenPermit[] calldat
 
 ### Permit2 SignatureTransfer
 
-The same eight entrypoints also have Permit2 overloads. Users approve the canonical Permit2 contract (`0x000000000022D473030F116dDEE9F6B43aC78BA3`) once per token, then pass a SignatureTransfer signature so Swapboard can pull without a direct ERC20 allowance to Swapboard.
+The same six entrypoints also have Permit2 overloads. Users approve the canonical Permit2 contract (`0x000000000022D473030F116dDEE9F6B43aC78BA3`) once per token, then pass a SignatureTransfer signature so Swapboard can pull without a direct ERC20 allowance to Swapboard.
 
 ```solidity
 struct Permit2Permit {
@@ -558,53 +557,6 @@ Behavior:
 - Reverts with `FillAmountTooHigh` when `amountB` exceeds `availableB`.
 - If tokenB is ETH, `msg.value` must equal `amountB`.
 - Empty `fillOrders` reverts with `ZeroAmount`.
-
-### `fillOrderPaying`
-
-Taker receives exact `amountA` of tokenA and pays ceiled proportional tokenB. `maxAmountB` is the maximum they will send.
-
-```solidity
-struct FillOrderPayingParams {
-    uint256 orderId;
-    uint128 amountA;      // exact tokenA to receive
-    uint128 maxAmountB;   // maximum tokenB willing to send
-}
-
-function fillOrderPaying(
-    uint256 orderId,
-    uint128 amountA,
-    uint128 maxAmountB,
-    uint256 deadline
-) external payable;
-
-function fillOrderPaying(
-    uint256 orderId,
-    uint128 amountA,
-    uint128 maxAmountB,
-    uint256 deadline,
-    Permit calldata permit
-) external payable;
-
-function fillOrdersPaying(
-    FillOrderPayingParams[] calldata fills,
-    uint256 deadline
-) external payable;
-
-function fillOrdersPaying(
-    FillOrderPayingParams[] calldata fills,
-    uint256 deadline,
-    TokenPermit[] calldata permits
-) external payable;
-```
-
-Behavior:
-
-- tokenA out is exact: `amountA` (or all remaining tokenA when the ceiled payment consumes remaining tokenB, so escrow is not stranded).
-- tokenB in is ceiled: `(amountA * availableB + availableA - 1) / availableA` (full remaining `amountA == availableA` pays all `availableB`).
-- Reverts with `FillPayTooHigh` when quoted tokenB exceeds `maxAmountB`.
-- Reverts with `FillAmountTooHigh` when `amountA` exceeds `availableA`.
-- Same ETH / aggregation / deadline rules as `fillOrder` / `fillOrders` (`msg.value` must equal the quoted tokenB payment when tokenB is ETH).
-- Empty `fillOrdersPaying` reverts with `ZeroAmount`.
 
 ### `modifyOrder`
 

@@ -43,32 +43,12 @@ library FillTestLib {
         );
     }
 
-    /// @notice Quotes tokenA actually received for an exact-tokenA fill (all remaining A if B is exhausted)
-    function quoteFillPayingAmountA(
-        ISwapboard.Order memory order,
-        uint128 amountA
-    ) internal pure returns (uint128) {
-        uint128 amountBIn = quoteAmountB(order, amountA);
-        if (amountBIn == order.availableB) {
-            return order.availableA;
-        }
-        return amountA;
-    }
-
     /// @notice Alias: tokenA received for a tokenA-sized fill (floor of the ceiled tokenB)
     function quoteFillAmountA(
         ISwapboard.Order memory order,
         uint128 amountA
     ) internal pure returns (uint128) {
         return quoteAmountA(order, quoteAmountB(order, amountA));
-    }
-
-    /// @notice Alias: tokenB paid for a tokenB-sized fill (ceil of the floored tokenA)
-    function quoteFillPayingAmountB(
-        ISwapboard.Order memory order,
-        uint128 amountB
-    ) internal pure returns (uint128) {
-        return quoteAmountB(order, quoteAmountA(order, amountB));
     }
 
     /// @notice Builds fill params from a tokenA size (converted to exact tokenB)
@@ -83,22 +63,6 @@ library FillTestLib {
         }
         return
             ISwapboard.FillOrderParams({orderId: orderId, amountB: amountB, minAmountA: quoteAmountA(order, amountB)});
-    }
-
-    /// @notice Builds fill-paying params from a tokenB size (converted to exact tokenA)
-    function fillPayingParams(
-        ISwapboard.Order memory order,
-        uint256 orderId,
-        uint128 amountB
-    ) internal pure returns (ISwapboard.FillOrderPayingParams memory) {
-        uint128 amountA = quoteAmountA(order, amountB);
-        if (amountA == 0) {
-            return
-                ISwapboard.FillOrderPayingParams({orderId: orderId, amountA: amountB, maxAmountB: type(uint128).max});
-        }
-        return ISwapboard.FillOrderPayingParams({
-            orderId: orderId, amountA: amountA, maxAmountB: quoteAmountB(order, amountA)
-        });
     }
 
     /// @notice Fills an order sending exact amountB with an explicit minimum amountA and deadline
@@ -181,82 +145,4 @@ library FillTestLib {
         fillPayEth(board, orderId, amountB, value, 0);
     }
 
-    /// @notice Fills paying exact amountA with an explicit maximum amountB and deadline
-    function fillPaying(
-        ISwapboard board,
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB,
-        uint256 deadline
-    ) internal {
-        board.fillOrderPaying(orderId, amountA, maxAmountB, deadline);
-    }
-
-    /// @notice Fills paying exact amountA with an explicit maximum amountB
-    function fillPaying(
-        ISwapboard board,
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB
-    ) internal {
-        fillPaying(board, orderId, amountA, maxAmountB, 0);
-    }
-
-    /// @notice Fills paying from a tokenB size (converted to exact tokenA)
-    function fillPaying(
-        ISwapboard board,
-        uint256 orderId,
-        uint128 amountB
-    ) internal {
-        ISwapboard.Order memory order = board.getOrder(orderId);
-        fillPaying(board, order, orderId, amountB, 0);
-    }
-
-    /// @notice Fills paying from a tokenB size using a pre-fetched order snapshot and deadline
-    function fillPaying(
-        ISwapboard board,
-        ISwapboard.Order memory order,
-        uint256 orderId,
-        uint128 amountB,
-        uint256 deadline
-    ) internal {
-        uint128 amountA = quoteAmountA(order, amountB);
-        if (amountA == 0) {
-            fillPaying(board, orderId, amountB, type(uint128).max, deadline);
-            return;
-        }
-        fillPaying(board, orderId, amountA, quoteAmountB(order, amountA), deadline);
-    }
-
-    /// @notice Fills paying using a pre-fetched order snapshot (safe after `vm.expectRevert`)
-    function fillPaying(
-        ISwapboard board,
-        ISwapboard.Order memory order,
-        uint256 orderId,
-        uint128 amountA
-    ) internal {
-        fillPaying(board, order, orderId, amountA, 0);
-    }
-
-    /// @notice Fills paying native ETH as tokenB with a deadline
-    /// @dev `msg.value` is `value`; does not fetch the order (safe after `vm.expectRevert`)
-    function fillPayingEth(
-        ISwapboard board,
-        uint256 orderId,
-        uint128 amountA,
-        uint128 value,
-        uint256 deadline
-    ) internal {
-        board.fillOrderPaying{value: value}(orderId, amountA, type(uint128).max, deadline);
-    }
-
-    /// @notice Fills paying native ETH as tokenB
-    function fillPayingEth(
-        ISwapboard board,
-        uint256 orderId,
-        uint128 amountA,
-        uint128 value
-    ) internal {
-        fillPayingEth(board, orderId, amountA, value, 0);
-    }
 }

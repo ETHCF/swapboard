@@ -85,16 +85,6 @@ interface ISwapboard is ISemver {
         uint128 minAmountA;
     }
 
-    /// @notice Arguments for filling a single OTC order by exact tokenA received
-    /// @param orderId Unique identifier of the order to fill
-    /// @param amountA Exact amount of tokenA to receive
-    /// @param maxAmountB Maximum amount of tokenB the taker is willing to send
-    struct FillOrderPayingParams {
-        uint256 orderId;
-        uint128 amountA;
-        uint128 maxAmountB;
-    }
-
     /// @notice Arguments for one entry in a `modifyOrders` batch
     /// @param orderId Unique identifier of the order to modify
     /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
@@ -280,7 +270,7 @@ interface ISwapboard is ISemver {
     error PartialFillNotAllowed(uint256 orderId);
 
     /// @notice Thrown when the requested fill amount exceeds the order's remaining liquidity
-    /// @dev Used for both amountB-driven (`fillOrder`) and amountA-driven (`fillOrderPaying`) fills.
+    /// @dev Used when `fillOrder` / `fillOrders` request more tokenB than remaining.
     /// @param orderId The order ID
     /// @param requested The requested fill amount
     /// @param remaining The available amount on the order for that side
@@ -291,12 +281,6 @@ interface ISwapboard is ISemver {
     /// @param quoted The quoted tokenA receive for this fill
     /// @param minimum The minimum tokenA receive declared by the taker
     error FillAmountMismatch(uint256 orderId, uint128 quoted, uint128 minimum);
-
-    /// @notice Thrown when the quoted tokenB payment exceeds the taker's maximum
-    /// @param orderId The order ID
-    /// @param quoted The quoted tokenB payment for this fill
-    /// @param maximum The maximum tokenB payment declared by the taker
-    error FillPayTooHigh(uint256 orderId, uint128 quoted, uint128 maximum);
 
     /// @notice Thrown when the provided previous amounts do not match the current on-chain order
     /// @dev Only `amountA`, `amountB`, `availableA`, and `availableB` are compared; immutable fields
@@ -504,95 +488,6 @@ interface ISwapboard is ISemver {
     /// @param permits Permit2 signatures keyed by tokenB (empty = none)
     function fillOrders(
         FillOrderParams[] calldata fills,
-        uint256 deadline,
-        TokenPermit2[] calldata permits
-    ) external payable;
-
-    /// @notice Fills an existing order by receiving exact amountA
-    /// @dev Taker receives `amountA` of tokenA and pays ceiled proportional tokenB
-    ///      (`(amountA * availableB + availableA - 1) / availableA`). If that payment consumes all
-    ///      remaining tokenB, remaining tokenA is paid out as well so escrow is not left stranded.
-    ///      `maxAmountB` is the maximum tokenB the taker will send. Reverts with `FillPayTooHigh`
-    ///      when the ceiled payment is higher.
-    ///      ERC20 tokenB is `transferFrom` the taker straight to the maker with an exact-balance
-    ///      check (`BalanceMismatch`). ETH tokenB requires `msg.value` equal to the quoted payment.
-    ///      The maker cannot fill their own order (`SelfFill`): a self-`transferFrom` of tokenB
-    ///      does not increase the recipient, so the exact-receive check would fail. Forbidding it
-    ///      keeps tokenB a one-hop pull to a distinct maker.
-    ///      If tokenA is ETH, pays the taker in ETH.
-    ///      A fill that exhausts either remaining side `delete`s the order (subsequent reads look
-    ///      like `OrderNotFound`); partial fills keep originals and update availables only.
-    /// @param orderId The unique identifier of the order to fill
-    /// @param amountA Exact amount of tokenA to receive
-    /// @param maxAmountB Maximum amount of tokenB the taker is willing to send
-    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
-    function fillOrderPaying(
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB,
-        uint256 deadline
-    ) external payable;
-
-    /// @notice Fills an order by exact amountA after an EIP-2612 permit for tokenB
-    /// @dev `permit.v == 0` skips the permit. Native tokenB with `permit.v != 0` reverts
-    ///      `PermitOnNative`.
-    /// @param orderId The unique identifier of the order to fill
-    /// @param amountA Exact amount of tokenA to receive
-    /// @param maxAmountB Maximum amount of tokenB the taker is willing to send
-    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
-    /// @param permit EIP-2612 signature for tokenB (`v == 0` to skip)
-    function fillOrderPaying(
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB,
-        uint256 deadline,
-        Permit calldata permit
-    ) external payable;
-
-    /// @notice Fills an order by exact amountA pulling tokenB via Permit2 SignatureTransfer
-    /// @dev Empty `permit.signature` skips. Native tokenB with a non-empty signature reverts
-    ///      `PermitOnNative`. ERC20 tokenB is pulled directly to the maker.
-    /// @param orderId The unique identifier of the order to fill
-    /// @param amountA Exact amount of tokenA to receive
-    /// @param maxAmountB Maximum amount of tokenB the taker is willing to send
-    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
-    /// @param permit Permit2 signature for tokenB (empty signature to skip)
-    function fillOrderPaying(
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB,
-        uint256 deadline,
-        Permit2Permit calldata permit
-    ) external payable;
-
-    /// @notice Fills multiple orders in one call by exact tokenA received
-    /// @dev Same aggregation and multi-leg rules as `fillOrders`, but each leg specifies `amountA`
-    ///      and `maxAmountB`.
-    /// @param fills Fill arguments in execution order
-    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
-    function fillOrdersPaying(
-        FillOrderPayingParams[] calldata fills,
-        uint256 deadline
-    ) external payable;
-
-    /// @notice Fills multiple orders by exact tokenA after EIP-2612 permits
-    /// @dev One permit per distinct ERC20 tokenB. An unused entry reverts `UnusedPermit`.
-    /// @param fills Fill arguments in execution order
-    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
-    /// @param permits EIP-2612 signatures keyed by tokenB (empty = none)
-    function fillOrdersPaying(
-        FillOrderPayingParams[] calldata fills,
-        uint256 deadline,
-        TokenPermit[] calldata permits
-    ) external payable;
-
-    /// @notice Fills multiple orders by exact tokenA via Permit2 SignatureTransfer
-    /// @dev Same Permit2 aggregation rules as `fillOrders` (one entry per distinct ERC20 tokenB).
-    /// @param fills Fill arguments in execution order
-    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
-    /// @param permits Permit2 signatures keyed by tokenB (empty = none)
-    function fillOrdersPaying(
-        FillOrderPayingParams[] calldata fills,
         uint256 deadline,
         TokenPermit2[] calldata permits
     ) external payable;

@@ -18,9 +18,6 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      - Full fills are atomic; partial fills are opt-in via `partialFillAllowed`
 ///      - `fillOrder` sends exact tokenB (`amountB`) and receives floored tokenA, bounded by
 ///        `minAmountA`
-///      - `fillOrderPaying` receives exact tokenA (`amountA`) and pays ceiled tokenB, bounded by
-///        `maxAmountB`. If that payment consumes remaining tokenB, remaining tokenA is paid out
-///        so escrow is not stranded
 ///      - Fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on inbound
 ///        tokenA deposits (`_pullExactToken`) and on ERC20 tokenB payments to the maker
 ///        (`_transferExactFrom`, `_transferExactTo` / `BalanceMismatch`), including multi-maker
@@ -311,81 +308,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         _fillOrdersPermit2(fills, deadline, permits);
-    }
-
-    /// @inheritdoc ISwapboard
-    /// @dev ERC20 tokenB is pulled directly to the maker via `_transferExactFrom` (rejects
-    ///      fee-on-transfer / mid-transfer rebase / phantom via `BalanceMismatch`). tokenA out
-    ///      is the exact `amountA` the taker specified (or all remaining tokenA when the ceiled
-    ///      payment closes the order). tokenB in uses ceil division so the taker never underpays
-    ///      for that tokenA.
-    function fillOrderPaying(
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB,
-        uint256 deadline
-    ) external payable nonReentrant {
-        _fillOrderPaying(orderId, amountA, maxAmountB, deadline);
-    }
-
-    /// @inheritdoc ISwapboard
-    function fillOrderPaying(
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB,
-        uint256 deadline,
-        Permit calldata permit
-    ) external payable nonReentrant {
-        _permitAndSettleFill(_beginFillPaying(orderId, amountA, maxAmountB, deadline), permit);
-    }
-
-    /// @inheritdoc ISwapboard
-    function fillOrderPaying(
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB,
-        uint256 deadline,
-        Permit2Permit calldata permit
-    ) external payable nonReentrant {
-        _permit2AndSettleFill(_beginFillPaying(orderId, amountA, maxAmountB, deadline), permit);
-    }
-
-    /// @inheritdoc ISwapboard
-    function fillOrdersPaying(
-        FillOrderPayingParams[] calldata fills,
-        uint256 deadline
-    ) external payable nonReentrant {
-        _fillOrdersPaying(fills, deadline);
-    }
-
-    /// @inheritdoc ISwapboard
-    function fillOrdersPaying(
-        FillOrderPayingParams[] calldata fills,
-        uint256 deadline,
-        TokenPermit[] calldata permits
-    ) external payable nonReentrant {
-        if (permits.length == 0) {
-            _fillOrdersPaying(fills, deadline);
-
-            return;
-        }
-
-        _fillOrdersPayingWithPermits(fills, deadline, permits);
-    }
-
-    /// @inheritdoc ISwapboard
-    function fillOrdersPaying(
-        FillOrderPayingParams[] calldata fills,
-        uint256 deadline,
-        TokenPermit2[] calldata permits
-    ) external payable nonReentrant {
-        if (permits.length == 0) {
-            _fillOrdersPaying(fills, deadline);
-
-            return;
-        }
-
-        _fillOrdersPayingPermit2(fills, deadline, permits);
     }
 
     /// @inheritdoc ISwapboard
@@ -1013,29 +935,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
-    /// @notice Quotes an exact-tokenA fill: receive `amountA`, pay ceiled tokenB
-    /// @dev Ceil division on tokenB so the taker never underpays for the requested tokenA. If that
-    ///      payment consumes remaining tokenB, remaining tokenA is paid out so escrow is not stranded.
-    ///      Reads only the fields needed for quoting (skips amountA/amountB originals).
-    /// @param order Order to quote (must already be active)
-    /// @param orderId Order id for error payloads
-    /// @param amountA Exact tokenA to receive
-    /// @return quote Maker, tokens, fill amounts, and pre-fill availables
-    function _quoteFillPaying(
-        Order storage order,
-        uint256 orderId,
-        uint128 amountA
-    ) private view returns (FillQuote memory quote) {
-        quote = _loadFillQuote(order);
-        _requireFillRequest(orderId, amountA, quote.availableA, order.partialFillAllowed);
-
-        quote.amountB = _ceilB(amountA, quote.availableA, quote.availableB);
-        quote.amountA = quote.amountB == quote.availableB ? quote.availableA : amountA;
-        if (quote.amountB == 0) {
-            revert ZeroAmount();
-        }
-    }
-
     /// @notice Copies maker/tokens/availables from storage into a fill quote
     /// @param order Order to quote
     /// @return quote Quote with settlement fields unset
@@ -1066,30 +965,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         if (!partialFillAllowed && requested != remaining) {
             revert PartialFillNotAllowed(orderId);
         }
-    }
-
-    /// @notice Ceiled tokenB payment for `amountA` against remaining liquidity
-    /// @dev `amountA == availableA` returns all remaining tokenB. Else branch implies
-    ///      `amountA < availableA` so `availableA >= 1`; product of two uint128 values fits in
-    ///      uint256; ceil result is <= `availableB`.
-    /// @param amountA Requested tokenA out
-    /// @param availableA Remaining tokenA in escrow
-    /// @param availableB Remaining tokenB required
-    /// @return Ceiled tokenB the taker must pay
-    function _ceilB(
-        uint128 amountA,
-        uint128 availableA,
-        uint128 availableB
-    ) private pure returns (uint128) {
-        if (amountA == availableA) {
-            return availableB;
-        }
-        uint256 quotedB;
-        unchecked {
-            quotedB = (uint256(amountA) * uint256(availableB) + uint256(availableA) - 1) / uint256(availableA);
-        }
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return uint128(quotedB);
     }
 
     /// @notice Floored tokenA receive for `amountB` against remaining liquidity
@@ -1133,23 +1008,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return _applyOneFillEffect(orderId, amountB, minAmountA);
     }
 
-    /// @notice Checks deadline/amount, then applies one exact-tokenA fill effect
-    /// @param orderId Order to fill
-    /// @param amountA Exact tokenA to receive
-    /// @param maxAmountB Maximum tokenB the taker will send
-    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
-    /// @return quote Settled fill quote
-    function _beginFillPaying(
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB,
-        uint256 deadline
-    ) private returns (FillQuote memory quote) {
-        _requireLiveFill(amountA, deadline);
-
-        return _applyOneFillPayingEffect(orderId, amountA, maxAmountB);
-    }
-
     /// @notice Fills one order by exact tokenB
     /// @param orderId Order to fill
     /// @param amountB Exact tokenB to send
@@ -1162,20 +1020,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 deadline
     ) private {
         _settleFillQuote(_beginFill(orderId, amountB, minAmountA, deadline));
-    }
-
-    /// @notice Fills one order by exact tokenA
-    /// @param orderId Order to fill
-    /// @param amountA Exact tokenA to receive
-    /// @param maxAmountB Maximum tokenB the taker will send
-    /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
-    function _fillOrderPaying(
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB,
-        uint256 deadline
-    ) private {
-        _settleFillQuote(_beginFillPaying(orderId, amountA, maxAmountB, deadline));
     }
 
     /// @notice Fills orders after committing legs and settling tokenB/tokenA transfers
@@ -1197,25 +1041,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _settleFills(_applyFillEffects(fills));
     }
 
-    /// @notice Fills orders by exact tokenA received after committing legs and settling transfers
-    /// @param fills Fill arguments in execution order
-    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
-    function _fillOrdersPaying(
-        FillOrderPayingParams[] calldata fills,
-        uint256 deadline
-    ) private {
-        uint256 length = fills.length;
-        _requireFillBatch(deadline, length);
-        if (length == 1) {
-            FillOrderPayingParams calldata fill = fills[0];
-            _fillOrderPaying(fill.orderId, fill.amountA, fill.maxAmountB, deadline);
-
-            return;
-        }
-
-        _settleFills(_applyFillPayingEffects(fills));
-    }
-
     /// @notice Fills orders after EIP-2612 permits for every pulled ERC20 tokenB
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
@@ -1235,27 +1060,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
         _requireAndApplyFillPermits(orderIds, permits);
         _fillOrders(fills, deadline);
-    }
-
-    /// @notice Fills paying after EIP-2612 permits for every pulled ERC20 tokenB
-    /// @param fills Fill arguments in execution order
-    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
-    /// @param permits EIP-2612 signatures keyed by tokenB
-    function _fillOrdersPayingWithPermits(
-        FillOrderPayingParams[] calldata fills,
-        uint256 deadline,
-        TokenPermit[] calldata permits
-    ) private {
-        _validateTokenPermitBatch(permits);
-        uint256 length = fills.length;
-        _requireFillBatch(deadline, length);
-
-        uint256[] memory orderIds = new uint256[](length);
-        for (uint256 i = 0; i < length; ++i) {
-            orderIds[i] = fills[i].orderId;
-        }
-        _requireAndApplyFillPermits(orderIds, permits);
-        _fillOrdersPaying(fills, deadline);
     }
 
     /// @notice Requires every EIP-2612 permit matches a pulled ERC20 tokenB, then applies them
@@ -1324,28 +1128,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _commitFill(order, orderId, quote);
     }
 
-    /// @notice Validates one exact-tokenA fill, updates storage, emits, and returns the quote
-    /// @param orderId Order to fill
-    /// @param amountA Exact tokenA to receive
-    /// @param maxAmountB Maximum tokenB payment declared by the taker
-    /// @return quote Settled fill quote
-    function _applyOneFillPayingEffect(
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB
-    ) private returns (FillQuote memory quote) {
-        Order storage order = _requireFillableOrder(orderId);
-        quote = _quoteFillPaying(order, orderId, amountA);
-
-        if (quote.amountB > maxAmountB) {
-            revert FillPayTooHigh(orderId, quote.amountB, maxAmountB);
-        }
-
-        // Unchecked is safe: _quoteFillPaying ensures amountB <= availableB and
-        // amountA <= availableA (exact remaining or ceiled proportion).
-        _commitFill(order, orderId, quote);
-    }
-
     /// @notice Writes remaining amounts (or deletes on exhaustion) and emits `OrderFilled`
     /// @dev Full fills `delete` the order so later reads look like `OrderNotFound` rather than an
     ///      inactive shell. Partial fills keep originals and update availables only.
@@ -1386,19 +1168,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         return _fillLegFromQuote(_applyOneFillEffect(orderId, amountB, minAmountA));
     }
 
-    /// @notice Validates one exact-tokenA fill into a batch settlement leg
-    /// @param orderId Order to fill
-    /// @param amountA Exact tokenA to receive
-    /// @param maxAmountB Maximum tokenB payment declared by the taker
-    /// @return leg Settled fill leg
-    function _applyOneFillPayingLeg(
-        uint256 orderId,
-        uint128 amountA,
-        uint128 maxAmountB
-    ) private returns (FillLeg memory) {
-        return _fillLegFromQuote(_applyOneFillPayingEffect(orderId, amountA, maxAmountB));
-    }
-
     /// @notice Packs a settled fill quote into a batch transfer leg
     /// @param quote Settled fill quote
     /// @return leg Maker/token/amount fields for settlement
@@ -1431,27 +1200,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             }
 
             legs[i] = _applyOneFillLeg(fill.orderId, fill.amountB, fill.minAmountA);
-        }
-
-        return legs;
-    }
-
-    /// @notice Validates amountB-driven fills, updates storage, and collects transfer legs
-    /// @param fills Fill arguments in execution order
-    /// @return legs Settled fill legs in input order
-    function _applyFillPayingEffects(
-        FillOrderPayingParams[] calldata fills
-    ) private returns (FillLeg[] memory) {
-        uint256 length = fills.length;
-        FillLeg[] memory legs = new FillLeg[](length);
-
-        for (uint256 i = 0; i < length; ++i) {
-            FillOrderPayingParams calldata fill = fills[i];
-            if (fill.amountA == 0) {
-                revert ZeroAmount();
-            }
-
-            legs[i] = _applyOneFillPayingLeg(fill.orderId, fill.amountA, fill.maxAmountB);
         }
 
         return legs;
@@ -1577,21 +1325,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _requireFillBatch(deadline, length);
         _validateTokenPermit2Batch(permits);
         _settleFillsPermit2(_applyFillEffects(fills), permits);
-    }
-
-    /// @notice Fills orders by exact tokenA via Permit2 for ERC20 tokenB where provided
-    /// @param fills Fill arguments in execution order
-    /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
-    /// @param permits Permit2 signatures keyed by tokenB
-    function _fillOrdersPayingPermit2(
-        FillOrderPayingParams[] calldata fills,
-        uint256 deadline,
-        TokenPermit2[] calldata permits
-    ) private {
-        uint256 length = fills.length;
-        _requireFillBatch(deadline, length);
-        _validateTokenPermit2Batch(permits);
-        _settleFillsPermit2(_applyFillPayingEffects(fills), permits);
     }
 
     /// @notice Pays makers/taker for settled fill legs (ERC20 tokenB direct to makers)

@@ -493,10 +493,13 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
 
+        uint128 remainingB = _board.getOrder(orderId).availableB;
         vm.startPrank(_charlie);
         _usdc.approve(address(_board), 30_000e6);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, 4 ether, remainingA));
-        _board.fillOrderPaying(orderId, 4 ether, type(uint128).max, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, remainingB + 1, remainingB)
+        );
+        _board.fillOrder(orderId, remainingB + 1, 0, 0);
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));
