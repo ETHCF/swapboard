@@ -284,27 +284,9 @@ interface ISwapboard is ISemver {
 
     /// @notice Thrown when the provided previous amounts do not match the current on-chain order
     /// @dev Only `amountA`, `amountB`, `availableA`, and `availableB` are compared; immutable fields
-    ///      (maker, tokenA, tokenB) are not checked.
+    ///      (maker, tokenA, tokenB) are not checked. Re-read via `getOrder(orderId)` after the revert.
     /// @param orderId The order ID
-    /// @param expectedAmountA Expected `amountA` from the caller's snapshot
-    /// @param expectedAmountB Expected `amountB` from the caller's snapshot
-    /// @param expectedAvailableA Expected `availableA` from the caller's snapshot
-    /// @param expectedAvailableB Expected `availableB` from the caller's snapshot
-    /// @param actualAmountA Actual `amountA` currently stored on-chain
-    /// @param actualAmountB Actual `amountB` currently stored on-chain
-    /// @param actualAvailableA Actual `availableA` currently stored on-chain
-    /// @param actualAvailableB Actual `availableB` currently stored on-chain
-    error OrderStateMismatch(
-        uint256 orderId,
-        uint128 expectedAmountA,
-        uint128 expectedAmountB,
-        uint128 expectedAvailableA,
-        uint128 expectedAvailableB,
-        uint128 actualAmountA,
-        uint128 actualAmountB,
-        uint128 actualAvailableA,
-        uint128 actualAvailableB
-    );
+    error OrderStateMismatch(uint256 orderId);
 
     /// @notice Thrown when the same order ID appears more than once in a cancel or modify batch
     /// @param orderId The duplicated order ID

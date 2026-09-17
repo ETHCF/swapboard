@@ -425,7 +425,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `NotMaker(uint256,address,address)` | `0x98cd7222` | Caller is not order maker |
 | `SelfFill()` | `0x9d7a930f` | Maker attempted to fill their own order. Banned so tokenB can always be pulled directly to a distinct maker (`transferFrom(self, self)` does not increase the recipient, so an exact-receive check would fail) |
 | `ETHAmountMismatch(uint256,uint256)` | `0x8230dc8f` | `msg.value` does not match the required ETH amount |
-| `OrderStateMismatch(uint256,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128)` | `0xe796ec17` | `modifyOrder` / `modifyOrders` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` |
+| `OrderStateMismatch(uint256)` | `0x457802f0` | `modifyOrder` / `modifyOrders` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` (re-read via `getOrder`) |
 | `DuplicateOrderId(uint256)` | `0x54b9c511` | Same `orderId` appears more than once in a `cancelOrders` or `modifyOrders` batch |
 | `FillAmountTooHigh(uint256,uint128,uint128)` | `0x535a34f0` | Requested `amountB` exceeds remaining liquidity (`fillOrder` / `fillOrders`) |
 | `FillAmountMismatch(uint256,uint128,uint128)` | `0x19113a72` | Quoted tokenA receive is below the taker's `minAmountA` (`fillOrder`) |

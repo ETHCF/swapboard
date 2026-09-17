@@ -1880,17 +1880,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             previousAmounts.amountA != amountA || previousAmounts.amountB != amountB
                 || previousAmounts.availableA != availableA || previousAmounts.availableB != availableB
         ) {
-            revert OrderStateMismatch(
-                orderId,
-                previousAmounts.amountA,
-                previousAmounts.amountB,
-                previousAmounts.availableA,
-                previousAmounts.availableB,
-                amountA,
-                amountB,
-                availableA,
-                availableB
-            );
+            revert OrderStateMismatch(orderId);
         }
     }
 

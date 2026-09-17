@@ -4521,23 +4521,8 @@ contract SwapboardTest is Test {
         _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A + 10 ether, AMOUNT_B));
         vm.stopPrank();
 
-        ISwapboard.Order memory afterFirst = _board.getOrder(orderId);
-
         vm.startPrank(_maker);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ISwapboard.OrderStateMismatch.selector,
-                orderId,
-                snapshot.amountA,
-                snapshot.amountB,
-                snapshot.availableA,
-                snapshot.availableB,
-                afterFirst.amountA,
-                afterFirst.amountB,
-                afterFirst.availableA,
-                afterFirst.availableB
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderStateMismatch.selector, orderId));
         _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A + 10 ether, AMOUNT_B));
         vm.stopPrank();
     }
@@ -4911,23 +4896,8 @@ contract SwapboardTest is Test {
         _fillOrder(orderId, AMOUNT_A / 2);
         vm.stopPrank();
 
-        ISwapboard.Order memory afterFill = _board.getOrder(orderId);
-
         vm.prank(_maker);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ISwapboard.OrderStateMismatch.selector,
-                orderId,
-                snapshot.amountA,
-                snapshot.amountB,
-                snapshot.availableA,
-                snapshot.availableB,
-                afterFill.amountA,
-                afterFill.amountB,
-                afterFill.availableA,
-                afterFill.availableB
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderStateMismatch.selector, orderId));
         _board.modifyOrder(orderId, _amounts(snapshot), _modify(AMOUNT_A, AMOUNT_B));
     }
 
@@ -5258,20 +5228,7 @@ contract SwapboardTest is Test {
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
         ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
         previous.amountA = snapshot.amountA - 1;
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ISwapboard.OrderStateMismatch.selector,
-                orderId,
-                previous.amountA,
-                previous.amountB,
-                previous.availableA,
-                previous.availableB,
-                snapshot.amountA,
-                snapshot.amountB,
-                snapshot.availableA,
-                snapshot.availableB
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderStateMismatch.selector, orderId));
         _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
         vm.stopPrank();
     }
@@ -5284,20 +5241,7 @@ contract SwapboardTest is Test {
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
         ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
         previous.amountB = snapshot.amountB - 1;
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ISwapboard.OrderStateMismatch.selector,
-                orderId,
-                previous.amountA,
-                previous.amountB,
-                previous.availableA,
-                previous.availableB,
-                snapshot.amountA,
-                snapshot.amountB,
-                snapshot.availableA,
-                snapshot.availableB
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderStateMismatch.selector, orderId));
         _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
         vm.stopPrank();
     }
@@ -5310,20 +5254,7 @@ contract SwapboardTest is Test {
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
         ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
         previous.availableA = snapshot.availableA - 1;
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ISwapboard.OrderStateMismatch.selector,
-                orderId,
-                previous.amountA,
-                previous.amountB,
-                previous.availableA,
-                previous.availableB,
-                snapshot.amountA,
-                snapshot.amountB,
-                snapshot.availableA,
-                snapshot.availableB
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderStateMismatch.selector, orderId));
         _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
         vm.stopPrank();
     }
@@ -5336,20 +5267,7 @@ contract SwapboardTest is Test {
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
         ISwapboard.OrderAmounts memory previous = _amounts(snapshot);
         previous.availableB = snapshot.availableB - 1;
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ISwapboard.OrderStateMismatch.selector,
-                orderId,
-                previous.amountA,
-                previous.amountB,
-                previous.availableA,
-                previous.availableB,
-                snapshot.amountA,
-                snapshot.amountB,
-                snapshot.availableA,
-                snapshot.availableB
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderStateMismatch.selector, orderId));
         _board.modifyOrder(orderId, previous, _modify(AMOUNT_A, AMOUNT_B));
         vm.stopPrank();
     }
@@ -6788,20 +6706,7 @@ contract SwapboardTest is Test {
             orderId: ids[1], previousAmounts: stale1, updatedOrder: _modify(30 ether, AMOUNT_B)
         });
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ISwapboard.OrderStateMismatch.selector,
-                ids[1],
-                stale1.amountA,
-                stale1.amountB,
-                stale1.availableA,
-                stale1.availableB,
-                snap1.amountA,
-                snap1.amountB,
-                snap1.availableA,
-                snap1.availableB
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderStateMismatch.selector, ids[1]));
         _board.modifyOrders(mods);
         vm.stopPrank();
 
