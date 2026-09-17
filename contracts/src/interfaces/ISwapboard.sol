@@ -226,10 +226,6 @@ interface ISwapboard is ISemver {
     /// @notice Thrown when tokenA and tokenB are the same address
     error SameToken();
 
-    /// @notice Thrown when a provided address has no code (not a contract)
-    /// @param token The address that is not a contract
-    error NotAContract(address token);
-
     /// @notice Thrown when the received token amount differs from expected
     /// @dev Used to detect fee-on-transfer / mid-transfer rebase / phantom tokens on inbound
     ///      pulls: tokenA deposits into escrow and ERC20 tokenB payments directly to the maker

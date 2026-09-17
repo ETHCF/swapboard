@@ -39,6 +39,9 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      - Inbound mid-transfer rebase is rejected via `BalanceMismatch`. Post-deposit rebase of
 ///        escrowed tokenA is not: a negative rebase can lock fill/cancel; a positive rebase can
 ///        strand surplus
+///      - The board does not check that token addresses have code. Makers (and takers) must
+///        verify token contracts before create/fill; a non-contract or malicious token can make
+///        create/fill/cancel fail or cause fund loss
 ///      - Malicious tokens can cause fund loss - users must verify token contracts. Escrowed
 ///        tokenA of a given address is commingled: that token is the real custodian. Admin
 ///        seize/burn or a lying `transfer` can take all escrow of that token. Makers of the same
@@ -169,7 +172,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @inheritdoc ISwapboard
     /// @dev Token addresses are identity-based. Aliased or rebranded tokens at different
-    ///      addresses are treated as distinct tokens. Users must verify token addresses.
+    ///      addresses are treated as distinct tokens. The board does not check `code.length`;
+    ///      makers must verify token addresses and implementations before creating orders.
     function createOrder(
         CreateOrderParams calldata order
     ) external payable nonReentrant returns (uint256) {
@@ -565,7 +569,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountA,
         address tokenB,
         uint128 amountB
-    ) private view {
+    ) private pure {
         if (tokenA == address(0) || tokenB == address(0)) {
             revert ZeroAddress();
         }
@@ -574,13 +578,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
         if (tokenA == tokenB) {
             revert SameToken();
-        }
-
-        if (!Token.wrap(tokenA).isNative() && tokenA.code.length == 0) {
-            revert NotAContract(tokenA);
-        }
-        if (!Token.wrap(tokenB).isNative() && tokenB.code.length == 0) {
-            revert NotAContract(tokenB);
         }
     }
 

@@ -438,7 +438,6 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `ZeroAmount()` | `0x1f2a2005` | Amount is zero. On `modifyOrder` / `modifyOrders`, also thrown when either remaining (`availableA` / `availableB`) is set to 0 — use `cancelOrder` / `cancelOrders` instead. Empty `modifyOrders` also reverts |
 | `NoChange()` | `0xa88ee577` | Modification would leave the order unchanged (including any item in a `modifyOrders` batch) |
 | `SameToken()` | `0x201b580a` | tokenA and tokenB are identical |
-| `NotAContract(address)` | `0x8a8b41ec` | Address has no code |
 | `BalanceMismatch(uint256,uint256)` | `0x6e65ed84` | Transfer mismatch on tokenA deposit or ERC20 tokenB payment to maker (fee-on-transfer, mid-transfer rebase, or phantom token) |
 | `OrderNotFound(uint256)` | `0x4e90badc` | Order doesn't exist |
 | `OrderNotActive(uint256)` | `0xd2c02610` | Order already filled/cancelled |

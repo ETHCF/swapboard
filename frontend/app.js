@@ -283,7 +283,6 @@
     "error ZeroAmount()",
     "error ZeroETH()",
     "error SameToken()",
-    "error NotAContract(address token)",
     "error NotWETH(address expected, address actual)",
     "error ETHAmountMismatch(uint256 required, uint256 sent)",
     "error ETHTransferFailed(address recipient)",

@@ -451,21 +451,24 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
-    /// @notice Tests createOrder revert notAContract _tokenA
-    function test_createOrder_revert_notAContract_tokenA() public {
+    /// @notice Tests createOrder with a non-contract tokenA fails on the escrow pull
+    function test_createOrder_nonContract_tokenA_revertsOnPull() public {
         vm.startPrank(_maker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotAContract.selector, address(0x999)));
+        vm.expectRevert();
         _board.createOrder(_order(address(0x999), AMOUNT_A, address(_tokenB), AMOUNT_B));
         vm.stopPrank();
     }
 
-    /// @notice Tests createOrder revert notAContract _tokenB
-    function test_createOrder_revert_notAContract_tokenB() public {
+    /// @notice Tests createOrder allows a non-contract tokenB (maker is responsible for validity)
+    function test_createOrder_allows_nonContract_tokenB() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotAContract.selector, address(0x999)));
-        _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(0x999), AMOUNT_B));
+        uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(0x999), AMOUNT_B));
         vm.stopPrank();
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.tokenB, address(0x999));
+        assertEq(order.availableA, AMOUNT_A);
     }
 
     /// @notice Tests createOrder revert FOT
@@ -1014,11 +1017,13 @@ contract SwapboardTest is Test {
         _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, _eth, AMOUNT_B));
     }
 
-    /// @notice Tests createOrder selling ETH reverts when tokenB is an EOA
-    function test_createOrder_sellEth_revert_notAContract() public {
+    /// @notice Tests createOrder selling ETH allows a non-contract tokenB (maker responsibility)
+    function test_createOrder_sellEth_allows_nonContract_tokenB() public {
         vm.prank(_maker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotAContract.selector, address(0xDEAD)));
-        _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(0xDEAD), AMOUNT_B));
+        uint256 orderId = _board.createOrder{value: ETH_AMOUNT}(_order(_eth, ETH_AMOUNT, address(0xDEAD), AMOUNT_B));
+
+        assertEq(_board.getOrder(orderId).tokenB, address(0xDEAD));
+        assertEq(address(_board).balance, ETH_AMOUNT);
     }
 
     /// @notice Tests createOrder selling ETH assigns sequential IDs
@@ -3144,20 +3149,19 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), 0);
     }
 
-    /// @notice Tests createOrders reverts NotAContract on a later item without pulling
-    function test_createOrders_revert_notAContract_laterItem() public {
+    /// @notice Tests createOrders allows a non-contract tokenB on a later item (maker responsibility)
+    function test_createOrders_allows_nonContract_tokenB_laterItem() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
         orders[0] = _order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
         orders[1] = _order(address(_tokenA), AMOUNT_A, address(0x999), AMOUNT_B);
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A * 2);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotAContract.selector, address(0x999)));
-        _board.createOrders(orders);
+        uint256[] memory ids = _board.createOrders(orders);
         vm.stopPrank();
 
-        assertEq(_tf(_tokenA), 0);
-        assertEq(_tokenA.balanceOf(address(_board)), 0);
+        assertEq(_board.getOrder(ids[1]).tokenB, address(0x999));
+        assertEq(_tokenA.balanceOf(address(_board)), AMOUNT_A * 2);
     }
 
     /// @notice Tests createOrders reverts when a later order has amountB == 0
@@ -3329,15 +3333,15 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), 0);
     }
 
-    /// @notice Tests createOrders reverts NotAContract on tokenA of a later item
-    function test_createOrders_revert_notAContract_tokenA_laterItem() public {
+    /// @notice Tests createOrders reverts on pull when a later item's tokenA is not a contract
+    function test_createOrders_nonContract_tokenA_laterItem_revertsOnPull() public {
         ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
         orders[0] = _order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B);
         orders[1] = _order(address(0x999), AMOUNT_A, address(_tokenB), AMOUNT_B);
 
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A * 2);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotAContract.selector, address(0x999)));
+        vm.expectRevert();
         _board.createOrders(orders);
         vm.stopPrank();
 
