@@ -161,8 +161,6 @@ interface ISwapboard is ISemver {
         bytes signature;
     }
 
-    // solhint-disable gas-indexed-events
-
     /// @notice Emitted when a new order is created
     /// @param orderId Unique identifier for the order
     /// @param maker Address that created the order
@@ -178,8 +176,10 @@ interface ISwapboard is ISemver {
         uint128 amountA,
         address tokenB,
         uint128 amountB,
-        bool partialFillAllowed
+        bool indexed partialFillAllowed
     );
+
+    // solhint-disable gas-indexed-events
 
     /// @notice Emitted when an order is filled (fully or partially) by a taker
     /// @param orderId Unique identifier for the filled order
