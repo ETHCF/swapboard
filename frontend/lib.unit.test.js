@@ -1838,6 +1838,9 @@ describe("decodeContractError", () => {
   test("interpolates decoded arguments into the message", () => {
     expect(decodeContractError("0xd2c02610" + pad(7)).message).toBe("Order #7 is no longer active");
     expect(decodeContractError("0x4e90badc" + pad(1234)).message).toBe("Order #1234 not found");
+    expect(decodeContractError("0x457802f0" + pad(42)).message).toBe(
+      "Order #42 changed; refresh and try again"
+    );
   });
 
   // MUTATION: Omit DeadlineExpired from the table
@@ -2627,7 +2630,20 @@ describe("resolveVersion", () => {
   // MUTATION: Let the URLSearchParams throw escape
   // BREAKS: a malformed query string takes down startup before first render
   test("survives a search string it cannot parse", () => {
-    expect(resolveVersion({ search: "%", stored: "2" }).version).toBe(2);
+    const Orig = URLSearchParams;
+    global.URLSearchParams = class {
+      constructor() {
+        throw new TypeError("bad search");
+      }
+    };
+    try {
+      expect(resolveVersion({ search: "?v=1", stored: "2" })).toEqual({
+        version: 2,
+        pinned: false,
+      });
+    } finally {
+      global.URLSearchParams = Orig;
+    }
   });
 
   test("exposes the storage key it resolves against", () => {
