@@ -607,13 +607,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         Token token = Token.wrap(tokenA);
         if (token.isNative()) {
-            if (msg.value != amountA) {
-                revert ETHAmountMismatch(amountA, msg.value);
-            }
+            _requireMsgValue(amountA);
         } else {
-            if (msg.value != 0) {
-                revert ETHAmountMismatch(0, msg.value);
-            }
+            _requireNoStrayEth();
             _pullExactToken(token, amountA);
         }
 
@@ -631,13 +627,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address tokenA = order.tokenA;
         uint128 amountA = order.amountA;
 
-        Token token = Token.wrap(tokenA);
-        if (token.isNative()) {
+        if (Token.wrap(tokenA).isNative()) {
             revert PermitOnNative();
         }
-        if (msg.value != 0) {
-            revert ETHAmountMismatch(0, msg.value);
-        }
+        _requireNoStrayEth();
 
         _pullExactViaPermit2(
             tokenA, address(this), amountA, permit.amount, permit.nonce, permit.deadline, permit.signature
@@ -834,6 +827,49 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             _nextOrderId = orderId + 1;
         }
 
+        _writeOrder(orderId, params);
+
+        return orderId;
+    }
+
+    /// @notice Writes created orders to storage and emits `OrderCreated`
+    /// @param orders Order creation arguments
+    /// @return orderIds Identifiers assigned in input order
+    function _storeOrders(
+        CreateOrderParams[] calldata orders
+    ) private returns (uint256[] memory) {
+        uint256 length = orders.length;
+        uint256[] memory orderIds = new uint256[](length);
+        uint256 nextId = _nextOrderId;
+
+        for (uint256 i = 0; i < length; ++i) {
+            // Unchecked is safe: wrapping `_nextOrderId` would require 2^256 orders;
+            // `i < length` and `_nextOrderId = nextId + length` below share that bound.
+            uint256 orderId;
+            unchecked {
+                orderId = nextId + i;
+            }
+            orderIds[i] = orderId;
+
+            // forge-lint: disable-next-item(costly-loop)
+            _writeOrder(orderId, orders[i]);
+        }
+
+        // Unchecked is safe: wrapping `_nextOrderId` would require 2^256 orders.
+        unchecked {
+            _nextOrderId = nextId + length;
+        }
+
+        return orderIds;
+    }
+
+    /// @notice Packs one order into storage and emits `OrderCreated`
+    /// @param orderId Identifier to assign
+    /// @param params Order creation arguments
+    function _writeOrder(
+        uint256 orderId,
+        CreateOrderParams calldata params
+    ) private {
         _orders[orderId] = Order({
             maker: msg.sender,
             active: true,
@@ -855,61 +891,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             amountB: params.amountB,
             partialFillAllowed: params.partialFillAllowed
         });
-
-        return orderId;
-    }
-
-    /// @notice Writes created orders to storage and emits `OrderCreated`
-    /// @param orders Order creation arguments
-    /// @return orderIds Identifiers assigned in input order
-    function _storeOrders(
-        CreateOrderParams[] calldata orders
-    ) private returns (uint256[] memory) {
-        uint256 length = orders.length;
-        uint256[] memory orderIds = new uint256[](length);
-        uint256 nextId = _nextOrderId;
-
-        for (uint256 i = 0; i < length; ++i) {
-            CreateOrderParams calldata params = orders[i];
-
-            // Unchecked is safe: wrapping `_nextOrderId` would require 2^256 orders;
-            // `i < length` and `_nextOrderId = nextId + length` below share that bound.
-            uint256 orderId;
-            unchecked {
-                orderId = nextId + i;
-            }
-            orderIds[i] = orderId;
-
-            // forge-lint: disable-next-item(costly-loop)
-            _orders[orderId] = Order({
-                maker: msg.sender,
-                active: true,
-                partialFillAllowed: params.partialFillAllowed,
-                tokenA: params.tokenA,
-                tokenB: params.tokenB,
-                amountA: params.amountA,
-                amountB: params.amountB,
-                availableA: params.amountA,
-                availableB: params.amountB
-            });
-
-            emit OrderCreated({
-                orderId: orderId,
-                maker: msg.sender,
-                tokenA: params.tokenA,
-                amountA: params.amountA,
-                tokenB: params.tokenB,
-                amountB: params.amountB,
-                partialFillAllowed: params.partialFillAllowed
-            });
-        }
-
-        // Unchecked is safe: wrapping `_nextOrderId` would require 2^256 orders.
-        unchecked {
-            _nextOrderId = nextId + length;
-        }
-
-        return orderIds;
     }
 
     /// @notice Quotes an exact-tokenB fill: pay `amountB`, receive floored tokenA
@@ -1299,17 +1280,23 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address maker,
         uint256 amountB
     ) private {
-        if (msg.value != amountB) {
-            revert ETHAmountMismatch(amountB, msg.value);
-        }
+        _requireMsgValue(amountB);
         tokenB.safeTransfer(maker, amountB);
+    }
+
+    /// @notice Reverts when `msg.value` is not exactly `expected`
+    /// @param expected Required ETH amount (0 for ERC20-only calls)
+    function _requireMsgValue(
+        uint256 expected
+    ) private view {
+        if (msg.value != expected) {
+            revert ETHAmountMismatch(expected, msg.value);
+        }
     }
 
     /// @notice Reverts when ERC20 fills are called with a non-zero `msg.value`
     function _requireNoStrayEth() private view {
-        if (msg.value != 0) {
-            revert ETHAmountMismatch(0, msg.value);
-        }
+        _requireMsgValue(0);
     }
 
     /// @notice Fills orders via Permit2 for ERC20 tokenB where provided
@@ -1706,14 +1693,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         _validateModifyOrders(mods);
-
-        ModifyLeg[] memory legs = new ModifyLeg[](length);
-        for (uint256 i = 0; i < length; ++i) {
-            ModifyOrdersParams calldata mod = mods[i];
-            legs[i] = _applyOneModifyEffect(mod.orderId, mod.previousAmounts, mod.updatedOrder);
-        }
-
-        _settleModifyLegs(legs);
+        _settleModifyLegs(_applyModifyEffects(mods));
     }
 
     /// @notice Modifies orders after EIP-2612 permits for every net ERC20 top-up
@@ -1734,13 +1714,21 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _requirePermitsUsed(permits, tokens, count);
         _applyValidatedPermits(permits);
 
-        ModifyLeg[] memory legs = new ModifyLeg[](length);
+        _settleModifyLegs(_applyModifyEffects(mods));
+    }
+
+    /// @notice Applies every modify effect into settlement legs
+    /// @param mods Modify arguments in execution order
+    /// @return legs Escrow top-up / refund for each mod
+    function _applyModifyEffects(
+        ModifyOrdersParams[] calldata mods
+    ) private returns (ModifyLeg[] memory legs) {
+        uint256 length = mods.length;
+        legs = new ModifyLeg[](length);
         for (uint256 i = 0; i < length; ++i) {
             ModifyOrdersParams calldata mod = mods[i];
             legs[i] = _applyOneModifyEffect(mod.orderId, mod.previousAmounts, mod.updatedOrder);
         }
-
-        _settleModifyLegs(legs);
     }
 
     /// @notice Distinct ERC20 tokenA values that would have a net top-up (no storage writes)
@@ -1934,19 +1922,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) private {
         Token token = Token.wrap(leg.tokenA);
         if (token.isNative()) {
-            if (msg.value != leg.topUp) {
-                revert ETHAmountMismatch(leg.topUp, msg.value);
-            }
-            if (leg.refund != 0) {
-                token.safeTransfer(msg.sender, leg.refund);
-            }
+            _settleModifyLegNative(token, leg.topUp, leg.refund);
 
             return;
         }
 
-        if (msg.value != 0) {
-            revert ETHAmountMismatch(0, msg.value);
-        }
+        _requireNoStrayEth();
         if (leg.topUp != 0) {
             _pullExactToken(token, leg.topUp);
         } else if (leg.refund != 0) {
@@ -1966,19 +1947,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (permit.signature.length != 0) {
                 revert PermitOnNative();
             }
-            if (msg.value != leg.topUp) {
-                revert ETHAmountMismatch(leg.topUp, msg.value);
-            }
-            if (leg.refund != 0) {
-                token.safeTransfer(msg.sender, leg.refund);
-            }
+            _settleModifyLegNative(token, leg.topUp, leg.refund);
 
             return;
         }
 
-        if (msg.value != 0) {
-            revert ETHAmountMismatch(0, msg.value);
-        }
+        _requireNoStrayEth();
         if (leg.topUp != 0) {
             if (permit.signature.length == 0) {
                 _pullExactToken(token, leg.topUp);
@@ -2001,6 +1975,21 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
     }
 
+    /// @notice Settles a native-tokenA modify: exact `msg.value` top-up, optional refund
+    /// @param token Native ETH sentinel
+    /// @param topUp Required `msg.value`
+    /// @param refund ETH to return to the maker (if any)
+    function _settleModifyLegNative(
+        Token token,
+        uint256 topUp,
+        uint256 refund
+    ) private {
+        _requireMsgValue(topUp);
+        if (refund != 0) {
+            token.safeTransfer(msg.sender, refund);
+        }
+    }
+
     /// @notice Modifies orders pulling net ERC20 top-ups via Permit2 where provided
     /// @param mods Modify arguments in execution order
     /// @param permits Permit2 signatures keyed by tokenA
@@ -2008,21 +1997,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         ModifyOrdersParams[] calldata mods,
         TokenPermit2[] calldata permits
     ) private {
-        uint256 length = mods.length;
-        if (length == 0) {
+        if (mods.length == 0) {
             revert ZeroAmount();
         }
 
         _validateTokenPermit2Batch(permits);
         _validateModifyOrders(mods);
-
-        ModifyLeg[] memory legs = new ModifyLeg[](length);
-        for (uint256 i = 0; i < length; ++i) {
-            ModifyOrdersParams calldata mod = mods[i];
-            legs[i] = _applyOneModifyEffect(mod.orderId, mod.previousAmounts, mod.updatedOrder);
-        }
-
-        _settleModifyLegsPermit2(legs, permits);
+        _settleModifyLegsPermit2(_applyModifyEffects(mods), permits);
     }
 
     /// @notice Settles modify legs with Permit2 for net ERC20 top-ups where provided
