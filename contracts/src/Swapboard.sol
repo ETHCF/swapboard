@@ -645,15 +645,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function _createOrders(
         CreateOrderParams[] calldata orders
     ) private returns (uint256[] memory) {
-        uint256 length = orders.length;
-        if (length == 0) {
+        if (orders.length == 0) {
             revert ZeroAmount();
-        }
-        if (length == 1) {
-            uint256[] memory orderIds = new uint256[](1);
-            orderIds[0] = _createOrder(orders[0]);
-
-            return orderIds;
         }
 
         _pullAggregatedTokens(_requireCreateBatchDeposits(orders));
@@ -1010,15 +1003,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         FillOrderParams[] calldata fills,
         uint256 deadline
     ) private {
-        uint256 length = fills.length;
-        _requireFillBatch(deadline, length);
-        if (length == 1) {
-            FillOrderParams calldata fill = fills[0];
-            _fillOrder(fill.orderId, fill.amountB, fill.minAmountA, deadline);
-
-            return;
-        }
-
+        _requireFillBatch(deadline, fills.length);
         _settleFills(_applyFillEffects(fills));
     }
 
@@ -1319,9 +1304,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function _settleFills(
         FillLeg[] memory legs
     ) private {
-        _requireFillMsgValue(legs);
-        _payMakersFromLegs(legs);
-        _payTakerFromLegs(legs);
+        _settleFillsPermit2(legs, _emptyTokenPermit2());
     }
 
     /// @notice Pays makers/taker using Permit2 for ERC20 tokenB totals pulled to this contract
@@ -1361,20 +1344,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (Token.wrap(leg.tokenB).isNative()) {
                 ethAmount += leg.amountB;
             }
-        }
-    }
-
-    /// @notice Pays makers their aggregated tokenB from fill legs (ERC20 and/or ETH)
-    /// @dev ERC20 tokenB is `transferFrom` the taker straight to each maker with an exact-balance
-    ///      check. ETH is forwarded from `msg.value` already held by this contract.
-    /// @param legs Settled fill legs
-    function _payMakersFromLegs(
-        FillLeg[] memory legs
-    ) private {
-        MakerTokenBPayments memory payments = _aggregateMakerTokenB(legs);
-        _sendMakerEthTokenB(payments);
-        for (uint256 k = 0; k < payments.uniqueCount; ++k) {
-            _transferExactFrom(Token.wrap(payments.uniqueTokens[k]), payments.recipients[k], payments.uniqueAmounts[k]);
         }
     }
 
@@ -1681,15 +1650,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function _modifyOrders(
         ModifyOrdersParams[] calldata mods
     ) private {
-        uint256 length = mods.length;
-        if (length == 0) {
+        if (mods.length == 0) {
             revert ZeroAmount();
-        }
-        if (length == 1) {
-            ModifyOrdersParams calldata mod = mods[0];
-            _modifyOrder(mod.orderId, mod.previousAmounts, mod.updatedOrder);
-
-            return;
         }
 
         _validateModifyOrders(mods);
@@ -2099,27 +2061,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function _settleModifyLegs(
         ModifyLeg[] memory legs
     ) private {
-        AggregatedModifyDeltas memory deltas = _aggregateModifyLegs(legs);
-        uint256 ethRefund = _requireModifyMsgValue(deltas);
-
-        for (uint256 i = 0; i < deltas.count; ++i) {
-            uint256 topUp = deltas.topUps[i];
-            uint256 refund = deltas.refunds[i];
-            Token token = Token.wrap(deltas.tokens[i]);
-            if (topUp > refund) {
-                // Unchecked is safe: branch proves topUp > refund (and thus delta > 0).
-                unchecked {
-                    _pullExactToken(token, topUp - refund);
-                }
-            } else if (refund > topUp) {
-                // Unchecked is safe: refund > topUp.
-                unchecked {
-                    token.safeTransfer(msg.sender, refund - topUp);
-                }
-            }
-        }
-
-        _refundModifyEth(ethRefund);
+        _settleModifyLegsPermit2(legs, _emptyTokenPermit2());
     }
 
     /// @notice Aggregates modify-leg top-ups and refunds per unique ERC20 (ETH returned separately)
@@ -2187,11 +2129,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 length = orderIds.length;
         if (length == 0) {
             revert ZeroAmount();
-        }
-        if (length == 1) {
-            _cancelOrder(orderIds[0]);
-
-            return;
         }
 
         address[] memory tokens = new address[](length);
@@ -2350,6 +2287,15 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                     revert DuplicatePermitToken(token);
                 }
             }
+        }
+    }
+
+    /// @notice Empty Permit2 batch used by classic settle paths
+    /// @return permits Zero-length calldata array
+    function _emptyTokenPermit2() private pure returns (TokenPermit2[] calldata permits) {
+        assembly ("memory-safe") {
+            permits.length := 0
+            permits.offset := 0
         }
     }
 
