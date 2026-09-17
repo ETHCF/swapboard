@@ -1314,7 +1314,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param permits Permit2 signatures keyed by tokenB
     function _settleFillsPermit2(
         FillLeg[] memory legs,
-        TokenPermit2[] calldata permits
+        TokenPermit2[] memory permits
     ) private {
         _requireFillMsgValue(legs);
         _payMakersFromLegsPermit2(legs, permits);
@@ -1352,7 +1352,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param permits Permit2 signatures keyed by tokenB
     function _payMakersFromLegsPermit2(
         FillLeg[] memory legs,
-        TokenPermit2[] calldata permits
+        TokenPermit2[] memory permits
     ) private {
         MakerTokenBPayments memory payments = _aggregateMakerTokenB(legs);
         _sendMakerEthTokenB(payments);
@@ -1427,7 +1427,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address[] memory uniqueTokens,
         uint256[] memory uniqueAmounts,
         uint256 uniqueCount,
-        TokenPermit2[] calldata permits
+        TokenPermit2[] memory permits
     ) private {
         uint256 permitLength = permits.length;
         uint256[] memory boardTotals = new uint256[](permitLength);
@@ -1469,7 +1469,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address[] memory uniqueTokens,
         uint256[] memory uniqueAmounts,
         uint256 uniqueCount,
-        TokenPermit2[] calldata permits,
+        TokenPermit2[] memory permits,
         uint256[] memory boardTotals,
         address[] memory soleRecipient,
         uint256[] memory recipientCounts,
@@ -1504,14 +1504,14 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param soleRecipient First maker for each permit index
     /// @param recipientCounts Number of unique makers per permit index
     function _executePermit2TokenBPulls(
-        TokenPermit2[] calldata permits,
+        TokenPermit2[] memory permits,
         uint256[] memory boardTotals,
         address[] memory soleRecipient,
         uint256[] memory recipientCounts
     ) private {
         uint256 permitLength = permits.length;
         for (uint256 p = 0; p < permitLength; ++p) {
-            TokenPermit2 calldata permit = permits[p];
+            TokenPermit2 memory permit = permits[p];
             uint256 total = boardTotals[p];
             if (recipientCounts[p] == 1) {
                 _pullExactViaPermit2(
@@ -1963,7 +1963,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param permits Permit2 signatures keyed by tokenA
     function _settleModifyLegsPermit2(
         ModifyLeg[] memory legs,
-        TokenPermit2[] calldata permits
+        TokenPermit2[] memory permits
     ) private {
         AggregatedModifyDeltas memory deltas = _aggregateModifyLegs(legs);
         uint256 ethRefund = _requireModifyMsgValue(deltas);
@@ -2019,7 +2019,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param permits Permit2 signatures keyed by tokenA
     function _pullModifyTopUpsPermit2(
         AggregatedModifyDeltas memory deltas,
-        TokenPermit2[] calldata permits
+        TokenPermit2[] memory permits
     ) private {
         uint256 permitLength = permits.length;
         uint256 usedBits = 0;
@@ -2039,7 +2039,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                     _pullExactToken(token, net);
                 } else {
                     usedBits |= uint256(1) << permitIndex;
-                    TokenPermit2 calldata permit = permits[permitIndex];
+                    TokenPermit2 memory permit = permits[permitIndex];
                     _pullExactViaPermit2(
                         tokenAddr, address(this), net, permit.amount, permit.nonce, permit.deadline, permit.signature
                     );
@@ -2291,12 +2291,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Empty Permit2 batch used by classic settle paths
-    /// @return permits Zero-length calldata array
-    function _emptyTokenPermit2() private pure returns (TokenPermit2[] calldata permits) {
-        assembly ("memory-safe") {
-            permits.length := 0
-            permits.offset := 0
-        }
+    /// @return permits Zero-length memory array
+    function _emptyTokenPermit2() private pure returns (TokenPermit2[] memory) {
+        return new TokenPermit2[](0);
     }
 
     /// @notice Finds `token` in a Permit2 batch, or returns `permits.length` if missing
@@ -2304,7 +2301,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param token Token to look up
     /// @return index Matching index, or `permits.length` when not found
     function _indexOfTokenPermit2(
-        TokenPermit2[] calldata permits,
+        TokenPermit2[] memory permits,
         address token
     ) private pure returns (uint256) {
         uint256 length = permits.length;
@@ -2323,7 +2320,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param permits Permit2 signatures keyed by token
     function _pullAggregatedTokensPermit2(
         AggregatedAmounts memory aggregated,
-        TokenPermit2[] calldata permits
+        TokenPermit2[] memory permits
     ) private {
         uint256 permitLength = permits.length;
         uint256 usedBits = 0;
@@ -2347,7 +2344,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 continue;
             }
 
-            TokenPermit2 calldata permit = permits[permitIndex];
+            TokenPermit2 memory permit = permits[permitIndex];
             _pullExactViaPermit2(
                 token, address(this), amount, permit.amount, permit.nonce, permit.deadline, permit.signature
             );
@@ -2385,7 +2382,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 permittedAmount,
         uint256 nonce,
         uint256 deadline,
-        bytes calldata signature
+        bytes memory signature
     ) private {
         Token wrapped = Token.wrap(token);
         uint256 balanceBefore = wrapped.balanceOf(to);
