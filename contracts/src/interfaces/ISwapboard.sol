@@ -195,17 +195,20 @@ interface ISwapboard is ISemver {
     event OrderCanceled(uint256 indexed orderId);
 
     // solhint-disable gas-indexed-events
+
     /// @notice Emitted when an order's remaining amounts are modified by its maker
     /// @param orderId Unique identifier for the modified order
     /// @param availableA New remaining tokenA in escrow
     /// @param availableB New remaining tokenB required
     event OrderModified(uint256 indexed orderId, uint128 availableA, uint128 availableB);
 
+    // solhint-enable gas-indexed-events
+
     /// @notice Emitted when an order's partial-fill setting is changed by its maker
     /// @param orderId Unique identifier for the order
     /// @param partialFillAllowed Whether the order may be filled in multiple parts
-    event OrderPartialFillUpdated(uint256 indexed orderId, bool partialFillAllowed);
-    // solhint-enable gas-indexed-events
+    event OrderPartialFillUpdated(uint256 indexed orderId, bool indexed partialFillAllowed);
+
 
     /// @notice Thrown when a zero address is provided for a token
     error ZeroAddress();

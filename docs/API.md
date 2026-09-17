@@ -101,9 +101,10 @@ For market makers and trading bots.
       { "name": "orderId", "type": "uint256", "indexed": true },
       { "name": "maker", "type": "address", "indexed": true },
       { "name": "tokenA", "type": "address", "indexed": false },
-      { "name": "amountA", "type": "uint256", "indexed": false },
+      { "name": "amountA", "type": "uint128", "indexed": false },
       { "name": "tokenB", "type": "address", "indexed": false },
-      { "name": "amountB", "type": "uint256", "indexed": false }
+      { "name": "amountB", "type": "uint128", "indexed": false },
+      { "name": "partialFillAllowed", "type": "bool", "indexed": true }
     ]
   },
   {
@@ -111,7 +112,9 @@ For market makers and trading bots.
     "name": "OrderFilled",
     "inputs": [
       { "name": "orderId", "type": "uint256", "indexed": true },
-      { "name": "taker", "type": "address", "indexed": true }
+      { "name": "taker", "type": "address", "indexed": true },
+      { "name": "amountA", "type": "uint128", "indexed": false },
+      { "name": "amountB", "type": "uint128", "indexed": false }
     ]
   },
   {
@@ -119,6 +122,23 @@ For market makers and trading bots.
     "name": "OrderCanceled",
     "inputs": [
       { "name": "orderId", "type": "uint256", "indexed": true }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "OrderModified",
+    "inputs": [
+      { "name": "orderId", "type": "uint256", "indexed": true },
+      { "name": "availableA", "type": "uint128", "indexed": false },
+      { "name": "availableB", "type": "uint128", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "OrderPartialFillUpdated",
+    "inputs": [
+      { "name": "orderId", "type": "uint256", "indexed": true },
+      { "name": "partialFillAllowed", "type": "bool", "indexed": true }
     ]
   }
 ]
@@ -267,7 +287,7 @@ async function createOrder(
 
   // Get orderId from event
   const event = receipt.logs.find(
-    log => log.topics[0] === ethers.id("OrderCreated(uint256,address,address,uint256,address,uint256)")
+    log => log.topics[0] === ethers.id("OrderCreated(uint256,address,address,uint128,address,uint128,bool)")
   );
   const orderId = BigInt(event.topics[1]);
 
@@ -304,8 +324,8 @@ async function fillOrder(provider, signer, orderId) {
 async function monitorOrders(provider) {
   const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
 
-  contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
-    console.log(`New order ${orderId}: ${amountA} ${tokenA} for ${amountB} ${tokenB}`);
+  contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB, partialFillAllowed) => {
+    console.log(`New order ${orderId}: ${amountA} ${tokenA} for ${amountB} ${tokenB} (partial=${partialFillAllowed})`);
   });
 
   contract.on("OrderFilled", (orderId, taker) => {

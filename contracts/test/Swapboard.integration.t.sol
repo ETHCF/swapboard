@@ -344,7 +344,7 @@ contract SwapboardIntegrationTest is Test {
         vm.startPrank(_alice);
         _weth.approve(address(_board), 10 ether);
 
-        vm.expectEmit(true, true, false, true);
+        vm.expectEmit(true, true, true, true);
         emit ISwapboard.OrderCreated({
             orderId: 0,
             maker: _alice,
@@ -709,7 +709,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 orderId = _board.createOrder(_order(address(_weth), 10 ether, address(_usdc), 30_000e6));
         assertFalse(_board.getOrder(orderId).partialFillAllowed);
 
-        vm.expectEmit(true, false, false, true, address(_board));
+        vm.expectEmit(true, true, false, true, address(_board));
         emit ISwapboard.OrderPartialFillUpdated(orderId, true);
         _board.setPartialFillAllowed(orderId, true);
         vm.stopPrank();

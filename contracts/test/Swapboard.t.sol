@@ -378,7 +378,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
 
-        vm.expectEmit(true, true, false, true);
+        vm.expectEmit(true, true, true, true);
         emit ISwapboard.OrderCreated({
             orderId: 0,
             maker: _maker,
@@ -751,7 +751,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
 
-        vm.expectEmit(true, true, false, true);
+        vm.expectEmit(true, true, true, true);
         emit ISwapboard.OrderCreated({
             orderId: 0,
             maker: _maker,
@@ -971,7 +971,7 @@ contract SwapboardTest is Test {
 
     /// @notice Tests createOrder selling ETH emits OrderCreated
     function test_createOrder_sellEth_event() public {
-        vm.expectEmit(true, true, false, true);
+        vm.expectEmit(true, true, true, true);
         emit ISwapboard.OrderCreated({
             orderId: 0,
             maker: _maker,
@@ -3078,7 +3078,7 @@ contract SwapboardTest is Test {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A * 2);
 
-        vm.expectEmit(true, true, false, true);
+        vm.expectEmit(true, true, true, true);
         emit ISwapboard.OrderCreated({
             orderId: 0,
             maker: _maker,
@@ -3088,7 +3088,7 @@ contract SwapboardTest is Test {
             amountB: AMOUNT_B,
             partialFillAllowed: false
         });
-        vm.expectEmit(true, true, false, true);
+        vm.expectEmit(true, true, true, true);
         emit ISwapboard.OrderCreated({
             orderId: 1,
             maker: _maker,
@@ -4719,7 +4719,7 @@ contract SwapboardTest is Test {
         uint256 orderId = _board.createOrder(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
         assertFalse(_board.getOrder(orderId).partialFillAllowed);
 
-        vm.expectEmit(true, false, false, true, address(_board));
+        vm.expectEmit(true, true, false, true, address(_board));
         emit ISwapboard.OrderPartialFillUpdated(orderId, true);
         _board.setPartialFillAllowed(orderId, true);
         vm.stopPrank();
@@ -5338,7 +5338,7 @@ contract SwapboardTest is Test {
         _tokenA.approve(address(_board), AMOUNT_A);
         uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
 
-        vm.expectEmit(true, false, false, true, address(_board));
+        vm.expectEmit(true, true, false, true, address(_board));
         emit ISwapboard.OrderPartialFillUpdated(orderId, false);
         _board.setPartialFillAllowed(orderId, false);
         vm.stopPrank();
