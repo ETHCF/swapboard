@@ -209,7 +209,6 @@ interface ISwapboard is ISemver {
     /// @param partialFillAllowed Whether the order may be filled in multiple parts
     event OrderPartialFillUpdated(uint256 indexed orderId, bool indexed partialFillAllowed);
 
-
     /// @notice Thrown when a zero address is provided for a token
     error ZeroAddress();
 
