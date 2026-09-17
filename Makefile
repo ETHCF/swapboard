@@ -52,7 +52,7 @@ test-e2e:
 # Run contract tests with coverage (src only; mocks/tests excluded from report)
 # `--ir-minimum`: coverage disables optimizer/viaIR; Swapboard needs IR to avoid stack-too-deep.
 coverage:
-	$(FORGE) coverage --ir-minimum --report summary --report lcov --exclude-tests --no-match-coverage 'test/' --no-match-contract GasBenchmarks
+	$(FORGE) coverage --report summary --report lcov --exclude-tests --no-match-coverage 'test/' --no-match-contract GasBenchmarks
 
 # Coverage summary + HTML report at contracts/coverage/
 coverage-html: coverage

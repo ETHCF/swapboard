@@ -1901,6 +1901,24 @@ contract SwapboardTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice Tests fillOrder reverts ZeroAmount when floored tokenA receive is 0
+    /// @dev amountB > 0 passes the request check, but floor(amountB * availableA / availableB) == 0
+    function test_fillOrder_revert_zeroAmountA_fromFloor() public {
+        vm.startPrank(_maker);
+        _tokenA.approve(address(_board), 1);
+        uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), 1, address(_tokenB), 100));
+        vm.stopPrank();
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), 50);
+        vm.expectRevert(ISwapboard.ZeroAmount.selector);
+        _board.fillOrder(orderId, 50, 0, 0);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_board.getOrder(orderId).availableA, 1);
+    }
+
     /// @notice Tests fillOrder reverts ZeroAmount when quoted tokenB payment rounds to 0
     /// @dev Unreachable via normal fills (availableB=0 implies inactive). Force availableB=0 while
     ///      keeping the order active so the ceil branch returns amountBIn=0.
