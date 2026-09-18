@@ -412,6 +412,65 @@ function coinGeckoUrl(address) {
   return id ? "https://www.coingecko.com/en/coins/" + id : null;
 }
 
+// ============================================================================
+// Permit registry
+// ============================================================================
+
+/**
+ * Generated permit-support data (see permit-tokens.js for how it was derived).
+ * Loaded from the preceding script tag in the browser and required under Jest.
+ * An absent file degrades to an empty registry rather than throwing: every
+ * lookup then answers "unknown", which callers already treat as "use approve".
+ * @constant {{CHAIN_ID: number, GENERATED: string, TOKENS: Object<string,string>}}
+ */
+const PERMIT_DATA = (typeof module !== "undefined" && module.exports
+  ? require("./permit-tokens.js")
+  : typeof window !== "undefined" && window.SwapboardPermitTokens) || {
+  CHAIN_ID: 1,
+  GENERATED: "",
+  TOKENS: {},
+};
+
+/**
+ * Permit flavour a token implements, or "unknown" when it is not in the registry.
+ *
+ * The registry was read off Ethereum mainnet, so it is only consulted when the
+ * caller is on mainnet; on any other chain every token answers "unknown". Without
+ * that gate a Sepolia build would report mainnet verdicts for addresses that are
+ * unrelated tokens there.
+ *
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {string} "eip2612" | "dai" | "both" | "nonstandard" | "unverified" | "none" | "unknown"
+ */
+function permitKindFor(address, chainId = EXPECTED_CHAIN_ID) {
+  if (typeof address !== "string") return "unknown";
+  if (chainId !== PERMIT_DATA.CHAIN_ID) return "unknown";
+  return PERMIT_DATA.TOKENS[address.toLowerCase()] || "unknown";
+}
+
+/**
+ * Whether a token can be approved by signature instead of an approve() send.
+ *
+ * True only for the flavours a signature flow can actually drive. "nonstandard"
+ * is deliberately false: those tokens (Yearn-style, permit(...,bytes)) answer
+ * DOMAIN_SEPARATOR() and nonces() like a 2612 token but revert when called as
+ * one. "unknown" and "unverified" are false too, so an unrecognised token falls
+ * back to approve() rather than sending a permit that reverts -- a false
+ * negative costs one extra transaction, a false positive costs a failed swap.
+ *
+ * Callers still need permitKindFor() to pick the signature shape, since the DAI
+ * flavour takes a different argument list from EIP-2612.
+ *
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {boolean} True when a permit signature can replace approve()
+ */
+function supportsPermit(address, chainId = EXPECTED_CHAIN_ID) {
+  const kind = permitKindFor(address, chainId);
+  return kind === "eip2612" || kind === "dai" || kind === "both";
+}
+
 /**
  * Human-readable price of one denominator token in numerator tokens.
  * Both sides are base units, so their decimals divide back out as one factor.
@@ -1792,6 +1851,10 @@ if (typeof window !== "undefined") {
     PRICE_CACHE_TTL_MS,
     getCachedPrice,
     getTokenPrice,
+
+    // Permit registry
+    permitKindFor,
+    supportsPermit,
     fetchPrices,
     calculateMarketDeviation,
 
@@ -1904,6 +1967,10 @@ if (typeof module !== "undefined" && module.exports) {
     coinGeckoUrl,
     priceRatio,
     calculateMarketDeviation,
+
+    // Permit registry
+    permitKindFor,
+    supportsPermit,
 
     // Token search
     searchTokens,

@@ -23,6 +23,8 @@ const {
   getTokenPrice,
   fetchPrices,
   coinGeckoUrl,
+  permitKindFor,
+  supportsPermit,
   priceRatio,
   calculateMarketDeviation,
   searchTokens,
@@ -1449,6 +1451,88 @@ describe("coinGeckoUrl", () => {
     expect(coinGeckoUrl(null)).toBeNull();
     expect(coinGeckoUrl(undefined)).toBeNull();
     expect(coinGeckoUrl(42)).toBeNull();
+  });
+});
+
+// ============================================================================
+// Permit registry
+// ============================================================================
+
+describe("permitKindFor", () => {
+  const MAINNET = 1;
+
+  // MUTATION: Drop the toLowerCase() before the lookup
+  // BREAKS: Checksummed addresses miss the all-lowercase registry keys and
+  //         every token falls back to approve()
+  test("resolves each permit flavour regardless of address casing", () => {
+    expect(permitKindFor("0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48", MAINNET)).toBe("eip2612");
+    expect(permitKindFor("0x6b175474e89094c44da98b954eedeac495271d0f", MAINNET)).toBe("dai");
+    expect(permitKindFor("0xa882606494d86804b5514e07e6bd2d6a6ee6d68a", MAINNET)).toBe("both");
+    expect(permitKindFor("0xa258c4606ca8206d8aa700ce2143d7db854d168c", MAINNET)).toBe(
+      "nonstandard"
+    );
+    expect(permitKindFor("0x48ab4e39ac59f4e88974804b04a991b3a402717f", MAINNET)).toBe("unverified");
+    expect(permitKindFor("0xdac17f958d2ee523a2206206994597c13d831ec7", MAINNET)).toBe("none");
+  });
+
+  // MUTATION: Drop the chainId guard, or compare against something other than
+  //           PERMIT_DATA.CHAIN_ID
+  // BREAKS: A non-mainnet build reports mainnet verdicts for addresses that are
+  //         unrelated tokens on that chain
+  test("refuses to answer off mainnet", () => {
+    const usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+    expect(permitKindFor(usdc, MAINNET)).toBe("eip2612");
+    expect(permitKindFor(usdc, 11155111)).toBe("unknown");
+    expect(permitKindFor(usdc, 8453)).toBe("unknown");
+  });
+
+  // MUTATION: Return the raw undefined lookup instead of "unknown"
+  // BREAKS: Callers comparing against a string get undefined for unlisted tokens
+  test("returns 'unknown' for a token outside the registry", () => {
+    expect(permitKindFor("0x1111111111111111111111111111111111111111", MAINNET)).toBe("unknown");
+  });
+
+  // MUTATION: Skip the typeof guard
+  // BREAKS: Throws on a token whose address never loaded
+  test("returns 'unknown' rather than throwing on bad input", () => {
+    expect(permitKindFor(null, MAINNET)).toBe("unknown");
+    expect(permitKindFor(undefined, MAINNET)).toBe("unknown");
+    expect(permitKindFor(42, MAINNET)).toBe("unknown");
+  });
+});
+
+describe("supportsPermit", () => {
+  const MAINNET = 1;
+
+  // MUTATION: Drop "dai" or "both" from the accepted set
+  // BREAKS: Tokens that can be approved by signature get a needless approve() send
+  test("accepts the flavours a signature flow can drive", () => {
+    expect(supportsPermit("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", MAINNET)).toBe(true);
+    expect(supportsPermit("0x6b175474e89094c44da98b954eedeac495271d0f", MAINNET)).toBe(true);
+    expect(supportsPermit("0xa882606494d86804b5514e07e6bd2d6a6ee6d68a", MAINNET)).toBe(true);
+  });
+
+  // MUTATION: Treat "nonstandard" as permit-capable
+  // BREAKS: Yearn-style tokens answer DOMAIN_SEPARATOR() and nonces() like a 2612
+  //         token, so the UI signs a permit that reverts and the swap fails
+  test("rejects the Yearn-style permit that only looks like EIP-2612", () => {
+    expect(supportsPermit("0xa258c4606ca8206d8aa700ce2143d7db854d168c", MAINNET)).toBe(false);
+  });
+
+  // MUTATION: Default unresolved tokens to true
+  // BREAKS: Anything unlisted or unverified sends a permit that reverts, instead
+  //         of paying one extra transaction for approve()
+  test("falls back to approve() whenever support is not established", () => {
+    expect(supportsPermit("0xdac17f958d2ee523a2206206994597c13d831ec7", MAINNET)).toBe(false);
+    expect(supportsPermit("0x48ab4e39ac59f4e88974804b04a991b3a402717f", MAINNET)).toBe(false);
+    expect(supportsPermit("0x1111111111111111111111111111111111111111", MAINNET)).toBe(false);
+    expect(supportsPermit(null, MAINNET)).toBe(false);
+  });
+
+  // MUTATION: Drop the chainId pass-through to permitKindFor
+  // BREAKS: A Sepolia build offers permit on mainnet verdicts
+  test("reports no permit support off mainnet", () => {
+    expect(supportsPermit("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 11155111)).toBe(false);
   });
 });
 

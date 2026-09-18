@@ -286,7 +286,7 @@ if [[ "$SKIP_FRONTEND" != "true" ]]; then
     mkdir -p "$DIST_DIR"
 
     # Copy only production files
-    PROD_FILES="index.html app.js lib.js style.css mock.js API.html manifest.json sw.js"
+    PROD_FILES="index.html app.js lib.js permit-tokens.js style.css mock.js API.html manifest.json sw.js"
     for f in $PROD_FILES; do
         cp "$SCRIPT_DIR/frontend/$f" "$DIST_DIR/$f"
     done
