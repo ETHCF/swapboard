@@ -704,7 +704,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @return aggregated Distinct ERC20 deposits plus summed ETH
     function _aggregateDepositAssets(
         CreateOrderParams[] calldata orders
-    ) private view returns (AggregatedAmounts memory aggregated) {
+    ) private pure returns (AggregatedAmounts memory aggregated) {
         uint256 length = orders.length;
         aggregated.tokens = new address[](length);
         aggregated.amounts = new uint256[](length);
