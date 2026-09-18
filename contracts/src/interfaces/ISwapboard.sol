@@ -97,7 +97,9 @@ interface ISwapboard is ISemver {
 
     /// @notice EIP-2612 permit for a single known token (create/fill/modify)
     /// @dev `v == 0` skips the permit (use when the caller already has allowance). Spender is
-    ///      always this Swapboard. Native ETH with `v != 0` reverts `PermitOnNative`.
+    ///      always this Swapboard. Native ETH with `v != 0` reverts `PermitOnNative`. The `permit`
+    ///      call is also skipped when the current allowance already covers `value`, so a signature
+    ///      whose nonce was already consumed (anyone may submit it first) does not block the pull.
     /// @param value Allowance value signed by the owner
     /// @param deadline Unix timestamp after which the permit is invalid
     /// @param v Signature v (27/28); 0 means skip
@@ -112,9 +114,10 @@ interface ISwapboard is ISemver {
     }
 
     /// @notice EIP-2612 permit for one ERC20 in a batch (createOrders/fillOrders/modifyOrders)
-    /// @dev Every entry is applied (`v == 0` reverts `InvalidPermit`). Duplicate `token` values
-    ///      revert `DuplicatePermitToken`. An unused entry reverts `UnusedPermit`. Empty array means
-    ///      no permits.
+    /// @dev Every entry is applied (`v == 0` reverts `InvalidPermit`), except that the `permit`
+    ///      call is skipped when the current allowance already covers `value`. Duplicate `token`
+    ///      values revert `DuplicatePermitToken`. An unused entry reverts `UnusedPermit`. Empty
+    ///      array means no permits.
     /// @param token ERC20 to permit (not the ETH sentinel)
     /// @param v Signature v (27/28)
     /// @param value Allowance value signed by the owner

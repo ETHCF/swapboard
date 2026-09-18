@@ -27,7 +27,10 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///        satisfy the exact-receive check. Forbidding it keeps every fill payment a one-hop
 ///        pull to a distinct maker.
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
-///      - EIP-2612 `permit` overloads set token allowance in the same transaction as the pull
+///      - EIP-2612 `permit` overloads set token allowance in the same transaction as the pull,
+///        skipping the `permit` call when the existing allowance already covers the signed value
+///        (a replayed signature spends the nonce but leaves the same allowance, so the pull still
+///        works)
 ///      - Permit2 SignatureTransfer overloads pull via the canonical Permit2 contract
 ///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
 ///        remaining amounts are packed separately so fill % is readable on-chain
@@ -2160,7 +2163,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Applies an EIP-2612 permit for `token` from `msg.sender` to this contract
     /// @dev `v == 0` is a no-op (other fields are not read). Native ETH with `v != 0` reverts
-    ///      `PermitOnNative`.
+    ///      `PermitOnNative`. A permit whose `value` is already covered by the current allowance
+    ///      is also a no-op (see `_callPermit`).
     /// @param token Token to permit
     /// @param permit Signature payload
     function _permit(
@@ -2176,6 +2180,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Calls token `permit` after native-ETH check. Caller must ensure `v != 0`.
+    /// @dev No-ops when the board's allowance from `msg.sender` already covers `value`. EIP-2612
+    ///      nonces are single-use and the signature is not bound to a submitter, so anyone can
+    ///      replay it first: the allowance ends up the same but the nonce is spent, and calling
+    ///      `permit` again with a spent nonce reverts on the signature check. Skipping the
+    ///      redundant call keeps the pull working instead of bricking every permit overload for
+    ///      that signature, and saves the call when a plain `approve` already covers the pull.
     /// @param token Token to permit
     /// @param value Signed allowance
     /// @param deadline Permit deadline
@@ -2190,8 +2200,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         bytes32 r,
         bytes32 s
     ) private {
-        if (Token.wrap(token).isNative()) {
+        Token wrapped = Token.wrap(token);
+        if (wrapped.isNative()) {
             revert PermitOnNative();
+        }
+
+        if (wrapped.allowance(msg.sender, address(this)) >= value) {
+            return;
         }
 
         // forge-lint: disable-next-line(reentrancy-no-eth)

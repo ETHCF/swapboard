@@ -488,7 +488,7 @@ Behavior:
 - Batch: empty array means no permits. `v == 0` reverts `InvalidPermit`. Duplicate `token` reverts `DuplicatePermitToken`. `token == 0` reverts `ZeroAddress`. Native ETH reverts `PermitOnNative`. Unused permit (token not pulled) reverts `UnusedPermit`.
 - Token `permit` errors bubble (expired, wrong signer, non-permit token).
 - Permits are applied immediately before the corresponding pull (create tokenA, fill tokenB, modify tokenA top-up).
-- If a permit is front-run, the call reverts; retry with `v == 0` once allowance is set.
+- The `permit` call is skipped whenever the current allowance already covers `value`, so a front-run permit does not brick the call: anyone may submit the signature first, which spends the EIP-2612 nonce but leaves the same allowance, and the pull proceeds. This also means a permit whose `value` is already approved is never validated (no revert on an expired or malformed signature).
 
 ```solidity
 function createOrder(CreateOrderParams calldata order, Permit calldata permit) external payable returns (uint256);
