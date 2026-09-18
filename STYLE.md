@@ -10,6 +10,8 @@ Follow the Solidity Style Guide unless this document says otherwise.
 
 Enforce formatting with Foundry (`make fmt`) and lint with `make lint` (`forge lint` + solhint). Config lives in `contracts/foundry.toml` and `contracts/.solhint.json`.
 
+`make build-contracts` builds with `--deny warnings`, so solc warnings (unused variable, over-broad mutability, shadowing, …) fail the build instead of scrolling past. Fix the warning rather than silencing it; `forge build` alone is incremental and can hide warnings from cached files, so re-check with `forge build --force --deny warnings` after touching mutability or visibility.
+
 ### Tooling defaults
 
 | Setting | Value | Notes |
