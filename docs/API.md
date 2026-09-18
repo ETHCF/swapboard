@@ -527,6 +527,7 @@ Behavior:
 - Signed `amount` must cover the exact pull (aggregated for batches). Permit2 / token errors bubble.
 - Single fills pull ERC20 tokenB directly to the maker. Batch fills with Permit2 pull each distinct ERC20 tokenB total to Swapboard, then distribute to makers.
 - Create/modify pulls go to escrow on Swapboard.
+- The Permit2 address is a compile-time constant. On a chain where Permit2 is not deployed, every Permit2 overload reverts with empty returndata (the call target has no code); the other paths are unaffected. `script/Deploy.s.sol` refuses to deploy there and reverts `Permit2NotDeployed(address)`.
 
 ```solidity
 function createOrder(CreateOrderParams calldata order, Permit2Permit calldata permit) external payable returns (uint256);

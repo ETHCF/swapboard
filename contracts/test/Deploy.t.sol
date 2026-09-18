@@ -10,14 +10,20 @@ import {Deploy} from "../script/Deploy.s.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockPermit2} from "./mocks/MockPermit2.sol";
 
 /// @notice Unit tests for the Deploy script
 contract DeployTest is Test {
+    address private constant _PERMIT2_ADDR = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
+
     Deploy internal _deploy;
 
-    /// @notice Deploys the script contract for each test
+    /// @notice Deploys the script contract and the Permit2 dependency it checks for
     function setUp() public {
         _deploy = new Deploy();
+
+        MockPermit2 impl = new MockPermit2();
+        vm.etch(_PERMIT2_ADDR, address(impl).code);
     }
 
     /// @notice run deploys a usable Swapboard at version 2.0.0
@@ -39,6 +45,14 @@ contract DeployTest is Test {
         assertTrue(address(board0) != address(board1));
         assertEq(board0.getNextOrderId(), 0);
         assertEq(board1.getNextOrderId(), 0);
+    }
+
+    /// @notice run aborts when the canonical Permit2 has no code on the target chain
+    function test_run_revert_permit2NotDeployed() public {
+        vm.etch(_PERMIT2_ADDR, "");
+
+        vm.expectRevert(abi.encodeWithSelector(Deploy.Permit2NotDeployed.selector, _PERMIT2_ADDR));
+        _deploy.run();
     }
 
     /// @notice Deployed Swapboard accepts ETH sell orders via the ETH sentinel

@@ -81,7 +81,7 @@ clean:
 anvil:
 	anvil --block-time 1 --host 0.0.0.0 --port $(ANVIL_PORT)
 
-# Deploy to local Anvil
+# Deploy to local Anvil (the script aborts unless the node has Permit2 code, e.g. a forked Anvil)
 deploy-local:
 	@$(FORGE) script script/Deploy.s.sol \
 		--rpc-url $(ANVIL_RPC_URL) \
