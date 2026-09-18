@@ -166,8 +166,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     uint256 private _nextOrderId;
 
     /// @notice Mapping from order ID to Order struct
-    /// @dev Non-existent and fully filled orders return the default struct with maker=address(0)
-    ///      and active=false (full fills `delete` storage)
+    /// @dev Non-existent, fully filled, and cancelled orders return the default struct with
+    ///      maker=address(0) (full fills and cancels `delete` storage)
     mapping(uint256 orderId => Order order) private _orders;
 
     /// @notice Initializes Swapboard
@@ -419,13 +419,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         bool partialFillAllowed
     ) external nonReentrant {
         Order storage order = _orders[orderId];
-        (address maker, bool active, bool currentPartialFillAllowed) =
-            (order.maker, order.active, order.partialFillAllowed);
+        (address maker, bool currentPartialFillAllowed) = (order.maker, order.partialFillAllowed);
         if (maker == address(0)) {
             revert OrderNotFound(orderId);
-        }
-        if (!active) {
-            revert OrderNotActive(orderId);
         }
         _requireMaker(orderId, maker);
         if (partialFillAllowed == currentPartialFillAllowed) {
@@ -473,23 +469,19 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function canFill(
         uint256 orderId
     ) external view returns (bool) {
-        return _orders[orderId].active;
+        return _orders[orderId].maker != address(0);
     }
 
-    /// @notice Reverts unless the order exists and is active
+    /// @notice Reverts unless the order exists
+    /// @dev A stored order is always fillable: full fills and cancels `delete` it.
     /// @param orderId Order to load
-    /// @return order Storage pointer to the active order
+    /// @return order Storage pointer to the live order
     function _requireActiveOrder(
         uint256 orderId
     ) private view returns (Order storage) {
         Order storage order = _orders[orderId];
-        (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) {
+        if (order.maker == address(0)) {
             revert OrderNotFound(orderId);
-        }
-
-        if (!active) {
-            revert OrderNotActive(orderId);
         }
 
         return order;
@@ -865,7 +857,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) private {
         _orders[orderId] = Order({
             maker: msg.sender,
-            active: true,
             partialFillAllowed: params.partialFillAllowed,
             tokenA: params.tokenA,
             tokenB: params.tokenB,

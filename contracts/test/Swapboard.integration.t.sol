@@ -78,12 +78,10 @@ contract SwapboardIntegrationTest is Test {
         vm.stopPrank();
 
         assertFalse(_board.canFill(order0));
-        assertFalse(_board.getOrder(order0).active);
         assertEq(_board.getOrder(order0).availableA, 0);
         assertTrue(_board.canFill(order1));
         assertTrue(_board.canFill(order2));
         assertFalse(_board.canFill(order3));
-        assertFalse(_board.getOrder(order3).active);
         assertEq(_board.getOrder(order3).availableA, 0);
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_wbtc.getTransferFromCalls(), wbtcPullsBefore);
@@ -121,7 +119,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(order.availableA, 0);
     }
 
@@ -144,7 +142,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_weth.balanceOf(address(_board)), 0);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(order.availableA, 0);
     }
 
@@ -174,7 +172,7 @@ contract SwapboardIntegrationTest is Test {
         _board.fillOrder(orderId, 10 ether, 10 ether, 0);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
@@ -198,7 +196,7 @@ contract SwapboardIntegrationTest is Test {
         _fillOrder(orderId, 10 ether);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
@@ -228,7 +226,7 @@ contract SwapboardIntegrationTest is Test {
         for (uint256 i = 0; i < 10; ++i) {
             assertEq(orders[i].maker, _alice);
             assertEq(orders[i].amountA, 10 ether);
-            assertTrue(orders[i].active);
+            assertNotEq(orders[i].maker, address(0));
         }
 
         vm.startPrank(_bob);
@@ -245,7 +243,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 5);
         for (uint256 i = 0; i < 10; i += 2) {
-            assertFalse(_board.getOrder(orderIds[i]).active);
+            assertEq(_board.getOrder(orderIds[i]).maker, address(0));
             assertEq(_board.getOrder(orderIds[i]).availableA, 0);
         }
 
@@ -279,7 +277,7 @@ contract SwapboardIntegrationTest is Test {
         _fillOrder(orderId, _board.getOrder(orderId).availableA);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_wbtc.getTransferFromCalls(), wbtcPullsBefore);
         assertEq(_dai.getTransferFromCalls(), daiPullsBefore + 1);
@@ -308,7 +306,7 @@ contract SwapboardIntegrationTest is Test {
         _fillOrder(orderId, _board.getOrder(orderId).availableA);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
@@ -331,7 +329,7 @@ contract SwapboardIntegrationTest is Test {
         _fillOrder(orderId, _board.getOrder(orderId).availableA);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
@@ -369,7 +367,7 @@ contract SwapboardIntegrationTest is Test {
         _fillOrder(orderId, _board.getOrder(orderId).availableA);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
@@ -425,9 +423,9 @@ contract SwapboardIntegrationTest is Test {
 
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + numOrders);
-        assertFalse(_board.getOrder(0).active);
+        assertEq(_board.getOrder(0).maker, address(0));
         assertEq(_board.getOrder(0).availableA, 0);
-        assertFalse(_board.getOrder(numOrders - 1).active);
+        assertEq(_board.getOrder(numOrders - 1).maker, address(0));
         assertEq(_board.getOrder(numOrders - 1).availableA, 0);
         assertEq(_weth.balanceOf(address(_board)), 0);
         assertEq(_weth.balanceOf(_bob), 1000 ether + numOrders * 1 ether);
@@ -450,7 +448,7 @@ contract SwapboardIntegrationTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory afterBob = _board.getOrder(orderId);
-        assertTrue(afterBob.active);
+        assertNotEq(afterBob.maker, address(0));
         assertEq(afterBob.amountA, 100 ether);
         assertEq(afterBob.availableA, 60 ether);
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
@@ -462,7 +460,7 @@ contract SwapboardIntegrationTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory done = _board.getOrder(orderId);
-        assertFalse(done.active);
+        assertEq(done.maker, address(0));
         assertEq(done.availableA, 0);
         assertEq(done.availableB, 0);
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
@@ -533,7 +531,6 @@ contract SwapboardIntegrationTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, address(0));
-        assertFalse(order.active);
         assertEq(order.amountA, 0);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
@@ -562,7 +559,7 @@ contract SwapboardIntegrationTest is Test {
 
         assertFalse(_board.canFill(orderId));
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(order.availableA, 0);
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 2);
@@ -593,7 +590,6 @@ contract SwapboardIntegrationTest is Test {
         vm.stopPrank();
 
         assertFalse(_board.canFill(ids[0]));
-        assertFalse(_board.getOrder(ids[0]).active);
         assertEq(_board.getOrder(ids[0]).availableA, 0);
         assertTrue(_board.canFill(ids[1]));
         assertEq(_board.getOrder(ids[1]).availableA, 15 ether);
@@ -632,8 +628,8 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_weth.balanceOf(_bob), 1000 ether + 30 ether);
         assertFalse(_board.canFill(ids[0]));
         assertFalse(_board.canFill(ids[1]));
-        assertFalse(_board.getOrder(ids[0]).active);
-        assertFalse(_board.getOrder(ids[1]).active);
+        assertEq(_board.getOrder(ids[0]).maker, address(0));
+        assertEq(_board.getOrder(ids[1]).maker, address(0));
         assertEq(_board.getOrder(ids[0]).availableA, 0);
         assertEq(_board.getOrder(ids[1]).availableA, 0);
     }
@@ -659,8 +655,8 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_board.getOrder(ids[1]).maker, address(0));
         assertFalse(_board.canFill(ids[0]));
         assertFalse(_board.canFill(ids[1]));
-        assertFalse(_board.getOrder(ids[0]).active);
-        assertFalse(_board.getOrder(ids[1]).active);
+        assertEq(_board.getOrder(ids[0]).maker, address(0));
+        assertEq(_board.getOrder(ids[1]).maker, address(0));
         assertEq(_board.getOrder(ids[0]).availableA, 0);
         assertEq(_board.getOrder(ids[1]).availableA, 0);
     }
@@ -724,7 +720,7 @@ contract SwapboardIntegrationTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory afterPartial = _board.getOrder(orderId);
-        assertTrue(afterPartial.active);
+        assertNotEq(afterPartial.maker, address(0));
         assertTrue(afterPartial.partialFillAllowed);
         assertEq(afterPartial.availableA, 6 ether);
         assertEq(_weth.balanceOf(_charlie), 4 ether);

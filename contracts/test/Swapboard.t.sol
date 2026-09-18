@@ -301,7 +301,7 @@ contract SwapboardTest is Test {
         assertEq(order.amountB, AMOUNT_B);
         assertEq(order.availableA, AMOUNT_A);
         assertEq(order.availableB, AMOUNT_B);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertFalse(order.partialFillAllowed);
     }
 
@@ -315,7 +315,7 @@ contract SwapboardTest is Test {
         assertEq(order.amountB, 0);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertFalse(order.partialFillAllowed);
     }
 
@@ -338,7 +338,7 @@ contract SwapboardTest is Test {
         assertEq(order.amountB, AMOUNT_B);
         assertEq(order.availableA, AMOUNT_A);
         assertEq(order.availableB, AMOUNT_B);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertFalse(order.partialFillAllowed);
 
         assertEq(_tf(_tokenA), 1);
@@ -355,7 +355,7 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertTrue(order.partialFillAllowed);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(_tf(_tokenA), 1);
     }
 
@@ -367,7 +367,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.availableA, AMOUNT_A);
         assertFalse(order.partialFillAllowed);
         assertEq(_tf(_tokenA), 1);
@@ -526,7 +526,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(order.availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -548,7 +548,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.availableA, 34);
         assertEq(order.availableB, 1);
         assertEq(_tokenA.balanceOf(_taker), takerABefore + 66);
@@ -592,7 +592,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(order.availableA, 0);
         assertEq(_tokenA.balanceOf(_maker), balanceBefore + AMOUNT_A);
         assertEq(_tokenA.balanceOf(address(_board)), 0);
@@ -728,7 +728,7 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(_taker), takerABefore + AMOUNT_A * 5);
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + AMOUNT_B * 5);
         for (uint256 i = 0; i < 5; ++i) {
-            assertFalse(_board.getOrder(orderIds[i]).active);
+            assertEq(_board.getOrder(orderIds[i]).maker, address(0));
             assertEq(_board.getOrder(orderIds[i]).availableA, 0);
         }
     }
@@ -790,7 +790,7 @@ contract SwapboardTest is Test {
         _fillOrder(orderId, AMOUNT_A);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -865,7 +865,7 @@ contract SwapboardTest is Test {
         _fillOrder(orderId, amountA);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -907,7 +907,7 @@ contract SwapboardTest is Test {
         _fillOrder(orderId, AMOUNT_A);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -931,7 +931,7 @@ contract SwapboardTest is Test {
         _fillOrder(orderId, AMOUNT_A, deadline);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -950,7 +950,7 @@ contract SwapboardTest is Test {
         assertEq(order.amountA, ETH_AMOUNT);
         assertEq(order.tokenB, address(_tokenB));
         assertEq(order.amountB, AMOUNT_B);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(orderId, 0);
         assertEq(_board.getNextOrderId(), 1);
         assertEq(address(_board).balance, ETH_AMOUNT);
@@ -1123,7 +1123,7 @@ contract SwapboardTest is Test {
         assertEq(order.amountA, ETH_AMOUNT);
         assertEq(order.tokenB, address(_tokenB));
         assertEq(order.amountB, AMOUNT_B);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertTrue(_board.canFill(orderId));
 
         uint256[] memory ids = new uint256[](1);
@@ -1150,7 +1150,7 @@ contract SwapboardTest is Test {
         _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(order.availableA, 0);
         assertEq(_maker.balance, makerEthBefore + ETH_AMOUNT);
         assertEq(_tokenB.balanceOf(_taker), takerTokenBefore + AMOUNT_B);
@@ -1184,7 +1184,7 @@ contract SwapboardTest is Test {
         vm.prank(_taker);
         _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
     }
 
@@ -1267,7 +1267,6 @@ contract SwapboardTest is Test {
         _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT, deadline);
 
         assertFalse(_board.canFill(orderId));
-        assertFalse(_board.getOrder(orderId).active);
         assertEq(_board.getOrder(orderId).availableA, 0);
     }
 
@@ -1298,7 +1297,7 @@ contract SwapboardTest is Test {
         _board.cancelOrder(orderId);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(order.availableA, 0);
         assertEq(_maker.balance, makerEthBefore + ETH_AMOUNT);
         assertEq(address(_board).balance, 0);
@@ -1400,7 +1399,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(order.availableA, 0);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
         assertEq(_taker.balance, takerEthBefore + ETH_AMOUNT);
@@ -1422,7 +1421,7 @@ contract SwapboardTest is Test {
         _fillOrder(orderId, ETH_AMOUNT);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
     }
@@ -1518,7 +1517,7 @@ contract SwapboardTest is Test {
         _fillOrder(orderId, ETH_AMOUNT);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
         assertEq(_taker.balance, takerEthBefore + ETH_AMOUNT);
@@ -1554,7 +1553,7 @@ contract SwapboardTest is Test {
         vm.prank(_taker);
         _fillOrderPayEth(orderId, AMOUNT_B, ETH_AMOUNT);
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_maker.balance, makerEthBefore + ETH_AMOUNT);
         assertEq(_tokenB.balanceOf(_taker), takerTokenBefore + AMOUNT_B);
@@ -1585,7 +1584,7 @@ contract SwapboardTest is Test {
         assertTrue(_board.canFill(id2));
         assertFalse(_board.canFill(id0));
         assertFalse(_board.canFill(id1));
-        assertFalse(_board.getOrder(id0).active);
+        assertEq(_board.getOrder(id0).maker, address(0));
         assertEq(_board.getOrder(id0).availableA, 0);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
     }
@@ -1790,7 +1789,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.availableA, 4);
         assertEq(order.availableB, 1);
         assertEq(_tokenA.balanceOf(_taker), takerABefore + quotedA);
@@ -1823,7 +1822,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.availableA, 4);
         assertEq(order.availableB, 1);
         assertEq(_tokenA.balanceOf(_taker), takerABefore + quotedA);
@@ -1857,7 +1856,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.availableA, 4);
         assertEq(order.availableB, 1);
         assertEq(_tokenA.balanceOf(_taker), takerABefore + quotedA);
@@ -1920,20 +1919,20 @@ contract SwapboardTest is Test {
     }
 
     /// @notice Tests fillOrder reverts ZeroAmount when quoted tokenB payment rounds to 0
-    /// @dev Unreachable via normal fills (availableB=0 implies inactive). Force availableB=0 while
-    ///      keeping the order active so the ceil branch returns amountBIn=0.
+    /// @dev Unreachable via normal fills (availableB=0 means the order was deleted). Force
+    ///      availableB=0 on a stored order so the ceil branch returns amountBIn=0.
     function test_fillOrder_revert_zeroAmountBIn() public {
         vm.startPrank(_maker);
         _tokenA.approve(address(_board), AMOUNT_A);
         uint256 orderId = _board.createOrder(_orderPartial(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
         vm.stopPrank();
 
-        // Order.availableB is struct field depth 8 (maker=0 … availableA=7, availableB=8).
-        _forceOrderField(orderId, 8, 0);
+        // Order.availableB is struct field depth 7 (maker=0 … availableA=6, availableB=7).
+        _forceOrderField(orderId, 7, 0);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.availableB, 0);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
 
         vm.startPrank(_taker);
         _tokenB.approve(address(_board), AMOUNT_B);
@@ -1963,7 +1962,6 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, address(0));
-        assertFalse(order.active);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
         assertEq(_tokenA.balanceOf(_taker), takerABefore + amountA);
@@ -1994,7 +1992,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.amountA, amountA);
         assertEq(order.amountB, amountB);
         assertEq(order.availableA, amountA - fillA);
@@ -2029,7 +2027,6 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, address(0));
-        assertFalse(order.active);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
@@ -2062,7 +2059,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.amountA, amountA);
         assertEq(order.amountB, amountB);
         assertEq(order.availableA, amountA - expectedAOut);
@@ -2108,7 +2105,7 @@ contract SwapboardTest is Test {
         assertEq(order.amountB, 0);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(_tokenA.balanceOf(_maker), makerABefore + (amountA - fillA));
         assertEq(_tokenA.balanceOf(address(_board)), 0);
     }
@@ -2162,7 +2159,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.amountA, ethAmount);
         assertEq(order.amountB, tokenAmount);
         assertEq(order.availableA, ethAmount - fillA);
@@ -2192,7 +2189,7 @@ contract SwapboardTest is Test {
         _fillOrderPayEth(orderId, fillA, expectedEthIn);
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.amountA, tokenAmount);
         assertEq(order.amountB, ethAmount);
         assertEq(order.availableA, tokenAmount - fillA);
@@ -2289,7 +2286,6 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, address(0));
-        assertFalse(order.active);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
@@ -2345,7 +2341,7 @@ contract SwapboardTest is Test {
 
         assertTrue(_board.canFill(orderId));
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.availableA, amountA);
         assertEq(order.availableB, amountB);
         assertEq(fotB.balanceOf(address(_board)), 0);
@@ -2385,7 +2381,7 @@ contract SwapboardTest is Test {
 
         assertTrue(_board.canFill(orderId));
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.availableA, amountA);
         assertEq(order.availableB, amountB);
         assertEq(rebaseB.balanceOf(address(_board)), 0);
@@ -2414,7 +2410,7 @@ contract SwapboardTest is Test {
 
         assertTrue(_board.canFill(orderId));
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.availableA, AMOUNT_A);
         assertEq(order.availableB, AMOUNT_B);
         assertEq(fotB.balanceOf(address(_board)), 0);
@@ -2442,7 +2438,7 @@ contract SwapboardTest is Test {
 
         assertTrue(_board.canFill(orderId));
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.availableA, AMOUNT_A);
         assertEq(order.availableB, AMOUNT_B);
         assertEq(rebaseB.balanceOf(address(_board)), 0);
@@ -2515,7 +2511,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(order.availableA, 0);
         assertEq(_tokenA.balanceOf(_taker), AMOUNT_A * 10 + AMOUNT_A);
         assertEq(_tokenA.balanceOf(address(_board)), 0);
@@ -2637,13 +2633,13 @@ contract SwapboardTest is Test {
         assertEq(orders[0].amountB, AMOUNT_B);
         assertEq(orders[0].availableA, AMOUNT_A - fillA);
         assertEq(orders[0].availableB, AMOUNT_B - expectedBIn);
-        assertTrue(orders[0].active);
+        assertNotEq(orders[0].maker, address(0));
 
         assertEq(orders[1].amountA, AMOUNT_A);
         assertEq(orders[1].amountB, AMOUNT_B * 2);
         assertEq(orders[1].availableA, AMOUNT_A);
         assertEq(orders[1].availableB, AMOUNT_B * 2);
-        assertTrue(orders[1].active);
+        assertNotEq(orders[1].maker, address(0));
     }
 
     /// @notice Tests Order fields are stored and readable via getOrder
@@ -2655,7 +2651,7 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, _maker);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertTrue(order.partialFillAllowed);
         assertEq(order.tokenA, address(_tokenA));
         assertEq(order.tokenB, address(_tokenB));
@@ -2708,7 +2704,6 @@ contract SwapboardTest is Test {
         uint256 remainingB = amountB - amountBIn;
         if (remainingA == 0 || remainingB == 0) {
             assertEq(order.maker, address(0));
-            assertFalse(order.active);
             assertEq(order.availableA, 0);
             assertEq(order.availableB, 0);
         } else {
@@ -2716,7 +2711,7 @@ contract SwapboardTest is Test {
             assertEq(order.amountB, amountB);
             assertEq(order.availableA, remainingA);
             assertEq(order.availableB, remainingB);
-            assertTrue(order.active);
+            assertNotEq(order.maker, address(0));
         }
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -2827,7 +2822,6 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, address(0));
-        assertFalse(order.active);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
@@ -3143,7 +3137,7 @@ contract SwapboardTest is Test {
         _fillOrderQuoted(order, orderId, AMOUNT_A);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -3260,8 +3254,8 @@ contract SwapboardTest is Test {
         assertEq(_maker.balance, makerEthBefore);
         assertFalse(_board.canFill(ids[0]));
         assertFalse(_board.canFill(ids[1]));
-        assertFalse(_board.getOrder(ids[0]).active);
-        assertFalse(_board.getOrder(ids[1]).active);
+        assertEq(_board.getOrder(ids[0]).maker, address(0));
+        assertEq(_board.getOrder(ids[1]).maker, address(0));
         assertEq(_board.getOrder(ids[0]).availableA, 0);
         assertEq(_board.getOrder(ids[1]).availableA, 0);
     }
@@ -3306,7 +3300,7 @@ contract SwapboardTest is Test {
         assertEq(order.maker, _maker);
         assertEq(order.amountA, AMOUNT_A);
         assertEq(order.availableA, AMOUNT_A);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
     }
 
     /// @notice Property: two same-tokenA orders pull once for the summed amount
@@ -3414,8 +3408,8 @@ contract SwapboardTest is Test {
 
         assertFalse(_board.canFill(ids[0]));
         assertFalse(_board.canFill(ids[1]));
-        assertFalse(_board.getOrder(ids[0]).active);
-        assertFalse(_board.getOrder(ids[1]).active);
+        assertEq(_board.getOrder(ids[0]).maker, address(0));
+        assertEq(_board.getOrder(ids[1]).maker, address(0));
         assertEq(_board.getOrder(ids[0]).availableA, 0);
         assertEq(_board.getOrder(ids[1]).availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
@@ -3472,8 +3466,8 @@ contract SwapboardTest is Test {
         assertEq(_maker.balance, makerEthBefore);
         assertFalse(_board.canFill(ids[0]));
         assertFalse(_board.canFill(ids[1]));
-        assertFalse(_board.getOrder(ids[0]).active);
-        assertFalse(_board.getOrder(ids[1]).active);
+        assertEq(_board.getOrder(ids[0]).maker, address(0));
+        assertEq(_board.getOrder(ids[1]).maker, address(0));
         assertEq(_board.getOrder(ids[0]).availableA, 0);
         assertEq(_board.getOrder(ids[1]).availableA, 0);
     }
@@ -3496,7 +3490,6 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(_maker), makerBefore + 40 ether);
         for (uint256 i = 0; i < 3; ++i) {
             assertFalse(_board.canFill(ids[i]));
-            assertFalse(_board.getOrder(ids[i]).active);
             assertEq(_board.getOrder(ids[i]).availableA, 0);
         }
     }
@@ -3566,7 +3559,6 @@ contract SwapboardTest is Test {
         _board.cancelOrders(cancelIds);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
         assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tokenA.balanceOf(_maker), makerBefore + AMOUNT_A);
@@ -3742,7 +3734,6 @@ contract SwapboardTest is Test {
         for (uint256 i = 0; i < 2; ++i) {
             ISwapboard.Order memory order = _board.getOrder(ids[i]);
             assertEq(order.maker, address(0));
-            assertFalse(order.active);
             assertEq(order.amountA, 0);
             assertEq(order.amountB, 0);
             assertEq(order.availableA, 0);
@@ -3828,8 +3819,8 @@ contract SwapboardTest is Test {
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + AMOUNT_B * 2);
         assertFalse(_board.canFill(ids.id0));
         assertFalse(_board.canFill(ids.id1));
-        assertFalse(_board.getOrder(ids.id0).active);
-        assertFalse(_board.getOrder(ids.id1).active);
+        assertEq(_board.getOrder(ids.id0).maker, address(0));
+        assertEq(_board.getOrder(ids.id1).maker, address(0));
         assertEq(_board.getOrder(ids.id0).availableA, 0);
         assertEq(_board.getOrder(ids.id1).availableA, 0);
     }
@@ -3862,7 +3853,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(order.availableA, AMOUNT_A - fillA1 - fillA2);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -3976,8 +3967,8 @@ contract SwapboardTest is Test {
         assertEq(_tokenA.balanceOf(address(_board)), 0);
         assertFalse(_board.canFill(idSell));
         assertFalse(_board.canFill(idBuy));
-        assertFalse(_board.getOrder(idSell).active);
-        assertFalse(_board.getOrder(idBuy).active);
+        assertEq(_board.getOrder(idSell).maker, address(0));
+        assertEq(_board.getOrder(idBuy).maker, address(0));
         assertEq(_board.getOrder(idSell).availableA, 0);
         assertEq(_board.getOrder(idBuy).availableA, 0);
     }
@@ -4002,7 +3993,6 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         assertFalse(_board.canFill(orderId));
-        assertFalse(_board.getOrder(orderId).active);
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -4030,8 +4020,8 @@ contract SwapboardTest is Test {
         _board.fillOrders(fills, 0);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(ids.id0).active);
-        assertFalse(_board.getOrder(ids.id1).active);
+        assertEq(_board.getOrder(ids.id0).maker, address(0));
+        assertEq(_board.getOrder(ids.id1).maker, address(0));
         assertEq(_board.getOrder(ids.id0).availableA, 0);
         assertEq(_board.getOrder(ids.id1).availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
@@ -4102,8 +4092,8 @@ contract SwapboardTest is Test {
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
         assertEq(_tokenA.balanceOf(address(_board)), 0);
         assertEq(_tokenB.balanceOf(address(_board)), 0);
-        assertFalse(_board.getOrder(ids[0]).active);
-        assertFalse(_board.getOrder(ids[1]).active);
+        assertEq(_board.getOrder(ids[0]).maker, address(0));
+        assertEq(_board.getOrder(ids[1]).maker, address(0));
         assertEq(_board.getOrder(ids[0]).availableA, 0);
         assertEq(_board.getOrder(ids[1]).availableA, 0);
     }
@@ -4244,8 +4234,8 @@ contract SwapboardTest is Test {
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + AMOUNT_B);
         assertEq(_tokenA.balanceOf(address(_board)), 0);
         assertEq(_tokenB.balanceOf(address(_board)), 0);
-        assertFalse(_board.getOrder(id0).active);
-        assertFalse(_board.getOrder(id1).active);
+        assertEq(_board.getOrder(id0).maker, address(0));
+        assertEq(_board.getOrder(id1).maker, address(0));
         assertEq(_board.getOrder(id0).availableA, 0);
         assertEq(_board.getOrder(id1).availableA, 0);
     }
@@ -4284,8 +4274,8 @@ contract SwapboardTest is Test {
         assertEq(_tokenB.balanceOf(_maker), makerBBefore + AMOUNT_B);
         assertEq(_tokenB.balanceOf(maker2), maker2BBefore + AMOUNT_B);
         assertEq(_tokenA.balanceOf(address(_board)), 0);
-        assertFalse(_board.getOrder(id0).active);
-        assertFalse(_board.getOrder(id1).active);
+        assertEq(_board.getOrder(id0).maker, address(0));
+        assertEq(_board.getOrder(id1).maker, address(0));
         assertEq(_board.getOrder(id0).availableA, 0);
         assertEq(_board.getOrder(id1).availableA, 0);
     }
@@ -4317,7 +4307,7 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertFalse(_board.canFill(orderId));
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
         assertEq(order.availableA, 0);
         assertEq(_tokenA.balanceOf(address(_board)), 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
@@ -4428,7 +4418,6 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         assertFalse(_board.canFill(orderId));
-        assertFalse(_board.getOrder(orderId).active);
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -4454,7 +4443,7 @@ contract SwapboardTest is Test {
         _board.fillOrders(fills, 0);
         vm.stopPrank();
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_board.getOrder(orderId).availableA, 0);
         assertEq(_tf(_tokenA), tokenAPullsBefore);
         assertEq(_tf(_tokenB), tokenBPullsBefore + 1);
@@ -4525,8 +4514,8 @@ contract SwapboardTest is Test {
         assertEq(_maker.balance, makerEthBefore + totalEth);
         assertEq(_tokenA.balanceOf(address(_board)), 0);
         assertEq(address(_board).balance, 0);
-        assertFalse(_board.getOrder(ids[0]).active);
-        assertFalse(_board.getOrder(ids[1]).active);
+        assertEq(_board.getOrder(ids[0]).maker, address(0));
+        assertEq(_board.getOrder(ids[1]).maker, address(0));
         assertEq(_board.getOrder(ids[0]).availableA, 0);
         assertEq(_board.getOrder(ids[1]).availableA, 0);
     }
@@ -4715,7 +4704,7 @@ contract SwapboardTest is Test {
         ISwapboard.Order memory after_ = _board.getOrder(orderId);
         assertEq(after_.amountA, newAvailableA);
         assertEq(after_.availableA, newAvailableA);
-        assertTrue(after_.active);
+        assertNotEq(after_.maker, address(0));
     }
 
     /// @notice Tests modifyOrder emits OrderModified
@@ -4817,48 +4806,6 @@ contract SwapboardTest is Test {
         vm.prank(_maker);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _board.setPartialFillAllowed(orderId, true);
-    }
-
-    /// @notice Tests setPartialFillAllowed reverts OrderNotActive when maker remains but active is false
-    /// @dev Cancel/full-fill delete storage (OrderNotFound). Force `active=false` while keeping maker.
-    function test_setPartialFillAllowed_reverts_orderNotActive() public {
-        uint256 orderId = _createOrderAsMaker(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
-
-        // Order.active is struct field depth 1.
-        _forceOrderField(orderId, 1, 0);
-
-        ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertEq(order.maker, _maker);
-        assertFalse(order.active);
-
-        vm.prank(_maker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        _board.setPartialFillAllowed(orderId, true);
-    }
-
-    /// @notice Tests modifyOrder reverts OrderNotActive when maker remains but active is false
-    /// @dev Cancel/full-fill delete storage (OrderNotFound). Force `active=false` while keeping maker.
-    function test_modifyOrder_reverts_orderNotActive() public {
-        uint256 orderId = _createOrderAsMaker(_order(address(_tokenA), AMOUNT_A, address(_tokenB), AMOUNT_B));
-        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
-
-        _forceOrderField(orderId, 1, 0);
-
-        assertEq(_board.getOrder(orderId).maker, _maker);
-        assertFalse(_board.getOrder(orderId).active);
-
-        vm.prank(_maker);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        _board.modifyOrder(
-            orderId,
-            ISwapboard.OrderAmounts({
-                amountA: snapshot.amountA,
-                amountB: snapshot.amountB,
-                availableA: snapshot.availableA,
-                availableB: snapshot.availableB
-            }),
-            _modify(snapshot.availableA / 2, snapshot.availableB / 2)
-        );
     }
 
     /// @notice Tests modifyOrder reverts for a non-existent order
@@ -5202,7 +5149,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory filled = _board.getOrder(orderId);
-        assertFalse(filled.active);
+        assertEq(filled.maker, address(0));
         assertEq(filled.availableA, 0);
         assertEq(_tokenA.balanceOf(_taker), AMOUNT_A * 10 + newA);
         assertEq(_tokenB.balanceOf(_maker), AMOUNT_B * 10 + newB);
@@ -5221,7 +5168,7 @@ contract SwapboardTest is Test {
         vm.prank(_taker);
         _fillOrderPayEth(orderId, AMOUNT_A / 2, ETH_AMOUNT / 2);
 
-        assertFalse(_board.getOrder(orderId).active);
+        assertEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_tokenA.balanceOf(_taker), AMOUNT_A * 10 + AMOUNT_A / 2);
         assertEq(address(_board).balance, 0);
     }
@@ -5239,7 +5186,7 @@ contract SwapboardTest is Test {
         assertEq(after_.tokenA, address(_tokenA));
         assertEq(after_.tokenB, address(_tokenB));
         assertEq(after_.maker, _maker);
-        assertTrue(after_.active);
+        assertNotEq(after_.maker, address(0));
     }
 
     /// @notice Tests modifyOrder reverts when previousAmounts.amountA is stale
@@ -5394,7 +5341,7 @@ contract SwapboardTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory after_ = _board.getOrder(orderId);
-        assertTrue(after_.active);
+        assertNotEq(after_.maker, address(0));
         assertEq(after_.availableA, AMOUNT_A / 2);
         assertTrue(after_.partialFillAllowed);
     }
@@ -5495,7 +5442,7 @@ contract SwapboardTest is Test {
         assertEq(after_.availableA, newA);
         assertEq(after_.amountB, newB);
         assertEq(after_.availableB, newB);
-        assertTrue(after_.active);
+        assertNotEq(after_.maker, address(0));
 
         if (newA > AMOUNT_A) {
             assertEq(makerBefore - _tokenA.balanceOf(_maker), newA - AMOUNT_A);

@@ -40,7 +40,7 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_plainOrder(), permit);
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
         assertEq(_tokenA.allowance(_maker, address(_board)), 0);
     }
@@ -53,7 +53,7 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_plainOrder(), _skipPermit());
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
     }
 
@@ -78,7 +78,7 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder{value: _AMOUNT_A}(_ethOffered(), _skipPermit());
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(address(_board).balance, _AMOUNT_A);
     }
 
@@ -895,7 +895,7 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_plainOrder(), permit);
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
         assertEq(_permitA.nonces(_maker), 1);
     }
@@ -932,7 +932,7 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_plainOrder(), permit);
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
         assertEq(_permitA.nonces(_maker), 0);
     }

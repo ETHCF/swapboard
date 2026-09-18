@@ -61,7 +61,7 @@ contract DeployTest is Test {
         assertEq(order.amountB, 100e6);
         assertEq(order.availableA, 1 ether);
         assertEq(order.availableB, 100e6);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(board.getNextOrderId(), 1);
         assertEq(address(board).balance, 1 ether);
     }
@@ -91,7 +91,6 @@ contract DeployTest is Test {
         vm.stopPrank();
 
         assertFalse(board.canFill(fillId));
-        assertFalse(board.getOrder(fillId).active);
         assertEq(board.getOrder(fillId).availableA, 0);
         assertEq(token.getTransferFromCalls(), tokenPullsBefore + 1);
         assertEq(taker.balance, 1 ether);
@@ -103,7 +102,6 @@ contract DeployTest is Test {
         board.cancelOrder(cancelId);
 
         assertFalse(board.canFill(cancelId));
-        assertFalse(board.getOrder(cancelId).active);
         assertEq(board.getOrder(cancelId).availableA, 0);
         assertEq(maker.balance, makerEthBefore + 1 ether);
         assertEq(address(board).balance, 0);
@@ -135,7 +133,6 @@ contract DeployTest is Test {
         vm.stopPrank();
 
         assertFalse(board.canFill(orderId));
-        assertFalse(board.getOrder(orderId).active);
         assertEq(board.getOrder(orderId).availableA, 0);
         assertEq(token.getTransferFromCalls(), tokenPullsBefore);
         assertEq(maker.balance, makerEthBefore + 1 ether);
