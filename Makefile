@@ -28,9 +28,9 @@ install:
 build: lint build-contracts
 	cd subgraph && pnpm build
 
-# Build contracts only
+# Build contracts only (solc warnings are errors here so they cannot slip through CI)
 build-contracts:
-	$(FORGE) build --sizes
+	$(FORGE) build --sizes --deny warnings
 
 # Show contract runtime / initcode sizes (EIP-170 margin)
 size:
