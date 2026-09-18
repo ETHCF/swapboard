@@ -443,8 +443,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `NoChange()` | `0xa88ee577` | Modification would leave the order unchanged (including any item in a `modifyOrders` batch) |
 | `SameToken()` | `0x201b580a` | tokenA and tokenB are identical |
 | `BalanceMismatch(uint256,uint256)` | `0x6e65ed84` | Transfer mismatch on tokenA deposit or ERC20 tokenB payment to maker (fee-on-transfer, mid-transfer rebase, or phantom token) |
-| `OrderNotFound(uint256)` | `0x4e90badc` | Order doesn't exist |
-| `OrderNotActive(uint256)` | `0xd2c02610` | Order already filled/cancelled |
+| `OrderNotFound(uint256)` | `0x4e90badc` | Order doesn't exist, or was filled/cancelled (both `delete` storage) |
 | `NotMaker(uint256,address,address)` | `0x98cd7222` | Caller is not order maker |
 | `SelfFill()` | `0x9d7a930f` | Maker attempted to fill their own order. Banned so tokenB can always be pulled directly to a distinct maker (`transferFrom(self, self)` does not increase the recipient, so an exact-receive check would fail) |
 | `ETHAmountMismatch(uint256,uint256)` | `0x8230dc8f` | `msg.value` does not match the required ETH amount |
@@ -643,7 +642,7 @@ function modifyOrders(
 
 Behavior:
 
-- Same per-order rules as `modifyOrder` (race check, remainings-only, reset totals, `ZeroAmount` / `NoChange` / `OrderStateMismatch` / `NotMaker` / `OrderNotActive`).
+- Same per-order rules as `modifyOrder` (race check, remainings-only, reset totals, `ZeroAmount` / `NoChange` / `OrderStateMismatch` / `NotMaker` / `OrderNotFound`).
 - Duplicate `orderId`s revert with `DuplicateOrderId`.
 - Empty `mods` reverts with `ZeroAmount`.
 - Per unique tokenA (and ETH), top-ups are **netted** against refunds: only the net delta is pulled or sent. Equal opposing flows cancel with no transfer. `msg.value` must equal the net ETH top-up (0 when flat or net refund).
