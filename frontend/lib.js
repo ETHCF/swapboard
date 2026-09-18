@@ -421,23 +421,22 @@ function coinGeckoUrl(address) {
  * Loaded from the preceding script tag in the browser and required under Jest.
  * An absent file degrades to an empty registry rather than throwing: every
  * lookup then answers "unknown", which callers already treat as "use approve".
- * @constant {{CHAIN_ID: number, GENERATED: string, TOKENS: Object<string,string>}}
+ * @constant {{GENERATED: string, CHAINS: Object<string, {TOKENS: Object<string,string>}>}}
  */
 const PERMIT_DATA = (typeof module !== "undefined" && module.exports
   ? require("./permit-tokens.js")
   : typeof window !== "undefined" && window.SwapboardPermitTokens) || {
-  CHAIN_ID: 1,
   GENERATED: "",
-  TOKENS: {},
+  CHAINS: {},
 };
 
 /**
  * Permit flavour a token implements, or "unknown" when it is not in the registry.
  *
- * The registry was read off Ethereum mainnet, so it is only consulted when the
- * caller is on mainnet; on any other chain every token answers "unknown". Without
- * that gate a Sepolia build would report mainnet verdicts for addresses that are
- * unrelated tokens there.
+ * Verdicts are per chain, because an address that is a permit-capable token on
+ * mainnet is an unrelated contract (or nothing at all) on Sepolia. A chain the
+ * registry has no section for answers "unknown" for every address, which callers
+ * already treat as "use approve()".
  *
  * @param {*} address - Token address
  * @param {number} [chainId] - Chain the address lives on; defaults to the build target
@@ -445,30 +444,289 @@ const PERMIT_DATA = (typeof module !== "undefined" && module.exports
  */
 function permitKindFor(address, chainId = EXPECTED_CHAIN_ID) {
   if (typeof address !== "string") return "unknown";
-  if (chainId !== PERMIT_DATA.CHAIN_ID) return "unknown";
-  return PERMIT_DATA.TOKENS[address.toLowerCase()] || "unknown";
+  const section = (PERMIT_DATA.CHAINS || {})[String(chainId)];
+  if (!section) return "unknown";
+  return section.TOKENS[address.toLowerCase()] || "unknown";
 }
 
 /**
  * Whether a token can be approved by signature instead of an approve() send.
  *
- * True only for the flavours a signature flow can actually drive. "nonstandard"
- * is deliberately false: those tokens (Yearn-style, permit(...,bytes)) answer
- * DOMAIN_SEPARATOR() and nonces() like a 2612 token but revert when called as
- * one. "unknown" and "unverified" are false too, so an unrecognised token falls
- * back to approve() rather than sending a permit that reverts -- a false
- * negative costs one extra transaction, a false positive costs a failed swap.
+ * True only for the flavours a signature flow can actually drive, which here means
+ * the ones Swapboard's `Permit` struct can express: it is EIP-2612 shaped
+ * (value, deadline, v, r, s), so:
  *
- * Callers still need permitKindFor() to pick the signature shape, since the DAI
- * flavour takes a different argument list from EIP-2612.
+ *   "dai"         false. DAI-style permit(holder,spender,nonce,expiry,allowed,...)
+ *                 takes a different argument list and there is no overload for it
+ *                 on chain, so signing one would revert the swap.
+ *   "both"        true -- those tokens do expose the 2612 entry point as well.
+ *   "nonstandard" false. Yearn-style permit(...,bytes) tokens answer
+ *                 DOMAIN_SEPARATOR() and nonces() like a 2612 token but revert
+ *                 when called as one.
+ *   "unverified"  false, and so is "unknown": an unrecognised token falls back to
+ *                 Permit2 or approve().
+ *
+ * The bias is deliberate -- a false negative costs one extra transaction, a false
+ * positive costs a failed swap.
  *
  * @param {*} address - Token address
  * @param {number} [chainId] - Chain the address lives on; defaults to the build target
- * @returns {boolean} True when a permit signature can replace approve()
+ * @returns {boolean} True when an EIP-2612 signature can replace approve()
  */
 function supportsPermit(address, chainId = EXPECTED_CHAIN_ID) {
-  const kind = permitKindFor(address, chainId);
-  return kind === "eip2612" || kind === "dai" || kind === "both";
+  return isSignablePermitKind(permitKindFor(address, chainId));
+}
+
+/**
+ * Whether a registry flavour maps onto Swapboard's EIP-2612 `Permit` struct.
+ * Split out so supportsPermit() and choosePullStrategy() cannot drift apart —
+ * one reads an address, the other an already-resolved kind.
+ * @param {string} kind - Flavour from permitKindFor()
+ * @returns {boolean} True when the 2612 entry point can be signed for
+ */
+function isSignablePermitKind(kind) {
+  return kind === "eip2612" || kind === "both";
+}
+
+// ============================================================================
+// Signature-based approvals
+// ============================================================================
+
+/**
+ * Canonical Permit2, identical on every chain it is deployed to.
+ * Mirrors `_PERMIT2` in contracts/src/Swapboard.sol — the board hardcodes it too,
+ * so a mismatch here means a signature no entry point can spend.
+ * @constant {string}
+ */
+const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+
+/**
+ * Longest a Permit2 batch can be, because the contract tracks which entries were
+ * used in a single uint256 bitmap and reverts `TooManyPermit2` past it.
+ * @constant {number}
+ */
+const MAX_PERMIT2_BATCH = 256;
+
+/**
+ * How long a fresh permit signature stays valid, in seconds.
+ * Long enough to survive a slow wallet confirmation and a congested block, short
+ * enough that an abandoned signature stops being spendable the same day.
+ * @constant {number}
+ */
+const PERMIT_TTL_SECONDS = 30 * 60;
+
+/**
+ * EIP-712 type definition for an EIP-2612 permit.
+ * Matches PERMIT_TYPEHASH in contracts/test/mocks/MockERC20Permit.sol.
+ * @constant {Object}
+ */
+const PERMIT_TYPES = {
+  Permit: [
+    { name: "owner", type: "address" },
+    { name: "spender", type: "address" },
+    { name: "value", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+};
+
+/**
+ * EIP-712 type definition for a Permit2 SignatureTransfer.
+ * Matches PERMIT_TRANSFER_FROM_TYPEHASH in contracts/test/mocks/MockPermit2.sol.
+ * @constant {Object}
+ */
+const PERMIT2_TYPES = {
+  PermitTransferFrom: [
+    { name: "permitted", type: "TokenPermissions" },
+    { name: "spender", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+  TokenPermissions: [
+    { name: "token", type: "address" },
+    { name: "amount", type: "uint256" },
+  ],
+};
+
+/**
+ * EIP-712 domain for Permit2.
+ *
+ * Deliberately has no `version` field — Permit2's own domain omits it, and adding
+ * one changes the separator, so every signature would be rejected.
+ *
+ * @param {number} chainId - Chain the signature is for
+ * @returns {{name: string, chainId: number, verifyingContract: string}}
+ */
+function permit2Domain(chainId) {
+  return { name: "Permit2", chainId, verifyingContract: PERMIT2_ADDRESS };
+}
+
+/**
+ * Builds the message half of an EIP-2612 permit signature.
+ * @param {Object} args
+ * @param {string} args.owner - Token holder signing
+ * @param {string} args.spender - Address being approved (the board)
+ * @param {bigint|string} args.value - Allowance being signed for
+ * @param {bigint|string} args.nonce - Current nonces(owner) on the token
+ * @param {number} args.deadline - Unix timestamp the signature expires at
+ * @returns {Object} EIP-712 message
+ */
+function buildPermitMessage({ owner, spender, value, nonce, deadline }) {
+  return {
+    owner,
+    spender,
+    value: BigInt(value).toString(),
+    nonce: BigInt(nonce).toString(),
+    deadline,
+  };
+}
+
+/**
+ * Builds the message half of a Permit2 SignatureTransfer signature.
+ * @param {Object} args
+ * @param {string} args.token - ERC20 being pulled
+ * @param {bigint|string} args.amount - Maximum the signature authorises
+ * @param {string} args.spender - Address allowed to spend it (the board)
+ * @param {bigint|string} args.nonce - Unordered nonce; see permit2Nonce
+ * @param {number} args.deadline - Unix timestamp the signature expires at
+ * @returns {Object} EIP-712 message
+ */
+function buildPermit2Message({ token, amount, spender, nonce, deadline }) {
+  return {
+    permitted: { token, amount: BigInt(amount).toString() },
+    spender,
+    nonce: BigInt(nonce).toString(),
+    deadline,
+  };
+}
+
+/**
+ * Picks a Permit2 nonce.
+ *
+ * Permit2 nonces are unordered — it stores a spent-bit per nonce rather than a
+ * counter — so a random draw is the right shape. A counter would collide as soon
+ * as two signatures were outstanding at once, which a batch does routinely.
+ *
+ * @param {Uint8Array|number[]} randomBytes - At least 32 bytes of randomness
+ * @returns {bigint} Nonce to sign
+ */
+function permit2Nonce(randomBytes) {
+  let nonce = 0n;
+  for (let i = 0; i < 32; i++) {
+    nonce = (nonce << 8n) | BigInt(randomBytes[i] & 0xff);
+  }
+  return nonce;
+}
+
+/**
+ * Expiry timestamp for a fresh signature.
+ * @param {number} nowSec - Current unix time in seconds
+ * @param {number} [ttlSec] - Lifetime
+ * @returns {number} Unix timestamp
+ */
+function permitDeadline(nowSec, ttlSec = PERMIT_TTL_SECONDS) {
+  return Math.floor(nowSec) + ttlSec;
+}
+
+/**
+ * Decides how one token's amount should reach the board.
+ *
+ * The single decision point for the whole approval story — if you are asking why
+ * a token took a given path, read this and nothing else. Order of preference:
+ *
+ *   "none"    native ETH (rides msg.value), a zero pull, or a standing allowance
+ *             that already covers it. Costs the user nothing and asks for nothing.
+ *   "permit"  the token implements EIP-2612, so one signature replaces the
+ *             approval transaction entirely.
+ *   "permit2" the token does not, but the user has already approved canonical
+ *             Permit2 for it, so a SignatureTransfer can pull it.
+ *   "approve" nothing else applies: send the approve() transaction, as before.
+ *
+ * @param {Object} args
+ * @param {boolean} args.isNative - Whether the token is the native-ETH sentinel
+ * @param {bigint|string} args.allowance - Current allowance granted to the board
+ * @param {bigint|string} args.amount - Amount this call needs to pull
+ * @param {string} args.permitKind - Flavour from permitKindFor()
+ * @param {bigint|string} args.permit2Allowance - Allowance granted to Permit2
+ * @returns {string} "none" | "permit" | "permit2" | "approve"
+ */
+function choosePullStrategy({ isNative, allowance, amount, permitKind, permit2Allowance }) {
+  if (isNative) return "none";
+
+  const needed = BigInt(amount);
+  if (needed <= 0n) return "none";
+  if (BigInt(allowance) >= needed) return "none";
+
+  if (isSignablePermitKind(permitKind)) return "permit";
+  if (BigInt(permit2Allowance) >= needed) return "permit2";
+  return "approve";
+}
+
+/**
+ * Plans the pulls for a batch call.
+ *
+ * Three constraints shape this. A call takes either `TokenPermit[]` or
+ * `TokenPermit2[]` and never both, so the batch commits to one signature flavour.
+ * The contract rejects a batch that carries a duplicate token
+ * (`DuplicatePermitToken`) or an entry nothing spends (`UnusedPermit` /
+ * `UnusedPermit2`), so entries are aggregated per token and emitted only for
+ * tokens actually pulled. And a Permit2 batch caps at MAX_PERMIT2_BATCH.
+ *
+ * Whichever signature group is larger wins the overload; the losing group falls
+ * back to approve() transactions, since that costs fewer transactions than
+ * splitting the call in two. A tie goes to EIP-2612, matching the single-token
+ * preference order.
+ *
+ * The two approve lists are kept apart because they are settled by different
+ * callers. `approvals` are tokens that could never be signed for; a batch is
+ * chunked into several transactions, and those want one approval covering the
+ * whole batch, sent once outside the chunk loop. `demoted` are tokens that could
+ * have been signed for but lost the vote in this chunk — which chunk they lose in
+ * depends on the chunk, so only the chunk can settle them.
+ *
+ * @param {Array<Object>} legs - {token, amount, isNative, allowance, permitKind, permit2Allowance}
+ * @returns {{strategy: string, entries: Array<Object>, approvals: Array<Object>, demoted: Array<Object>}}
+ *          `strategy` is "none" | "permit" | "permit2"; `entries` are the tokens
+ *          taking that signature path.
+ */
+function planBatchPulls(legs) {
+  const byToken = new Map();
+
+  for (const leg of legs) {
+    if (leg.isNative) continue;
+    const key = leg.token.toLowerCase();
+    const seen = byToken.get(key);
+    if (seen) {
+      seen.amount += BigInt(leg.amount);
+    } else {
+      byToken.set(key, { ...leg, token: leg.token, amount: BigInt(leg.amount) });
+    }
+  }
+
+  const permits = [];
+  const permit2s = [];
+  const approvals = [];
+
+  for (const leg of byToken.values()) {
+    const strategy = choosePullStrategy(leg);
+    if (strategy === "permit") permits.push(leg);
+    else if (strategy === "permit2") permit2s.push(leg);
+    else if (strategy === "approve") approvals.push(leg);
+  }
+
+  // Past the bitmap limit the contract reverts TooManyPermit2, so the tail
+  // approves instead of making the whole call unsendable.
+  const overflow = permit2s.splice(MAX_PERMIT2_BATCH);
+
+  if (permits.length === 0 && permit2s.length === 0) {
+    return { strategy: "none", entries: [], approvals, demoted: overflow };
+  }
+
+  if (permits.length >= permit2s.length) {
+    return { strategy: "permit", entries: permits, approvals, demoted: permit2s.concat(overflow) };
+  }
+
+  return { strategy: "permit2", entries: permit2s, approvals, demoted: permits.concat(overflow) };
 }
 
 /**
@@ -1215,6 +1473,8 @@ const VERSION_CAPS = {
     gasEstimate: true,
     /** Real subgraph, so post-transaction indexing can be polled. */
     subgraphPolling: true,
+    /** The v1 contract has no permit overloads; approvals are always a transaction. */
+    permit: false,
     /** Writes hit chain. */
     live: true,
   },
@@ -1237,6 +1497,8 @@ const VERSION_CAPS = {
     gasEstimate: true,
     /** Real subgraph, so post-transaction indexing can be polled. */
     subgraphPolling: true,
+    /** Every entry point has EIP-2612 and Permit2 overloads; see choosePullStrategy. */
+    permit: true,
     /** Writes hit chain. */
     live: true,
   },
@@ -1877,6 +2139,21 @@ if (typeof window !== "undefined") {
     // Permit registry
     permitKindFor,
     supportsPermit,
+    isSignablePermitKind,
+
+    // Signature-based approvals
+    PERMIT2_ADDRESS,
+    MAX_PERMIT2_BATCH,
+    PERMIT_TTL_SECONDS,
+    PERMIT_TYPES,
+    PERMIT2_TYPES,
+    permit2Domain,
+    buildPermitMessage,
+    buildPermit2Message,
+    permit2Nonce,
+    permitDeadline,
+    choosePullStrategy,
+    planBatchPulls,
     fetchPrices,
     calculateMarketDeviation,
 
@@ -1993,6 +2270,21 @@ if (typeof module !== "undefined" && module.exports) {
     // Permit registry
     permitKindFor,
     supportsPermit,
+    isSignablePermitKind,
+
+    // Signature-based approvals
+    PERMIT2_ADDRESS,
+    MAX_PERMIT2_BATCH,
+    PERMIT_TTL_SECONDS,
+    PERMIT_TYPES,
+    PERMIT2_TYPES,
+    permit2Domain,
+    buildPermitMessage,
+    buildPermit2Message,
+    permit2Nonce,
+    permitDeadline,
+    choosePullStrategy,
+    planBatchPulls,
 
     // Token search
     searchTokens,

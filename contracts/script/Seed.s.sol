@@ -4,6 +4,7 @@ pragma solidity 0.8.36;
 import {Script, console} from "forge-std/Script.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "../test/mocks/MockERC20.sol";
+import {MockERC20Permit} from "../test/mocks/MockERC20Permit.sol";
 
 /// @title Seed
 /// @author Number Group (numbergroup.xyz) for Ethereum Community Foundation
@@ -45,7 +46,11 @@ contract Seed is Script {
         vm.startBroadcast();
         (, address me,) = vm.readCallers();
 
-        if (tokenA == address(0)) tokenA = address(new MockERC20("Swapboard Smoke A", "SMKA", 18));
+        // tokenA is EIP-2612 capable so the seeded board exercises the permit
+        // path, and tokenB is not, so the classic approve() path stays covered.
+        // Both addresses are printed below; add them to the Sepolia section of
+        // frontend/permit-tokens.js or the UI will treat tokenA as unknown.
+        if (tokenA == address(0)) tokenA = address(new MockERC20Permit("Swapboard Smoke A", "SMKA", 18));
         if (tokenB == address(0)) tokenB = address(new MockERC20("Swapboard Smoke B", "SMKB", 6));
         MockERC20(tokenA).mint(me, 10_000e18);
         MockERC20(tokenB).mint(me, 10_000e6);

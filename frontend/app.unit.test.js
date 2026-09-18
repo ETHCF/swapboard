@@ -17,6 +17,11 @@
 const fs = require("fs");
 const path = require("path");
 
+// The chain the build targets, read from lib.js rather than hardcoded: deploy.sh
+// rewrites BUILD_TARGET in place, and a harness pinned to mainnet makes
+// validateNetwork reject every connect the moment a build points elsewhere.
+const { EXPECTED_CHAIN_ID, deploymentFor, PERMIT2_ADDRESS } = require("./lib");
+
 // jsdom implements no layout, so Element.scrollIntoView does not exist. renderOrders
 // schedules one on a timer to reveal a linked order, which lands in whichever test
 // happens to be running when the timer fires.
@@ -220,6 +225,38 @@ function jsonResponse(payload) {
  * @param {Object} [over] - Overrides merged onto the generated fakes
  * @returns {Object} handles for assertions: { provider, signer, swap, token, tx, wallet }
  */
+/** Full signatures of the v2 permit overloads, as app.js addresses them. */
+const OVERLOAD = {
+  createOrderPermit:
+    "createOrder((address,uint128,address,uint128,bool),(uint256,uint256,uint8,bytes32,bytes32))",
+  createOrderPermit2:
+    "createOrder((address,uint128,address,uint128,bool),(uint256,uint256,uint256,bytes))",
+  createOrdersPermit:
+    "createOrders((address,uint128,address,uint128,bool)[],(address,uint8,uint256,uint256,bytes32,bytes32)[])",
+  createOrdersPermit2:
+    "createOrders((address,uint128,address,uint128,bool)[],(address,uint256,uint256,uint256,bytes)[])",
+  fillOrderPermit:
+    "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint8,bytes32,bytes32))",
+  fillOrderPermit2: "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint256,bytes))",
+  fillOrdersPermit:
+    "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint8,uint256,uint256,bytes32,bytes32)[])",
+  fillOrdersPermit2:
+    "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint256,uint256,uint256,bytes)[])",
+};
+
+/**
+ * One jest.fn per permit overload, keyed by its full signature.
+ * @param {Object} tx - Transaction the fakes resolve with
+ * @returns {Object<string, jest.Mock>}
+ */
+function permitOverloadFakes(tx) {
+  const fakes = {};
+  for (const signature of Object.values(OVERLOAD)) {
+    fakes[signature] = jest.fn().mockResolvedValue(tx);
+  }
+  return fakes;
+}
+
 function installEthers(over = {}) {
   const receipt = { status: 1, hash: "0xtx", blockNumber: 1 };
   const tx = { hash: "0xtx", wait: jest.fn().mockResolvedValue(receipt) };
@@ -231,6 +268,13 @@ function installEthers(over = {}) {
     balanceOf: jest.fn().mockResolvedValue(BigInt("5000000000000000000")),
     allowance: jest.fn().mockResolvedValue(BigInt(0)),
     approve: jest.fn().mockResolvedValue(tx),
+    // EIP-2612. eip712Domain() and version() reject by default, which is the
+    // common shape: most tokens publish neither, and resolvePermitDomain is
+    // expected to fall back to name() plus a separator comparison.
+    nonces: jest.fn().mockResolvedValue(BigInt(0)),
+    DOMAIN_SEPARATOR: jest.fn().mockResolvedValue(DOMAIN_SEPARATOR_V1),
+    version: jest.fn().mockRejectedValue(new Error("no version()")),
+    eip712Domain: jest.fn().mockRejectedValue(new Error("no eip712Domain()")),
     ...(over.token || {}),
   };
 
@@ -253,18 +297,22 @@ function installEthers(over = {}) {
     interface: { encodeFunctionData: jest.fn(() => "0xdeadbeef") },
     on: jest.fn(),
     off: jest.fn(),
+    // The permit overloads, which ethers addresses by full signature because a
+    // bare name is ambiguous across them.
+    ...permitOverloadFakes(tx),
     ...(over.swap || {}),
   };
 
   const signer = {
     getAddress: jest.fn().mockResolvedValue(WALLET_ADDRESS),
+    signTypedData: jest.fn().mockResolvedValue(SIGNATURE),
     ...(over.signer || {}),
   };
 
   const provider = {
     send: jest.fn().mockResolvedValue([WALLET_ADDRESS]),
     getSigner: jest.fn().mockResolvedValue(signer),
-    getNetwork: jest.fn().mockResolvedValue({ chainId: BigInt(1) }),
+    getNetwork: jest.fn().mockResolvedValue({ chainId: BigInt(EXPECTED_CHAIN_ID) }),
     lookupAddress: jest.fn().mockResolvedValue(null),
     getBalance: jest.fn().mockResolvedValue(BigInt("2000000000000000000")),
     estimateGas: jest.fn().mockResolvedValue(BigInt(21000)),
@@ -289,6 +337,22 @@ function installEthers(over = {}) {
       "115792089237316195423570985008687907853269984665640564039457584007913129639935"
     ),
     ZeroAddress: "0x0000000000000000000000000000000000000000",
+    // Splits the 65-byte SIGNATURE the signer fake returns.
+    Signature: {
+      from: jest.fn((sig) => ({
+        r: "0x" + sig.slice(2, 66),
+        s: "0x" + sig.slice(66, 130),
+        v: parseInt(sig.slice(130, 132), 16),
+      })),
+    },
+    // Only version "1" hashes to the separator the token fake publishes, so a
+    // token that really signs under version "2" is rejected unless the test
+    // says otherwise. That is the behaviour resolvePermitDomain exists for.
+    TypedDataEncoder: {
+      hashDomain: jest.fn((domain) =>
+        domain.version === "1" ? DOMAIN_SEPARATOR_V1 : DOMAIN_SEPARATOR_OTHER
+      ),
+    },
   };
 
   const wallet = {
@@ -304,15 +368,43 @@ function installEthers(over = {}) {
 
 const WALLET_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
-const SWAPBOARD_ADDRESS = "0x000000fF3D7A2d373615141d7489Ca66683DbecF";
+/** r=0x11.., s=0x22.., v=27 — a syntactically valid 65-byte signature. */
+const SIGNATURE = "0x" + "11".repeat(32) + "22".repeat(32) + "1b";
+
+/** What the token fake answers DOMAIN_SEPARATOR() with. */
+const DOMAIN_SEPARATOR_V1 = "0x" + "ab".repeat(32);
+
+/** What a token signing under a version other than "1" would publish. */
+const DOMAIN_SEPARATOR_OTHER = "0x" + "cd".repeat(32);
+
+/** A separator no candidate domain hashes to, so every candidate is rejected. */
+const DOMAIN_SEPARATOR_UNMATCHABLE = "0x" + "ef".repeat(32);
 
 /**
- * Every address the Swapboard fake answers at: v1's deployment and v2's zero
- * placeholder. v2 may send to the placeholder only because the harness runs in
- * mock mode (window.SWAPBOARD_MOCK); requireDeployed() is tested with it off.
+ * A Sepolia token the generated registry marks "eip2612" (Circle USDC). Written
+ * out rather than invented, because permitKindFor answers off the real registry
+ * and an invented address would silently take the approve() path instead.
+ */
+const PERMIT_TOKEN = "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
+
+/** A Sepolia token the registry marks "none" (WETH9). */
+const NO_PERMIT_TOKEN = "0xfff9976782d46cc05630d1f6ebab18b2324d6b14";
+
+const SWAPBOARD_ADDRESS = deploymentFor(1).CONTRACT_ADDRESS;
+
+/**
+ * Every address the Swapboard fake answers at.
+ *
+ * Read from lib.js rather than written out, because deploy.sh rewrites those
+ * slots in place: a hardcoded list silently stops matching the moment a version
+ * is redeployed, and the fake then hands back an ERC20 where the app expects the
+ * exchange. The zero address stays in the list for a version still on its
+ * placeholder, which may be sent to only because the harness runs in mock mode
+ * (window.SWAPBOARD_MOCK); requireDeployed() is tested with it off.
  */
 const SWAPBOARD_ADDRESSES = [
-  SWAPBOARD_ADDRESS.toLowerCase(),
+  deploymentFor(1).CONTRACT_ADDRESS.toLowerCase(),
+  deploymentFor(2).CONTRACT_ADDRESS.toLowerCase(),
   "0x0000000000000000000000000000000000000000",
 ];
 
@@ -1295,7 +1387,7 @@ describe("token list", () => {
   const TOKEN_LIST = {
     tokens: [
       {
-        chainId: 1,
+        chainId: EXPECTED_CHAIN_ID,
         address: "0xAAAA000000000000000000000000000000000001",
         symbol: "AAA",
         name: "Alpha",
@@ -1303,7 +1395,7 @@ describe("token list", () => {
         logoURI: "a.png",
       },
       {
-        chainId: 1,
+        chainId: EXPECTED_CHAIN_ID,
         address: "0xBBBB000000000000000000000000000000000002",
         symbol: "BBB",
         name: "Beta",
@@ -1320,7 +1412,7 @@ describe("token list", () => {
     ],
   };
 
-  test("fetches and filters to mainnet tokens", async () => {
+  test("fetches and filters to the chain the build targets", async () => {
     routeFetch({ tokenList: TOKEN_LIST });
     await app.fetchUniswapTokenList();
     const results = app.searchTokens("A");
@@ -2793,7 +2885,7 @@ describe("token selector", () => {
   const TOKEN_LIST = {
     tokens: [
       {
-        chainId: 1,
+        chainId: EXPECTED_CHAIN_ID,
         address: "0xAAAA000000000000000000000000000000000001",
         symbol: "AAA",
         name: "Alpha",
@@ -2801,7 +2893,7 @@ describe("token selector", () => {
         logoURI: "a.png",
       },
       {
-        chainId: 1,
+        chainId: EXPECTED_CHAIN_ID,
         address: "0xABBB000000000000000000000000000000000002",
         symbol: "AAB",
         name: "Alphabet",
@@ -4148,7 +4240,7 @@ describe("remaining wiring", () => {
       tokenList: {
         tokens: [
           {
-            chainId: 1,
+            chainId: EXPECTED_CHAIN_ID,
             address: "0xAAAA000000000000000000000000000000000001",
             symbol: "AAA",
             name: "Alpha",
@@ -4719,6 +4811,393 @@ describe("connector adapters", () => {
       routeFetch({ orders: [] });
       await connect(v2, h);
       await flush();
+    });
+
+    // ======================================================================
+    // Signature-based approvals
+    // ======================================================================
+
+    describe("resolvePull", () => {
+      // MUTATION: Read the allowance after deciding, or drop the check
+      // BREAKS: A user who already approved the board is asked for a signature
+      //         they do not need, for an allowance that already stands
+      test("a standing allowance needs neither signature nor transaction", async () => {
+        h.token.allowance.mockResolvedValue(10n ** 30n);
+        await expect(v2.V2.resolvePull(PERMIT_TOKEN, 1n)).resolves.toEqual({ kind: "none" });
+        expect(h.signer.signTypedData).not.toHaveBeenCalled();
+        expect(h.token.approve).not.toHaveBeenCalled();
+      });
+
+      // MUTATION: Treat the ETH sentinel as an ERC20
+      // BREAKS: allowance() is read off an address with no contract, which
+      //         throws and kills the order before it is sent
+      test("native ETH is settled without touching a token contract", async () => {
+        await expect(v2.V2.resolvePull(NATIVE, 5n)).resolves.toEqual({ kind: "none" });
+        expect(h.token.allowance).not.toHaveBeenCalled();
+      });
+
+      // MUTATION: Sign for the wrong spender, value or nonce
+      // BREAKS: The permit authorises something other than what the call pulls,
+      //         and the board's transferFrom reverts on a short allowance
+      test("a permit-capable token is signed for rather than approved", async () => {
+        const pull = await v2.V2.resolvePull(PERMIT_TOKEN, 100n);
+
+        expect(pull.kind).toBe("permit");
+        expect(pull.permit).toEqual({
+          value: 100n,
+          deadline: expect.any(Number),
+          r: "0x" + "11".repeat(32),
+          s: "0x" + "22".repeat(32),
+          v: 27,
+        });
+        expect(h.token.approve).not.toHaveBeenCalled();
+
+        const [domain, types, message] = h.signer.signTypedData.mock.calls[0];
+        expect(domain.verifyingContract).toBe(PERMIT_TOKEN);
+        expect(domain.chainId).toBe(EXPECTED_CHAIN_ID);
+        expect(Object.keys(types)).toEqual(["Permit"]);
+        expect(message.owner).toBe(WALLET_ADDRESS);
+        expect(message.spender).toBe(deploymentFor(2).CONTRACT_ADDRESS);
+        expect(message.value).toBe("100");
+        expect(message.nonce).toBe("0");
+      });
+
+      // MUTATION: Never ask the token for its nonce, or reuse a cached one
+      // BREAKS: A second permit reuses a spent nonce and reverts
+      test("the permit carries the nonce the token reports", async () => {
+        h.token.nonces.mockResolvedValue(BigInt(7));
+        await v2.V2.resolvePull(PERMIT_TOKEN, 1n);
+        expect(h.token.nonces).toHaveBeenCalledWith(WALLET_ADDRESS);
+        expect(h.signer.signTypedData.mock.calls[0][2].nonce).toBe("7");
+      });
+
+      // MUTATION: Prefer name()/version() over a published eip712Domain()
+      // BREAKS: A token that states its own domain is signed under a guessed
+      //         one, and the signature does not verify
+      test("a published ERC-5267 domain is taken at its word", async () => {
+        h.token.eip712Domain.mockResolvedValue({
+          name: "USD Coin",
+          version: "2",
+          chainId: BigInt(EXPECTED_CHAIN_ID),
+          verifyingContract: PERMIT_TOKEN,
+        });
+
+        await v2.V2.resolvePull(PERMIT_TOKEN, 1n);
+
+        expect(h.signer.signTypedData.mock.calls[0][0]).toEqual({
+          name: "USD Coin",
+          version: "2",
+          chainId: EXPECTED_CHAIN_ID,
+          verifyingContract: PERMIT_TOKEN,
+        });
+        expect(h.token.DOMAIN_SEPARATOR).not.toHaveBeenCalled();
+      });
+
+      // MUTATION: Sign the first candidate version without comparing separators
+      // BREAKS: USDC-style tokens sign under version "1" and the permit reverts,
+      //         taking the whole swap with it
+      test("the signing version is the one whose separator the token confirms", async () => {
+        h.token.version.mockResolvedValue("2");
+        h.token.DOMAIN_SEPARATOR.mockResolvedValue(DOMAIN_SEPARATOR_V1);
+
+        await v2.V2.resolvePull(PERMIT_TOKEN, 1n);
+
+        // Only "1" hashes to what the token published, so "2" is discarded even
+        // though the token names it.
+        expect(h.signer.signTypedData.mock.calls[0][0].version).toBe("1");
+      });
+
+      // MUTATION: Sign anyway when no candidate domain matches
+      // BREAKS: The wallet happily signs under a domain the token rejects, so
+      //         the swap reverts instead of paying one extra transaction
+      test("an unresolvable domain falls back rather than signing blind", async () => {
+        h.token.DOMAIN_SEPARATOR.mockResolvedValue(DOMAIN_SEPARATOR_UNMATCHABLE);
+
+        const pull = await v2.V2.resolvePull(PERMIT_TOKEN, 100n);
+
+        expect(pull).toEqual({ kind: "approve" });
+        expect(h.signer.signTypedData).not.toHaveBeenCalled();
+        expect(h.token.approve).toHaveBeenCalled();
+      });
+
+      // MUTATION: Reject the token when DOMAIN_SEPARATOR() is missing
+      // BREAKS: UNI, AAVE and GRT compute their separator inline and expose no
+      //         getter, so every one of them loses the permit path
+      test("a token with no separator getter is still signed for", async () => {
+        h.token.DOMAIN_SEPARATOR.mockRejectedValue(new Error("no such method"));
+
+        const pull = await v2.V2.resolvePull(PERMIT_TOKEN, 100n);
+
+        expect(pull.kind).toBe("permit");
+        expect(h.signer.signTypedData.mock.calls[0][0].version).toBe("1");
+      });
+
+      // MUTATION: Offer Permit2 without checking its allowance
+      // BREAKS: A Permit2 signature is produced for a user who never approved
+      //         Permit2, so permitTransferFrom reverts
+      test("a token with no permit uses Permit2 only once Permit2 is approved", async () => {
+        h.token.allowance.mockImplementation(async (_owner, spender) =>
+          spender === PERMIT2_ADDRESS ? 10n ** 30n : 0n
+        );
+
+        const pull = await v2.V2.resolvePull(NO_PERMIT_TOKEN, 100n);
+
+        expect(pull.kind).toBe("permit2");
+        expect(pull.permit2).toEqual({
+          amount: 100n,
+          nonce: expect.any(BigInt),
+          deadline: expect.any(Number),
+          signature: SIGNATURE,
+        });
+        expect(h.token.approve).not.toHaveBeenCalled();
+
+        const [domain, types, message] = h.signer.signTypedData.mock.calls[0];
+        expect(domain).toEqual({
+          name: "Permit2",
+          chainId: EXPECTED_CHAIN_ID,
+          verifyingContract: PERMIT2_ADDRESS,
+        });
+        expect(Object.keys(types).sort()).toEqual(["PermitTransferFrom", "TokenPermissions"]);
+        expect(message.permitted).toEqual({ token: NO_PERMIT_TOKEN, amount: "100" });
+        expect(message.spender).toBe(deploymentFor(2).CONTRACT_ADDRESS);
+      });
+
+      // MUTATION: Approve as soon as the domain fails, skipping Permit2
+      // BREAKS: A user who approved Permit2 pays for an approval anyway, when a
+      //         second signature would have done
+      test("a failed domain still tries Permit2 before approving", async () => {
+        h.token.DOMAIN_SEPARATOR.mockResolvedValue(DOMAIN_SEPARATOR_UNMATCHABLE);
+        h.token.allowance.mockImplementation(async (_owner, spender) =>
+          spender === PERMIT2_ADDRESS ? 10n ** 30n : 0n
+        );
+
+        const pull = await v2.V2.resolvePull(PERMIT_TOKEN, 100n);
+
+        expect(pull.kind).toBe("permit2");
+        expect(pull.permit2.signature).toBe(SIGNATURE);
+        expect(h.token.approve).not.toHaveBeenCalled();
+      });
+
+      // MUTATION: Fall through to a signature path for an unlisted token
+      // BREAKS: A token with no permit and no Permit2 approval signs something
+      //         nothing can spend, instead of approving as it always did
+      test("a token with neither approves, exactly as before", async () => {
+        const pull = await v2.V2.resolvePull(NO_PERMIT_TOKEN, 100n);
+
+        expect(pull).toEqual({ kind: "approve" });
+        expect(h.signer.signTypedData).not.toHaveBeenCalled();
+        expect(h.token.approve).toHaveBeenCalledWith(deploymentFor(2).CONTRACT_ADDRESS, 100n);
+      });
+    });
+
+    describe("randomBytes32", () => {
+      // MUTATION: Ignore Web Crypto and always use the fallback
+      // BREAKS: Nonces come from Math.random even where a real CSPRNG exists
+      test("uses Web Crypto when the platform has it", () => {
+        const getRandomValues = jest.fn((bytes) => bytes.fill(7));
+        const original = globalThis.crypto;
+        Object.defineProperty(globalThis, "crypto", {
+          value: { getRandomValues },
+          configurable: true,
+        });
+
+        try {
+          expect(Array.from(v2.randomBytes32())).toEqual(new Array(32).fill(7));
+          expect(getRandomValues).toHaveBeenCalled();
+        } finally {
+          Object.defineProperty(globalThis, "crypto", {
+            value: original,
+            configurable: true,
+          });
+        }
+      });
+
+      // MUTATION: Throw, or return a short buffer, when crypto is missing
+      // BREAKS: Embedded webviews without Web Crypto lose the Permit2 path
+      //         entirely, and permit2Nonce reads undefined bytes
+      test("still produces 32 bytes without Web Crypto", () => {
+        expect(v2.randomBytes32()).toHaveLength(32);
+      });
+
+      // MUTATION: Drop the clock mixing, or reuse one buffer
+      // BREAKS: Two signatures in one batch draw the same nonce, and the second
+      //         Permit2 transfer reverts on an already-spent bit
+      test("does not repeat itself between draws", () => {
+        const a = Array.from(v2.randomBytes32()).join();
+        const b = Array.from(v2.randomBytes32()).join();
+        expect(a).not.toBe(b);
+      });
+    });
+
+    describe("permit overload dispatch", () => {
+      // MUTATION: Call the bare method name
+      // BREAKS: ethers cannot tell three createOrder overloads apart by name and
+      //         throws an ambiguous-function error before anything is sent
+      test("createOrder with a permit addresses the overload by full signature", async () => {
+        const pull = await v2.V2.resolvePull(PERMIT_TOKEN, 1n);
+        await v2.V2.createOrder(PERMIT_TOKEN, 1n, B, 2n, true, pull);
+
+        expect(h.swap.createOrder).not.toHaveBeenCalled();
+        expect(h.swap[OVERLOAD.createOrderPermit]).toHaveBeenCalledWith(
+          { tokenA: PERMIT_TOKEN, amountA: 1n, tokenB: B, amountB: 2n, partialFillAllowed: true },
+          [1n, expect.any(Number), 27, "0x" + "11".repeat(32), "0x" + "22".repeat(32)]
+        );
+      });
+
+      // MUTATION: Encode the permit as an object instead of a positional tuple
+      // BREAKS: ethers encodes tuples positionally, so the fields land in the
+      //         wrong slots and the contract reads a nonsense signature
+      test("a Permit2 fill carries (amount, nonce, deadline, signature) in order", async () => {
+        h.token.allowance.mockImplementation(async (_owner, spender) =>
+          spender === PERMIT2_ADDRESS ? 10n ** 30n : 0n
+        );
+        const pull = await v2.V2.resolvePull(NO_PERMIT_TOKEN, 100n);
+
+        const call = v2.V2.fillCall(
+          { orderId: 1n, tokenB: { address: NO_PERMIT_TOKEN } },
+          5n,
+          100n,
+          123,
+          pull
+        );
+        await v2.V2.send(call);
+
+        expect(call.method).toBe(OVERLOAD.fillOrderPermit2);
+        expect(h.swap[OVERLOAD.fillOrderPermit2]).toHaveBeenCalledWith(1n, 100n, 5n, 123, [
+          100n,
+          expect.any(BigInt),
+          expect.any(Number),
+          SIGNATURE,
+        ]);
+      });
+
+      // MUTATION: Reuse the single Permit field order for TokenPermit
+      // BREAKS: TokenPermit is (token, v, value, deadline, r, s) while Permit is
+      //         (value, deadline, v, r, s) — v moves to second. The wrong order
+      //         still encodes, and reverts on chain.
+      test("a batch permit entry puts v second, after the token", async () => {
+        const pull = await v2.V2.resolveBatchPull([{ token: PERMIT_TOKEN, amount: 100n }]);
+        await v2.V2.createOrders(
+          [{ tokenA: PERMIT_TOKEN, amountA: 100n, tokenB: B, amountB: 2n }],
+          pull
+        );
+
+        expect(h.swap[OVERLOAD.createOrdersPermit]).toHaveBeenCalledWith(expect.any(Array), [
+          [
+            PERMIT_TOKEN,
+            27,
+            100n,
+            expect.any(Number),
+            "0x" + "11".repeat(32),
+            "0x" + "22".repeat(32),
+          ],
+        ]);
+      });
+
+      // MUTATION: Send a permit overload when nothing was signed
+      // BREAKS: An empty permit array reverts, and a plain order stops going
+      //         through the entry point it always used
+      test("a pull that signed nothing keeps the plain overload", async () => {
+        h.token.allowance.mockResolvedValue(10n ** 30n);
+        const pull = await v2.V2.resolvePull(NO_PERMIT_TOKEN, 1n);
+        await v2.V2.createOrder(NO_PERMIT_TOKEN, 1n, B, 2n, false, pull);
+
+        expect(h.swap.createOrder).toHaveBeenCalled();
+        expect(h.swap[OVERLOAD.createOrderPermit]).not.toHaveBeenCalled();
+        expect(h.swap[OVERLOAD.createOrderPermit2]).not.toHaveBeenCalled();
+      });
+
+      // MUTATION: Drop the pull argument and always send plain
+      // BREAKS: The signature is collected from the user and then thrown away,
+      //         so they sign and still pay for an approval
+      test("an approve-only pull also keeps the plain overload", async () => {
+        const pull = await v2.V2.resolvePull(NO_PERMIT_TOKEN, 100n);
+        expect(pull.kind).toBe("approve");
+
+        await v2.V2.createOrder(NO_PERMIT_TOKEN, 100n, B, 2n, false, pull);
+        expect(h.swap.createOrder).toHaveBeenCalled();
+      });
+    });
+
+    describe("resolveBatchPull", () => {
+      // MUTATION: Emit one entry per leg instead of per token
+      // BREAKS: Two rows offering the same token revert DuplicatePermitToken
+      test("two rows on one token become a single entry for their total", async () => {
+        const pull = await v2.V2.resolveBatchPull([
+          { token: PERMIT_TOKEN, amount: 40n },
+          { token: PERMIT_TOKEN, amount: 60n },
+        ]);
+
+        expect(pull.kind).toBe("permit");
+        expect(pull.entries).toHaveLength(1);
+        expect(pull.entries[0].value).toBe(100n);
+        expect(h.signer.signTypedData).toHaveBeenCalledTimes(1);
+      });
+
+      // MUTATION: Report a signature strategy with an empty entry list
+      // BREAKS: The permit overload is sent carrying nothing, and the contract
+      //         reverts for a token no entry covers
+      test("a batch that needs no signature reports none", async () => {
+        h.token.allowance.mockResolvedValue(10n ** 30n);
+        const pull = await v2.V2.resolveBatchPull([{ token: PERMIT_TOKEN, amount: 1n }]);
+
+        expect(pull).toEqual({ kind: "none", entries: [] });
+        expect(h.signer.signTypedData).not.toHaveBeenCalled();
+      });
+
+      // MUTATION: Approve the tokens the caller already approved up front
+      // BREAKS: Every chunk re-approves them, so a batch spanning three
+      //         transactions sends three approvals for one allowance
+      test("only the demoted token is approved inside the batch", async () => {
+        h.token.allowance.mockImplementation(async (_owner, spender) =>
+          spender === PERMIT2_ADDRESS ? 10n ** 30n : 0n
+        );
+
+        const pull = await v2.V2.resolveBatchPull([
+          { token: PERMIT_TOKEN, amount: 10n },
+          { token: NO_PERMIT_TOKEN, amount: 20n },
+        ]);
+
+        // PERMIT_TOKEN wins the vote; NO_PERMIT_TOKEN could only have used
+        // Permit2, so it is demoted and approved here.
+        expect(pull.kind).toBe("permit");
+        expect(pull.entries.map((e) => e.token)).toEqual([PERMIT_TOKEN]);
+        expect(h.token.approve).toHaveBeenCalledTimes(1);
+        expect(h.token.approve).toHaveBeenCalledWith(deploymentFor(2).CONTRACT_ADDRESS, 20n);
+      });
+
+      // MUTATION: Emit TokenPermit fields for a Permit2 batch
+      // BREAKS: TokenPermit2 is (token, amount, nonce, deadline, signature); an
+      //         entry shaped like an EIP-2612 one encodes and then reverts
+      test("a Permit2 batch emits token, amount, nonce, deadline, signature", async () => {
+        h.token.allowance.mockImplementation(async (_owner, spender) =>
+          spender === PERMIT2_ADDRESS ? 10n ** 30n : 0n
+        );
+
+        const pull = await v2.V2.resolveBatchPull([{ token: NO_PERMIT_TOKEN, amount: 100n }]);
+        expect(pull.kind).toBe("permit2");
+
+        await v2.V2.createOrders(
+          [{ tokenA: NO_PERMIT_TOKEN, amountA: 100n, tokenB: B, amountB: 2n }],
+          pull
+        );
+
+        expect(h.swap[OVERLOAD.createOrdersPermit2]).toHaveBeenCalledWith(expect.any(Array), [
+          [NO_PERMIT_TOKEN, 100n, expect.any(BigInt), expect.any(Number), SIGNATURE],
+        ]);
+      });
+
+      // MUTATION: Keep a signature strategy after every entry fell back
+      // BREAKS: The batch sends a permit overload with an empty array, which
+      //         reverts, rather than the plain call the approvals already cover
+      test("a batch whose only signable token fails its domain goes plain", async () => {
+        h.token.DOMAIN_SEPARATOR.mockResolvedValue(DOMAIN_SEPARATOR_UNMATCHABLE);
+
+        const pull = await v2.V2.resolveBatchPull([{ token: PERMIT_TOKEN, amount: 10n }]);
+
+        expect(pull).toEqual({ kind: "none", entries: [] });
+        expect(h.token.approve).toHaveBeenCalledWith(deploymentFor(2).CONTRACT_ADDRESS, 10n);
+      });
     });
 
     test("createOrder sends a CreateOrderParams struct, with no value for an ERC20", async () => {

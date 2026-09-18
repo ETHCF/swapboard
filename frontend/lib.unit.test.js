@@ -25,6 +25,19 @@ const {
   coinGeckoUrl,
   permitKindFor,
   supportsPermit,
+  isSignablePermitKind,
+  PERMIT2_ADDRESS,
+  MAX_PERMIT2_BATCH,
+  PERMIT_TTL_SECONDS,
+  PERMIT_TYPES,
+  PERMIT2_TYPES,
+  permit2Domain,
+  buildPermitMessage,
+  buildPermit2Message,
+  permit2Nonce,
+  permitDeadline,
+  choosePullStrategy,
+  planBatchPulls,
   priceRatio,
   calculateMarketDeviation,
   searchTokens,
@@ -1460,6 +1473,7 @@ describe("coinGeckoUrl", () => {
 
 describe("permitKindFor", () => {
   const MAINNET = 1;
+  const SEPOLIA = 11155111;
 
   // MUTATION: Drop the toLowerCase() before the lookup
   // BREAKS: Checksummed addresses miss the all-lowercase registry keys and
@@ -1475,15 +1489,26 @@ describe("permitKindFor", () => {
     expect(permitKindFor("0xdac17f958d2ee523a2206206994597c13d831ec7", MAINNET)).toBe("none");
   });
 
-  // MUTATION: Drop the chainId guard, or compare against something other than
-  //           PERMIT_DATA.CHAIN_ID
-  // BREAKS: A non-mainnet build reports mainnet verdicts for addresses that are
-  //         unrelated tokens on that chain
-  test("refuses to answer off mainnet", () => {
-    const usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
-    expect(permitKindFor(usdc, MAINNET)).toBe("eip2612");
-    expect(permitKindFor(usdc, 11155111)).toBe("unknown");
-    expect(permitKindFor(usdc, 8453)).toBe("unknown");
+  // MUTATION: Look the address up across every chain section instead of the
+  //           caller's, or drop the chainId argument entirely
+  // BREAKS: A Sepolia build reports mainnet verdicts for addresses that are
+  //         unrelated contracts on Sepolia, and signs permits that revert
+  test("keeps each chain's verdicts to that chain", () => {
+    const mainnetUsdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+    const sepoliaUsdc = "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
+
+    expect(permitKindFor(mainnetUsdc, MAINNET)).toBe("eip2612");
+    expect(permitKindFor(mainnetUsdc, SEPOLIA)).toBe("unknown");
+
+    expect(permitKindFor(sepoliaUsdc, SEPOLIA)).toBe("eip2612");
+    expect(permitKindFor(sepoliaUsdc, MAINNET)).toBe("unknown");
+  });
+
+  // MUTATION: Treat a missing chain section as an empty lookup that still
+  //           consults some default
+  // BREAKS: An unsupported chain inherits another chain's answers
+  test("answers 'unknown' for a chain the registry has no section for", () => {
+    expect(permitKindFor("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 8453)).toBe("unknown");
   });
 
   // MUTATION: Return the raw undefined lookup instead of "unknown"
@@ -1503,13 +1528,21 @@ describe("permitKindFor", () => {
 
 describe("supportsPermit", () => {
   const MAINNET = 1;
+  const SEPOLIA = 11155111;
 
-  // MUTATION: Drop "dai" or "both" from the accepted set
+  // MUTATION: Drop "both" from the accepted set
   // BREAKS: Tokens that can be approved by signature get a needless approve() send
   test("accepts the flavours a signature flow can drive", () => {
     expect(supportsPermit("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", MAINNET)).toBe(true);
-    expect(supportsPermit("0x6b175474e89094c44da98b954eedeac495271d0f", MAINNET)).toBe(true);
     expect(supportsPermit("0xa882606494d86804b5514e07e6bd2d6a6ee6d68a", MAINNET)).toBe(true);
+  });
+
+  // MUTATION: Accept "dai" alongside "eip2612"
+  // BREAKS: Swapboard's Permit struct is EIP-2612 shaped and there is no
+  //         DAI-flavour overload on chain, so permit(holder,spender,nonce,
+  //         expiry,allowed,v,r,s) tokens would be signed for and then revert
+  test("rejects the DAI flavour, which the contract has no overload for", () => {
+    expect(supportsPermit("0x6b175474e89094c44da98b954eedeac495271d0f", MAINNET)).toBe(false);
   });
 
   // MUTATION: Treat "nonstandard" as permit-capable
@@ -1530,15 +1563,415 @@ describe("supportsPermit", () => {
   });
 
   // MUTATION: Drop the chainId pass-through to permitKindFor
-  // BREAKS: A Sepolia build offers permit on mainnet verdicts
-  test("reports no permit support off mainnet", () => {
-    expect(supportsPermit("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 11155111)).toBe(false);
+  // BREAKS: A Sepolia build offers permit on mainnet verdicts, and misses the
+  //         Sepolia tokens that genuinely support it
+  test("resolves support against the caller's chain", () => {
+    expect(supportsPermit("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", SEPOLIA)).toBe(false);
+    expect(supportsPermit("0x1c7d4b196cb0c7b01d743fbc6116a902379c7238", SEPOLIA)).toBe(true);
+    expect(supportsPermit("0xfff9976782d46cc05630d1f6ebab18b2324d6b14", SEPOLIA)).toBe(false);
   });
 });
 
 // ============================================================================
 // priceRatio
 // ============================================================================
+
+// ============================================================================
+// Signature-based approvals
+// ============================================================================
+
+describe("choosePullStrategy", () => {
+  /** A token with nothing going for it: no allowance, no permit, no Permit2. */
+  const base = {
+    isNative: false,
+    allowance: 0n,
+    amount: 100n,
+    permitKind: "none",
+    permit2Allowance: 0n,
+  };
+  const strategy = (over) => choosePullStrategy({ ...base, ...over });
+
+  // MUTATION: Drop the isNative short-circuit
+  // BREAKS: The ETH sentinel is not a contract, so reading an allowance off it
+  //         throws and every ETH-offering order dies before it is sent
+  test("native ETH needs nothing, whatever else is true of it", () => {
+    expect(strategy({ isNative: true })).toBe("none");
+    expect(strategy({ isNative: true, permitKind: "eip2612" })).toBe("none");
+    expect(strategy({ isNative: true, permit2Allowance: 999n })).toBe("none");
+  });
+
+  // MUTATION: Compare with > instead of >=
+  // BREAKS: An allowance that exactly covers the pull is treated as short, so
+  //         the user is asked to approve again for nothing
+  test("an allowance that already covers the pull asks for nothing", () => {
+    expect(strategy({ allowance: 100n })).toBe("none");
+    expect(strategy({ allowance: 101n })).toBe("none");
+    expect(strategy({ allowance: 99n })).toBe("approve");
+  });
+
+  // MUTATION: Prefer the allowance check only after the permit check
+  // BREAKS: A standing allowance still costs the user a signature, which is a
+  //         wallet prompt for an approval they already granted
+  test("a standing allowance wins over a signature the token could give", () => {
+    expect(strategy({ allowance: 100n, permitKind: "eip2612" })).toBe("none");
+    expect(strategy({ allowance: 100n, permit2Allowance: 100n })).toBe("none");
+  });
+
+  // MUTATION: Skip the zero-amount guard
+  // BREAKS: A zero-amount leg signs a permit for nothing, and the contract then
+  //         reverts UnusedPermit because no pull spends it
+  test("a zero pull needs nothing", () => {
+    expect(strategy({ amount: 0n })).toBe("none");
+    expect(strategy({ amount: 0n, permitKind: "eip2612" })).toBe("none");
+  });
+
+  // MUTATION: Accept any permitKind, or drop isSignablePermitKind
+  // BREAKS: DAI-flavour and Yearn-style tokens are signed for with the EIP-2612
+  //         struct the contract expects, and revert the swap
+  test("only the flavours the contract has an overload for take the permit path", () => {
+    expect(strategy({ permitKind: "eip2612" })).toBe("permit");
+    expect(strategy({ permitKind: "both" })).toBe("permit");
+    expect(strategy({ permitKind: "dai" })).toBe("approve");
+    expect(strategy({ permitKind: "nonstandard" })).toBe("approve");
+    expect(strategy({ permitKind: "unverified" })).toBe("approve");
+    expect(strategy({ permitKind: "unknown" })).toBe("approve");
+    expect(strategy({ permitKind: "none" })).toBe("approve");
+  });
+
+  // MUTATION: Check Permit2 before the token's own permit
+  // BREAKS: A token that could be approved with one signature is instead pulled
+  //         through Permit2, which only works if the user already approved it
+  test("the token's own permit is preferred to Permit2", () => {
+    expect(strategy({ permitKind: "eip2612", permit2Allowance: 999n })).toBe("permit");
+  });
+
+  // MUTATION: Ignore permit2Allowance and always offer Permit2
+  // BREAKS: A Permit2 signature is produced for a user who never approved
+  //         Permit2, so the transfer reverts instead of falling back to approve()
+  test("Permit2 is only offered when Permit2 is actually approved", () => {
+    expect(strategy({ permit2Allowance: 100n })).toBe("permit2");
+    expect(strategy({ permit2Allowance: 99n })).toBe("approve");
+    expect(strategy({ permit2Allowance: 0n })).toBe("approve");
+  });
+
+  // MUTATION: Compare the amounts as strings or numbers
+  // BREAKS: "9" > "100" lexically and 1e18-scale amounts lose precision as
+  //         numbers, so the comparison silently answers backwards
+  test("compares amounts numerically, not as strings", () => {
+    expect(strategy({ allowance: "9", amount: "100" })).toBe("approve");
+    expect(strategy({ allowance: "100", amount: "9" })).toBe("none");
+  });
+});
+
+describe("isSignablePermitKind", () => {
+  // MUTATION: Return true for "dai"
+  // BREAKS: Swapboard's Permit struct is EIP-2612 shaped and has no DAI-flavour
+  //         overload, so the signature encodes cleanly and reverts on chain
+  test("accepts only what the contract's Permit struct can express", () => {
+    expect(isSignablePermitKind("eip2612")).toBe(true);
+    expect(isSignablePermitKind("both")).toBe(true);
+    expect(isSignablePermitKind("dai")).toBe(false);
+    expect(isSignablePermitKind("nonstandard")).toBe(false);
+    expect(isSignablePermitKind("unverified")).toBe(false);
+    expect(isSignablePermitKind("unknown")).toBe(false);
+    expect(isSignablePermitKind(undefined)).toBe(false);
+  });
+});
+
+describe("permit2Domain", () => {
+  // MUTATION: Add a `version` field to the domain
+  // BREAKS: Permit2's own domain has no version, so adding one changes the
+  //         separator and Permit2 rejects every signature as an invalid signer
+  test("omits version, and names the canonical contract", () => {
+    const domain = permit2Domain(1);
+    expect(domain).toEqual({
+      name: "Permit2",
+      chainId: 1,
+      verifyingContract: PERMIT2_ADDRESS,
+    });
+    expect("version" in domain).toBe(false);
+  });
+
+  // MUTATION: Hardcode the chain id
+  // BREAKS: A Sepolia signature carries a mainnet domain and is not spendable
+  test("carries the chain it was asked for", () => {
+    expect(permit2Domain(11155111).chainId).toBe(11155111);
+  });
+});
+
+describe("PERMIT2_ADDRESS", () => {
+  // MUTATION: Change any character of the address
+  // BREAKS: Swapboard hardcodes the canonical Permit2 as _PERMIT2, so a
+  //         signature naming a different verifying contract can never be spent,
+  //         and the Permit2 allowance is read off the wrong spender
+  test("matches the constant the contract hardcodes", () => {
+    expect(PERMIT2_ADDRESS).toBe("0x000000000022D473030F116dDEE9F6B43aC78BA3");
+  });
+});
+
+describe("buildPermitMessage", () => {
+  // MUTATION: Reorder the fields, or drop one
+  // BREAKS: EIP-712 hashes the struct by its type definition, so a missing or
+  //         renamed field produces a digest the token will not recognise
+  test("carries exactly the EIP-2612 Permit fields", () => {
+    const message = buildPermitMessage({
+      owner: "0xowner",
+      spender: "0xspender",
+      value: 100n,
+      nonce: 7n,
+      deadline: 1234,
+    });
+    expect(message).toEqual({
+      owner: "0xowner",
+      spender: "0xspender",
+      value: "100",
+      nonce: "7",
+      deadline: 1234,
+    });
+    expect(Object.keys(message)).toEqual(PERMIT_TYPES.Permit.map((f) => f.name));
+  });
+
+  // MUTATION: Pass the BigInt through instead of stringifying
+  // BREAKS: JSON.stringify throws on a BigInt, and the wallet is handed the
+  //         typed-data payload as JSON
+  test("stringifies the amounts so the payload survives JSON", () => {
+    const message = buildPermitMessage({
+      owner: "0xowner",
+      spender: "0xspender",
+      value: 10n ** 30n,
+      nonce: 0,
+      deadline: 1,
+    });
+    expect(() => JSON.stringify(message)).not.toThrow();
+    expect(message.value).toBe("1000000000000000000000000000000");
+  });
+});
+
+describe("buildPermit2Message", () => {
+  // MUTATION: Flatten permitted.token / permitted.amount onto the top level
+  // BREAKS: Permit2 hashes TokenPermissions as a nested struct, so a flattened
+  //         message hashes to something no nonce can spend
+  test("nests the token permissions the way Permit2 hashes them", () => {
+    const message = buildPermit2Message({
+      token: "0xtoken",
+      amount: 500n,
+      spender: "0xspender",
+      nonce: 42n,
+      deadline: 99,
+    });
+    expect(message).toEqual({
+      permitted: { token: "0xtoken", amount: "500" },
+      spender: "0xspender",
+      nonce: "42",
+      deadline: 99,
+    });
+    expect(Object.keys(message)).toEqual(PERMIT2_TYPES.PermitTransferFrom.map((f) => f.name));
+    expect(Object.keys(message.permitted)).toEqual(
+      PERMIT2_TYPES.TokenPermissions.map((f) => f.name)
+    );
+  });
+});
+
+describe("permit2Nonce", () => {
+  // MUTATION: Read fewer than 32 bytes, or shift by something other than 8
+  // BREAKS: A nonce drawn from a narrow range collides with one already spent,
+  //         and Permit2 rejects the reused bit
+  test("packs 32 bytes into one 256-bit nonce", () => {
+    const allOnes = new Uint8Array(32).fill(0xff);
+    expect(permit2Nonce(allOnes)).toBe(2n ** 256n - 1n);
+
+    const zero = new Uint8Array(32);
+    expect(permit2Nonce(zero)).toBe(0n);
+  });
+
+  // MUTATION: Use the bytes in reverse, or mask off the high byte
+  // BREAKS: Two different draws map to the same nonce
+  test("is big-endian over the bytes it is given", () => {
+    const bytes = new Uint8Array(32);
+    bytes[31] = 1;
+    expect(permit2Nonce(bytes)).toBe(1n);
+
+    const high = new Uint8Array(32);
+    high[0] = 1;
+    expect(permit2Nonce(high)).toBe(2n ** 248n);
+  });
+
+  // MUTATION: Drop the & 0xff
+  // BREAKS: A signed or oversized byte corrupts every higher bit of the nonce
+  test("masks each byte to 8 bits", () => {
+    const bytes = new Array(32).fill(0);
+    bytes[31] = 0x1ff;
+    expect(permit2Nonce(bytes)).toBe(0xffn);
+  });
+});
+
+describe("permitDeadline", () => {
+  // MUTATION: Return the raw nowSec, or subtract the ttl
+  // BREAKS: The signature is already expired when it reaches the contract
+  test("is the given ttl into the future", () => {
+    expect(permitDeadline(1000, 60)).toBe(1060);
+    expect(permitDeadline(1000)).toBe(1000 + PERMIT_TTL_SECONDS);
+  });
+
+  // MUTATION: Drop the Math.floor
+  // BREAKS: Date.now() / 1000 is fractional, and a non-integer deadline cannot
+  //         be encoded as uint256
+  test("floors a fractional clock reading", () => {
+    expect(Number.isInteger(permitDeadline(1000.7, 60))).toBe(true);
+    expect(permitDeadline(1000.7, 60)).toBe(1060);
+  });
+});
+
+describe("planBatchPulls", () => {
+  /** Shapes one leg, defaulting everything the test does not care about. */
+  const leg = (over) => ({
+    token: "0xaaa",
+    amount: 10n,
+    isNative: false,
+    allowance: 0n,
+    permitKind: "none",
+    permit2Allowance: 0n,
+    ...over,
+  });
+
+  // MUTATION: Push every leg through without aggregating
+  // BREAKS: Two rows offering the same token produce two entries for it, and the
+  //         contract reverts DuplicatePermitToken
+  test("aggregates repeated tokens into one entry for their total", () => {
+    const plan = planBatchPulls([
+      leg({ token: "0xAAA", amount: 50n, permitKind: "eip2612" }),
+      leg({ token: "0xaaa", amount: 60n, permitKind: "eip2612" }),
+    ]);
+    expect(plan.strategy).toBe("permit");
+    expect(plan.entries).toHaveLength(1);
+    expect(plan.entries[0].amount).toBe(110n);
+  });
+
+  // MUTATION: Key the aggregation on the raw address
+  // BREAKS: The same token written two ways counts as two, which is the
+  //         DuplicatePermitToken revert again
+  test("treats differently-cased addresses as the same token", () => {
+    const plan = planBatchPulls([
+      leg({ token: "0xAbCd", amount: 1n, permitKind: "eip2612" }),
+      leg({ token: "0xaBcD", amount: 2n, permitKind: "eip2612" }),
+    ]);
+    expect(plan.entries).toHaveLength(1);
+    expect(plan.entries[0].amount).toBe(3n);
+  });
+
+  // MUTATION: Include native legs
+  // BREAKS: The ETH sentinel is not an ERC20, and the contract reverts
+  //         PermitOnNative for a permit naming it
+  test("leaves native ETH out of the plan entirely", () => {
+    const plan = planBatchPulls([
+      leg({ token: "0xeee", isNative: true, amount: 5n }),
+      leg({ token: "0xbbb", amount: 5n, permitKind: "eip2612" }),
+    ]);
+    expect(plan.entries).toHaveLength(1);
+    expect(plan.entries[0].token).toBe("0xbbb");
+    expect(plan.approvals).toHaveLength(0);
+    expect(plan.demoted).toHaveLength(0);
+  });
+
+  // MUTATION: Emit entries for tokens that need no pull
+  // BREAKS: An entry nothing spends reverts UnusedPermit / UnusedPermit2
+  test("emits no entry for a token whose allowance already covers it", () => {
+    const plan = planBatchPulls([
+      leg({ token: "0xaaa", amount: 10n, allowance: 10n, permitKind: "eip2612" }),
+      leg({ token: "0xbbb", amount: 10n, permitKind: "eip2612" }),
+    ]);
+    expect(plan.entries.map((e) => e.token)).toEqual(["0xbbb"]);
+  });
+
+  // MUTATION: Mix permit and permit2 entries into one call
+  // BREAKS: A call takes TokenPermit[] or TokenPermit2[], never both, so the
+  //         mixed batch cannot be encoded against any overload
+  test("commits the batch to one signature flavour, demoting the other", () => {
+    const plan = planBatchPulls([
+      leg({ token: "0xaaa", permitKind: "eip2612" }),
+      leg({ token: "0xbbb", permitKind: "eip2612" }),
+      leg({ token: "0xccc", permit2Allowance: 999n }),
+    ]);
+    expect(plan.strategy).toBe("permit");
+    expect(plan.entries.map((e) => e.token)).toEqual(["0xaaa", "0xbbb"]);
+    expect(plan.demoted.map((e) => e.token)).toEqual(["0xccc"]);
+  });
+
+  // MUTATION: Always pick "permit"
+  // BREAKS: A batch that is mostly Permit2 sends more approve() transactions
+  //         than it needs to
+  test("gives the overload to whichever signature group is larger", () => {
+    const plan = planBatchPulls([
+      leg({ token: "0xaaa", permitKind: "eip2612" }),
+      leg({ token: "0xbbb", permit2Allowance: 999n }),
+      leg({ token: "0xccc", permit2Allowance: 999n }),
+    ]);
+    expect(plan.strategy).toBe("permit2");
+    expect(plan.entries.map((e) => e.token)).toEqual(["0xbbb", "0xccc"]);
+    expect(plan.demoted.map((e) => e.token)).toEqual(["0xaaa"]);
+  });
+
+  // MUTATION: Break the tie towards permit2
+  // BREAKS: The tie-break stops matching choosePullStrategy's single-token
+  //         preference, so one token behaves differently alone and in a batch
+  test("breaks a tie towards EIP-2612, as the single-token order does", () => {
+    const plan = planBatchPulls([
+      leg({ token: "0xaaa", permitKind: "eip2612" }),
+      leg({ token: "0xbbb", permit2Allowance: 999n }),
+    ]);
+    expect(plan.strategy).toBe("permit");
+    expect(plan.entries.map((e) => e.token)).toEqual(["0xaaa"]);
+  });
+
+  // MUTATION: Fold approve-only tokens into `demoted`
+  // BREAKS: They are approved again inside the chunk loop, one transaction per
+  //         chunk, instead of once for the whole batch
+  test("keeps never-signable tokens apart from demoted ones", () => {
+    const plan = planBatchPulls([
+      leg({ token: "0xaaa", permitKind: "eip2612" }),
+      leg({ token: "0xbbb", permitKind: "dai" }),
+      leg({ token: "0xccc", permit2Allowance: 999n }),
+    ]);
+    expect(plan.approvals.map((e) => e.token)).toEqual(["0xbbb"]);
+    expect(plan.demoted.map((e) => e.token)).toEqual(["0xccc"]);
+  });
+
+  // MUTATION: Report a signature strategy with no entries
+  // BREAKS: The caller sends a permit overload carrying an empty array, which
+  //         the contract accepts and then reverts on for an unpulled token
+  test("reports no strategy when nothing can be signed for", () => {
+    const plan = planBatchPulls([leg({ token: "0xaaa" }), leg({ token: "0xbbb" })]);
+    expect(plan.strategy).toBe("none");
+    expect(plan.entries).toHaveLength(0);
+    expect(plan.approvals.map((e) => e.token)).toEqual(["0xaaa", "0xbbb"]);
+  });
+
+  // MUTATION: Drop the MAX_PERMIT2_BATCH splice, or use > instead of >=
+  // BREAKS: The contract tracks used entries in a single uint256 and reverts
+  //         TooManyPermit2 past 256, so the whole batch becomes unsendable
+  test("caps a Permit2 batch at the bitmap limit and approves the tail", () => {
+    const legs = [];
+    for (let i = 0; i < MAX_PERMIT2_BATCH + 3; i++) {
+      legs.push(leg({ token: "0x" + String(i).padStart(40, "0"), permit2Allowance: 999n }));
+    }
+    const plan = planBatchPulls(legs);
+    expect(plan.strategy).toBe("permit2");
+    expect(plan.entries).toHaveLength(MAX_PERMIT2_BATCH);
+    expect(plan.demoted).toHaveLength(3);
+  });
+
+  // MUTATION: Mutate the caller's leg objects while aggregating
+  // BREAKS: The amounts the confirmation modal quoted change underneath it
+  test("does not mutate the legs it was given", () => {
+    const legs = [
+      leg({ token: "0xaaa", amount: 5n, permitKind: "eip2612" }),
+      leg({ token: "0xaaa", amount: 7n, permitKind: "eip2612" }),
+    ];
+    planBatchPulls(legs);
+    expect(legs[0].amount).toBe(5n);
+    expect(legs[1].amount).toBe(7n);
+  });
+});
 
 describe("priceRatio", () => {
   // MUTATION: Flip the sign of the decimals exponent
@@ -2923,22 +3356,30 @@ describe("capsFor", () => {
     expect(v1.remainingAmounts).toBe(false);
   });
 
-  // MUTATION: Turn v2 gas estimates off, or v2 subgraph polling on
-  // BREAKS: the v2 modal loses a figure its real ABI can price, or every v2
-  //         transaction waits out the full poll timeout against a placeholder
-  test("both versions estimate gas; only v1 polls a subgraph", () => {
+  // MUTATION: Turn either version's gas estimates or subgraph polling off
+  // BREAKS: the modal loses a figure its real ABI can price, or a transaction
+  //         reloads the table before the subgraph has indexed it
+  test("both versions estimate gas and poll a subgraph", () => {
     expect(capsFor(1).gasEstimate).toBe(true);
     expect(capsFor(1).subgraphPolling).toBe(true);
     expect(capsFor(2).gasEstimate).toBe(true);
-    expect(capsFor(2).subgraphPolling).toBe(false);
+    expect(capsFor(2).subgraphPolling).toBe(true);
   });
 
-  // MUTATION: Mark v2 live
-  // BREAKS: validateConfig would demand deployment coordinates v2 does not have
-  //         yet, and the empty board would stop saying v2 is undeployed
-  test("only v1 is live", () => {
+  // MUTATION: Mark either version as not live
+  // BREAKS: validateConfig stops demanding deployment coordinates for a version
+  //         that has them, so a bad deploy ships unnoticed
+  test("both versions are live", () => {
     expect(capsFor(1).live).toBe(true);
-    expect(capsFor(2).live).toBe(false);
+    expect(capsFor(2).live).toBe(true);
+  });
+
+  // MUTATION: Offer permit on v1
+  // BREAKS: v1 has no permit overloads, so the call would be encoded against a
+  //         signature its ABI does not carry
+  test("only v2 can settle an approval by signature", () => {
+    expect(capsFor(1).permit).toBe(false);
+    expect(capsFor(2).permit).toBe(true);
   });
 
   // MUTATION: Return undefined for an unknown version
@@ -2972,12 +3413,22 @@ describe("deploymentFor", () => {
   // MUTATION: Drop the deploy: markers, or reflow them onto their own line
   // BREAKS: deploy.sh anchors its rewrite on them and refuses to write without
   //         them, so a release fails rather than silently patching nothing
-  test("v1 is the live deployment and v2 is still a placeholder", () => {
-    expect(deploymentFor(1).CONTRACT_ADDRESS).toMatch(/^0x[a-fA-F0-9]{40}$/);
-    expect(deploymentFor(1).CONTRACT_ADDRESS).not.toBe(
-      "0x0000000000000000000000000000000000000000"
-    );
-    expect(deploymentFor(2).CONTRACT_ADDRESS).toBe("0x0000000000000000000000000000000000000000");
+  test("both versions carry a real deployment", () => {
+    for (const version of [1, 2]) {
+      expect(deploymentFor(version).CONTRACT_ADDRESS).toMatch(/^0x[a-fA-F0-9]{40}$/);
+      expect(deploymentFor(version).CONTRACT_ADDRESS).not.toBe(
+        "0x0000000000000000000000000000000000000000"
+      );
+      expect(deploymentFor(version).SUBGRAPH_URL).toMatch(/^https:\/\//);
+    }
+  });
+
+  // MUTATION: Return the same deployment for both versions
+  // BREAKS: one version silently points at the other's contract, and orders are
+  //         read from a board they were never created on
+  test("the two versions point at different contracts", () => {
+    expect(deploymentFor(1).CONTRACT_ADDRESS).not.toBe(deploymentFor(2).CONTRACT_ADDRESS);
+    expect(deploymentFor(1).SUBGRAPH_URL).not.toBe(deploymentFor(2).SUBGRAPH_URL);
   });
 
   // MUTATION: Return undefined for an unknown version

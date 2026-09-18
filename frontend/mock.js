@@ -2074,7 +2074,27 @@
     // not swallow errors from, so a short value makes every order-creation
     // attempt fail in mock mode.
     "0x313ce567": () => "0x" + word(18),
+    // nonces(address) — EIP-2612. Always zero: nothing here is ever spent.
+    "0x7ecebe00": () => "0x" + word(0),
+    // DOMAIN_SEPARATOR() — deliberately absent from the table rather than
+    // answered. A made-up separator matches no domain resolvePermitDomain can
+    // build, so it would reject every token; reverting instead is the "computes
+    // it inline" case, which is accepted. See ERC20_REVERTS.
   };
+
+  /**
+   * ERC20 reads answered by reverting, because a fabricated value would be worse
+   * than none. eth_call throws for these, which is exactly what tryRead expects.
+   * @constant {string[]}
+   */
+  const ERC20_REVERTS = [
+    // DOMAIN_SEPARATOR()
+    "0x3644e515",
+    // eip712Domain()
+    "0x84b0196e",
+    // version()
+    "0x54fd4d50",
+  ];
 
   /**
    * Answers an eth_call from the selector table.
@@ -2091,6 +2111,9 @@
 
     const handler = CONTRACT_CALLS[selector] || ERC20_CALLS[selector];
     if (handler) return handler(data);
+
+    // Reverting is the answer for these, not a fallback value.
+    if (ERC20_REVERTS.includes(selector)) throw new Error("execution reverted");
 
     console.warn("[Mock Wallet] Unhandled eth_call selector:", selector);
     return "0x" + word(1);
@@ -2219,6 +2242,15 @@
 
           case "eth_call":
             return handleCall(params);
+
+          case "eth_signTypedData_v4":
+          case "eth_signTypedData":
+            // A syntactically valid 65-byte signature. It verifies against
+            // nothing, which is fine: mock mode never broadcasts, so no contract
+            // ever checks it, and the flow under test is the one that produces
+            // it rather than the one that spends it.
+            console.log("[Mock Wallet] Signed typed data:", params && params[1]);
+            return "0x" + "11".repeat(32) + "22".repeat(32) + "1b";
 
           case "eth_estimateGas":
             return "0x30000";

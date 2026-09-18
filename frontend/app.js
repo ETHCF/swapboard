@@ -68,6 +68,19 @@
     computeFillFromPayment,
     allowsPartialFill,
     summarizeFillBatch,
+
+    // Signature-based approvals
+    PERMIT2_ADDRESS,
+    PERMIT_TYPES,
+    PERMIT2_TYPES,
+    permit2Domain,
+    permitKindFor,
+    buildPermitMessage,
+    buildPermit2Message,
+    permit2Nonce,
+    permitDeadline,
+    choosePullStrategy,
+    planBatchPulls,
   } = Lib;
 
   // ============================================================================
@@ -400,6 +413,12 @@
     "function balanceOf(address) view returns (uint256)",
     "function allowance(address owner, address spender) view returns (uint256)",
     "function approve(address spender, uint256 amount) returns (bool)",
+    // EIP-2612. `version` and `eip712Domain` are how the signing domain is
+    // recovered; neither is universal, so both are probed and allowed to fail.
+    "function nonces(address owner) view returns (uint256)",
+    "function DOMAIN_SEPARATOR() view returns (bytes32)",
+    "function version() view returns (string)",
+    "function eip712Domain() view returns (bytes1 fields, string name, string version, uint256 chainId, address verifyingContract, bytes32 salt, uint256[] extensions)",
   ];
 
   let provider = null;
@@ -2624,6 +2643,10 @@ ${orderFields}
   //                                 so the same description can be estimated
   //   fillOrders                    take several orders whole
   //   cancelOrder / cancelOrders    close orders and refund escrow
+  //   resolvePull / resolveBatchPull / pullStrategy
+  //                                 settle how a token reaches the board:
+  //                                 nothing, an EIP-2612 or Permit2 signature,
+  //                                 or the classic approve() transaction
   //   ensureAllowance / estimateFor / syncAfter
   //
   // v1 additionally has createOrderWithEth and cancelOrderUnwrap. The call
@@ -2718,6 +2741,385 @@ ${orderFields}
     };
   }
 
+  // ==========================================================================
+  // SIGNATURE-BASED APPROVALS
+  // ==========================================================================
+  //
+  // Swapboard v2 overloads every entry point three ways — plain, EIP-2612 and
+  // Permit2 SignatureTransfer — so an approval can be a signature instead of a
+  // transaction. lib.js choosePullStrategy() decides which; everything here is
+  // the I/O that decision needs, and the overload dispatch that follows from it.
+  //
+  // ethers v6 refuses an overloaded method by bare name, so the permit paths
+  // address the contract by full signature. invokeContract() already indexes
+  // `contract[method]`, which accepts a signature string unchanged.
+  // ==========================================================================
+
+  /**
+   * Full signatures of the permit overloads, by entry point and strategy.
+   *
+   * Transcribed from CONTRACT_ABI_V2 above with the argument names dropped. Note
+   * the batch tuples are NOT the single ones with a token bolted on: `TokenPermit`
+   * orders its fields (token, v, value, deadline, r, s) while the single `Permit`
+   * is (value, deadline, v, r, s) — `v` moves to second. Getting that wrong
+   * encodes cleanly and reverts on chain.
+   *
+   * @constant {Object<string, {permit: string, permit2: string}>}
+   */
+  const PERMIT_OVERLOADS = {
+    createOrder: {
+      permit:
+        "createOrder((address,uint128,address,uint128,bool),(uint256,uint256,uint8,bytes32,bytes32))",
+      permit2:
+        "createOrder((address,uint128,address,uint128,bool),(uint256,uint256,uint256,bytes))",
+    },
+    createOrders: {
+      permit:
+        "createOrders((address,uint128,address,uint128,bool)[],(address,uint8,uint256,uint256,bytes32,bytes32)[])",
+      permit2:
+        "createOrders((address,uint128,address,uint128,bool)[],(address,uint256,uint256,uint256,bytes)[])",
+    },
+    fillOrder: {
+      permit: "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint8,bytes32,bytes32))",
+      permit2: "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint256,bytes))",
+    },
+    fillOrders: {
+      permit:
+        "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint8,uint256,uint256,bytes32,bytes32)[])",
+      permit2:
+        "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint256,uint256,uint256,bytes)[])",
+    },
+  };
+
+  /** A pull that needs nothing signed and nothing sent. */
+  const NO_PULL = { kind: "none" };
+
+  /**
+   * Reads a contract getter that is allowed not to exist.
+   * @param {Object} contractInstance - ethers Contract
+   * @param {string} method - Getter name
+   * @param {...*} args - Arguments
+   * @returns {Promise<*|null>} The value, or null when the call reverts
+   */
+  async function tryRead(contractInstance, method, ...args) {
+    try {
+      return await contractInstance[method](...args);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolves the EIP-712 domain a token signs permits under, or null when it
+   * cannot be established.
+   *
+   * Tokens disagree about this more than the standard suggests: USDC is version
+   * "2", most are "1", and some expose no `version()` at all. Where the token
+   * publishes ERC-5267 `eip712Domain()` that answer is authoritative and used
+   * directly. Otherwise each plausible version is hashed and compared against the
+   * token's own `DOMAIN_SEPARATOR()`, and only an exact match is signed.
+   *
+   * Returning null when nothing matches is the point: a signature under the wrong
+   * domain is not rejected by the wallet, it is accepted and then reverts the
+   * swap. Falling back to Permit2 or approve() costs one transaction instead.
+   *
+   * UNI, AAVE and GRT compute their separator inline and expose no getter, so
+   * there is nothing to compare against; those take the first candidate.
+   *
+   * @param {Object} token - ethers Contract for the ERC20
+   * @param {string} tokenAddress - Its address
+   * @returns {Promise<Object|null>} EIP-712 domain
+   */
+  async function resolvePermitDomain(token, tokenAddress) {
+    const declared = await tryRead(token, "eip712Domain");
+    if (declared && declared.name) {
+      return {
+        name: declared.name,
+        version: declared.version,
+        chainId: Number(declared.chainId),
+        verifyingContract: declared.verifyingContract,
+      };
+    }
+
+    const name = await tryRead(token, "name");
+    if (name === null) return null;
+
+    const declaredVersion = await tryRead(token, "version");
+    const candidates = [
+      ...new Set([declaredVersion, "1", "2"].filter((v) => typeof v === "string")),
+    ];
+
+    const separator = await tryRead(token, "DOMAIN_SEPARATOR");
+    const base = { name, chainId: EXPECTED_CHAIN_ID, verifyingContract: tokenAddress };
+
+    if (separator === null) return { ...base, version: candidates[0] };
+
+    for (const version of candidates) {
+      const domain = { ...base, version };
+      if (ethers.TypedDataEncoder.hashDomain(domain) === separator) return domain;
+    }
+    return null;
+  }
+
+  /**
+   * Signs an EIP-2612 permit letting the board spend `total` of the token.
+   * @param {Object} token - ethers Contract for the ERC20
+   * @param {string} tokenAddress - Its address
+   * @param {bigint} total - Allowance to sign for
+   * @returns {Promise<Object|null>} A `Permit` struct, or null when the domain is unusable
+   */
+  async function signTokenPermit(token, tokenAddress, total) {
+    const domain = await resolvePermitDomain(token, tokenAddress);
+    if (!domain) return null;
+
+    const nonce = await token.nonces(userAddress);
+    const deadline = permitDeadline(Date.now() / 1000);
+    const message = buildPermitMessage({
+      owner: userAddress,
+      spender: CONTRACT_ADDRESS,
+      value: total,
+      nonce,
+      deadline,
+    });
+
+    showToast("Sign approval in wallet...", "info", true);
+    const signature = await signer.signTypedData(domain, PERMIT_TYPES, message);
+    const { v, r, s } = ethers.Signature.from(signature);
+
+    return { value: total, deadline, v, r, s };
+  }
+
+  /**
+   * 32 bytes of randomness for a Permit2 nonce.
+   *
+   * Web Crypto is preferred, but it is not reachable everywhere the page runs —
+   * `crypto` is absent from some embedded webviews and from jsdom. The fallback
+   * is adequate here because a Permit2 nonce has to be *unused*, not secret: the
+   * signature is bound to the nonce, so knowing one buys an attacker nothing,
+   * and the only cost of a collision is a revert. Mixing the clock in keeps two
+   * draws in the same session apart even if Math.random repeats.
+   *
+   * @returns {Uint8Array} 32 bytes
+   */
+  function randomBytes32() {
+    const bytes = new Uint8Array(32);
+    const webcrypto = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+
+    if (webcrypto && typeof webcrypto.getRandomValues === "function") {
+      return webcrypto.getRandomValues(bytes);
+    }
+
+    let clock = BigInt(Date.now());
+    for (let i = 31; i >= 0; i--) {
+      bytes[i] = i >= 24 ? Number(clock & 0xffn) : Math.floor(Math.random() * 256);
+      if (i >= 24) clock >>= 8n;
+    }
+    return bytes;
+  }
+
+  /**
+   * Signs a Permit2 SignatureTransfer authorising the board to pull `total`.
+   *
+   * The nonce is drawn at random rather than counted: Permit2 stores a spent-bit
+   * per nonce instead of a sequence, and a batch has several signatures in flight
+   * at once, which a counter would collide on.
+   *
+   * @param {string} tokenAddress - ERC20 to pull
+   * @param {bigint} total - Maximum the signature authorises
+   * @returns {Promise<Object>} A `Permit2Permit` struct
+   */
+  async function signPermit2(tokenAddress, total) {
+    const nonce = permit2Nonce(randomBytes32());
+    const deadline = permitDeadline(Date.now() / 1000);
+    const message = buildPermit2Message({
+      token: tokenAddress,
+      amount: total,
+      spender: CONTRACT_ADDRESS,
+      nonce,
+      deadline,
+    });
+
+    showToast("Sign approval in wallet...", "info", true);
+    const signature = await signer.signTypedData(
+      permit2Domain(EXPECTED_CHAIN_ID),
+      PERMIT2_TYPES,
+      message
+    );
+
+    return { amount: total, nonce, deadline, signature };
+  }
+
+  /**
+   * Gathers what choosePullStrategy() needs to decide about one token.
+   * @param {string} tokenAddress - ERC20 address
+   * @param {bigint} total - Amount the call will pull
+   * @returns {Promise<Object>} A leg, with its ethers Contract attached
+   */
+  async function readPullLeg(tokenAddress, total) {
+    const token = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
+    const permitKind = permitKindFor(tokenAddress, EXPECTED_CHAIN_ID);
+    const allowance = await token.allowance(userAddress, CONTRACT_ADDRESS);
+
+    // Only worth asking when a Permit2 pull is actually on the table: it is the
+    // one input that costs a call the classic path never makes.
+    const permit2Allowance =
+      BigInt(allowance) >= BigInt(total) || permitKind === "eip2612" || permitKind === "both"
+        ? 0n
+        : await token.allowance(userAddress, PERMIT2_ADDRESS);
+
+    return {
+      token: tokenAddress,
+      amount: BigInt(total),
+      isNative: isNativeEth(tokenAddress),
+      allowance: BigInt(allowance),
+      permitKind,
+      permit2Allowance: BigInt(permit2Allowance),
+      contract: token,
+    };
+  }
+
+  /**
+   * Decides how one token reaches the board, signing or approving as needed.
+   *
+   * Replaces the bare ensureAllowance() call the v2 flows used to make. A token
+   * that needs nothing, or that only needs the old approve() transaction, comes
+   * back as `none` / `approve` and the caller sends the plain overload exactly as
+   * before — the signature paths are additive.
+   *
+   * @param {string} tokenAddress - ERC20 (or the native sentinel)
+   * @param {bigint} total - Amount the call will pull
+   * @returns {Promise<{kind: string, permit?: Object, permit2?: Object}>}
+   */
+  async function resolvePull(tokenAddress, total) {
+    if (isNativeEth(tokenAddress)) return NO_PULL;
+
+    const leg = await readPullLeg(tokenAddress, total);
+    const strategy = choosePullStrategy(leg);
+
+    if (strategy === "none") return NO_PULL;
+
+    if (strategy === "permit") {
+      const permit = await signTokenPermit(leg.contract, tokenAddress, leg.amount);
+      // An unusable domain is not fatal: fall through to whatever the token
+      // could do without a 2612 signature.
+      if (permit) return { kind: "permit", permit };
+
+      // readPullLeg skips the Permit2 allowance for a permit-capable token,
+      // since it was not expected to need one. Ask now that the permit has
+      // fallen through, rather than approving something Permit2 could pull.
+      const permit2Allowance = await leg.contract.allowance(userAddress, PERMIT2_ADDRESS);
+      if (BigInt(permit2Allowance) >= leg.amount) {
+        return { kind: "permit2", permit2: await signPermit2(tokenAddress, leg.amount) };
+      }
+
+      await ensureAllowance(tokenAddress, leg.amount);
+      return { kind: "approve" };
+    }
+
+    if (strategy === "permit2") {
+      return { kind: "permit2", permit2: await signPermit2(tokenAddress, leg.amount) };
+    }
+
+    await ensureAllowance(tokenAddress, leg.amount);
+    return { kind: "approve" };
+  }
+
+  /**
+   * Decides how a whole batch reaches the board.
+   *
+   * A call carries either `TokenPermit[]` or `TokenPermit2[]`, never both, so
+   * planBatchPulls() commits the batch to one flavour and hands back the tokens
+   * that have to approve the old way instead. Those approvals are sent first, so
+   * that by the time the batch call goes out every leg is spendable.
+   *
+   * @param {Array<{token: string, amount: bigint|string}>} legs - Pulls the call will make
+   * @returns {Promise<{kind: string, entries: Array<Object>}>}
+   */
+  async function resolveBatchPull(legs) {
+    const read = [];
+    for (const leg of legs) {
+      if (isNativeEth(leg.token)) continue;
+      read.push(await readPullLeg(leg.token, leg.amount));
+    }
+
+    const plan = planBatchPulls(read);
+
+    // Only the tokens that lost this chunk's vote are approved here. The ones
+    // that could never be signed for were already approved once for the whole
+    // batch, before the chunk loop, so approving them again would be a second
+    // transaction for an allowance that already stands.
+    for (const leg of plan.demoted) {
+      showToast("Checking allowance...", "info", true);
+      await ensureAllowance(leg.token, leg.amount);
+    }
+
+    if (plan.strategy === "none") return { kind: "none", entries: [] };
+
+    const entries = [];
+    for (const leg of plan.entries) {
+      if (plan.strategy === "permit") {
+        const permit = await signTokenPermit(leg.contract, leg.token, leg.amount);
+        // Same fallback as the single path, but the batch cannot mix flavours,
+        // so a token whose domain will not resolve approves instead.
+        if (!permit) {
+          await ensureAllowance(leg.token, leg.amount);
+          continue;
+        }
+        entries.push({ token: leg.token, ...permit });
+      } else {
+        const permit2 = await signPermit2(leg.token, leg.amount);
+        entries.push({ token: leg.token, ...permit2 });
+      }
+    }
+
+    // Every entry in a batch must be spent or the contract reverts UnusedPermit /
+    // UnusedPermit2, so an empty list has to go back to the plain overload.
+    if (entries.length === 0) return { kind: "none", entries: [] };
+    return { kind: plan.strategy, entries };
+  }
+
+  /**
+   * Picks the entry point for a resolved pull, and the permit argument it takes.
+   * @param {string} method - Plain method name, e.g. "fillOrder"
+   * @param {Object} pull - Descriptor from resolvePull / resolveBatchPull
+   * @param {Array} args - Arguments the plain overload takes
+   * @returns {{method: string, args: Array}} Method and args to send
+   */
+  function withPermit(method, pull, args) {
+    if (!pull || pull.kind === "none" || pull.kind === "approve") return { method, args };
+
+    const overload = PERMIT_OVERLOADS[method][pull.kind];
+    const extra = pull.entries
+      ? [pull.entries.map((e) => permitTuple(pull.kind, e))]
+      : [permitTuple(pull.kind, pull.kind === "permit" ? pull.permit : pull.permit2)];
+
+    return { method: overload, args: args.concat(extra) };
+  }
+
+  /**
+   * Shapes a permit as the positional tuple its overload expects.
+   *
+   * Written out per flavour rather than passing the object through, because the
+   * batch and single field orders differ and ethers encodes tuples positionally:
+   * an object with the right keys in the wrong order still encodes, silently.
+   *
+   * @param {string} kind - "permit" or "permit2"
+   * @param {Object} p - Signed permit, with `token` set for batch entries
+   * @returns {Array} Positional tuple
+   */
+  function permitTuple(kind, p) {
+    if (kind === "permit") {
+      // Permit(value, deadline, v, r, s) / TokenPermit(token, v, value, deadline, r, s)
+      return p.token === undefined
+        ? [p.value, p.deadline, p.v, p.r, p.s]
+        : [p.token, p.v, p.value, p.deadline, p.r, p.s];
+    }
+    // Permit2Permit(amount, nonce, deadline, signature) / TokenPermit2(token, ...)
+    return p.token === undefined
+      ? [p.amount, p.nonce, p.deadline, p.signature]
+      : [p.token, p.amount, p.nonce, p.deadline, p.signature];
+  }
+
   /**
    * Approves the Swapboard contract for `total` of `tokenAddress` when the
    * existing allowance falls short.
@@ -2802,8 +3204,11 @@ ${orderFields}
   // ============================================================================
 
   const V2 = {
-    /** @see ISwapboard.createOrder — tokenA may be the native-ETH sentinel */
-    createOrder(tokenA, amountA, tokenB, amountB, partialFill) {
+    /**
+     * @see ISwapboard.createOrder — tokenA may be the native-ETH sentinel
+     * @param {Object} [pull] - Resolved pull; selects the permit overload
+     */
+    createOrder(tokenA, amountA, tokenB, amountB, partialFill, pull) {
       const params = toCreateParams({
         tokenA,
         amountA,
@@ -2811,13 +3216,18 @@ ${orderFields}
         amountB,
         partialFillAllowed: partialFill,
       });
-      return v2Send("createOrder", [params], nativeEthTotal([{ token: tokenA, amount: amountA }]));
+      const call = withPermit("createOrder", pull, [params]);
+      return v2Send(call.method, call.args, nativeEthTotal([{ token: tokenA, amount: amountA }]));
     },
 
-    /** @see ISwapboard.createOrders — ETH and ERC20 orders may be mixed */
-    createOrders(params) {
+    /**
+     * @see ISwapboard.createOrders — ETH and ERC20 orders may be mixed
+     * @param {Object} [pull] - Resolved batch pull; selects the permit overload
+     */
+    createOrders(params, pull) {
       const legs = params.map((p) => ({ token: p.tokenA, amount: p.amountA }));
-      return v2Send("createOrders", [params.map(toCreateParams)], nativeEthTotal(legs));
+      const call = withPermit("createOrders", pull, [params.map(toCreateParams)]);
+      return v2Send(call.method, call.args, nativeEthTotal(legs));
     },
 
     /**
@@ -2830,10 +3240,11 @@ ${orderFields}
      * @param {number} deadline - Unix timestamp the fill must land by
      * @returns {{method: string, args: Array, value: bigint}}
      */
-    fillCall(order, amountA, amountB, deadline) {
+    fillCall(order, amountA, amountB, deadline, pull) {
+      const call = withPermit("fillOrder", pull, [order.orderId, amountB, amountA, deadline]);
       return {
-        method: "fillOrder",
-        args: [order.orderId, amountB, amountA, deadline],
+        method: call.method,
+        args: call.args,
         value: nativeEthTotal([{ token: order.tokenB.address, amount: amountB }]),
       };
     },
@@ -2855,14 +3266,15 @@ ${orderFields}
      * @param {Object[]} orders - Orders to take, as indexed
      * @param {number} deadline - Unix timestamp the batch must land by
      */
-    fillOrders(orders, deadline) {
+    fillOrders(orders, deadline, pull) {
       const fills = orders.map((o) => ({
         orderId: o.orderId,
         amountB: BigInt(o.availableB),
         minAmountA: BigInt(o.availableA),
       }));
       const legs = orders.map((o) => ({ token: o.tokenB.address, amount: o.availableB }));
-      return v2Send("fillOrders", [fills, deadline], nativeEthTotal(legs));
+      const call = withPermit("fillOrders", pull, [fills, deadline]);
+      return v2Send(call.method, call.args, nativeEthTotal(legs));
     },
 
     /** @see ISwapboard.cancelOrder — native ETH escrow is refunded as ETH */
@@ -2879,11 +3291,45 @@ ${orderFields}
      * Native ETH moves as msg.value and has no allowance to set. Anything else
      * checks the deployment first: an approval naming a spender that does not
      * exist is a wasted transaction, and some tokens revert on the zero one.
+     *
+     * v2 answers with a descriptor rather than a boolean, because an approval
+     * here may be a signature the caller has to pass on to the entry point.
+     */
+    async resolvePull(tokenAddress, total) {
+      if (isNativeEth(tokenAddress)) return NO_PULL;
+      await requireDeployed();
+      return resolvePull(tokenAddress, total);
+    },
+
+    /** @see resolveBatchPull — one signature flavour for the whole call */
+    async resolveBatchPull(legs) {
+      await requireDeployed();
+      return resolveBatchPull(legs);
+    },
+
+    /**
+     * Approves an ERC20 outright, for the tokens pullStrategy() calls "approve".
+     * Native ETH has no allowance to set, and the deployment is checked first so
+     * an approval never names a spender that does not exist.
      */
     async ensureAllowance(tokenAddress, total) {
       if (isNativeEth(tokenAddress)) return false;
       await requireDeployed();
       return ensureAllowance(tokenAddress, total);
+    },
+
+    /**
+     * How a token would be pulled, without signing or sending anything.
+     *
+     * Batches are chunked into one transaction per chunk, and a permit nonce is
+     * spent by a single transaction, so a signature cannot be hoisted out of the
+     * chunk loop the way an approval can. Callers use this to approve the
+     * approve-only tokens once up front and leave the rest to the per-chunk pass.
+     */
+    async pullStrategy(tokenAddress, total) {
+      if (isNativeEth(tokenAddress)) return "none";
+      await requireDeployed();
+      return choosePullStrategy(await readPullLeg(tokenAddress, total));
     },
 
     /**
@@ -2987,6 +3433,24 @@ ${orderFields}
     },
 
     cancelOrders: () => v1Unsupported("cancelOrders"),
+
+    /**
+     * v1 has no permit overloads (CAPS.permit is false), so every approval is a
+     * transaction. The descriptor shape is kept so call sites stay version-blind.
+     */
+    async resolvePull(tokenAddress, total) {
+      if (isNativeEth(tokenAddress)) return NO_PULL;
+      const sent = await ensureAllowance(tokenAddress, total);
+      return sent ? { kind: "approve" } : NO_PULL;
+    },
+
+    /** Batch entry points do not exist on v1; nothing reaches this. */
+    resolveBatchPull: () => v1Unsupported("resolveBatchPull"),
+
+    /** v1 has no signature paths, so anything with a shortfall is an approval. */
+    async pullStrategy(tokenAddress) {
+      return isNativeEth(tokenAddress) ? "none" : "approve";
+    },
 
     ensureAllowance,
     estimateFor: estimateCall,
@@ -3152,6 +3616,12 @@ ${orderFields}
     // Estimated against the full-remainder fill, which is what the modal opens
     // on. A partial fill costs about the same, so re-estimating on every
     // keystroke would buy precision nobody acts on.
+    //
+    // Always the plain overload, never a permit one: the approval is resolved
+    // after the user confirms, so there is no signature to price yet, and asking
+    // them to sign before they have agreed to the trade would be backwards. A
+    // permit fill costs somewhat more than this quotes -- the permit call itself
+    // -- which is the right direction for an estimate to be wrong in.
     const estimateDeadline = Math.floor(Date.now() / 1000) + 300;
     let gasEstimate = null;
     if (CAPS.gasEstimate) {
@@ -3173,9 +3643,10 @@ ${orderFields}
           const deadline = Math.floor(Date.now() / 1000) + 300;
 
           // Paying in ETH: the amount rides in msg.value, so nothing to approve.
+          let pull = NO_PULL;
           if (!payWithEth) {
             showToast("Checking allowance...", "info", true);
-            await SB.ensureAllowance(order.tokenB.address, fillAmountB);
+            pull = await SB.resolvePull(order.tokenB.address, fillAmountB);
           }
 
           // Submitted as-is: v2 fills by payment, so fillAmountB is exactly what
@@ -3184,7 +3655,7 @@ ${orderFields}
           // quoted above, is the least the chain may pay out: a maker repricing
           // between quote and fill reverts the fill instead of shorting it.
           showToast("Confirm fill in wallet...", "info", true);
-          const tx = await SB.send(SB.fillCall(order, fillAmountA, fillAmountB, deadline));
+          const tx = await SB.send(SB.fillCall(order, fillAmountA, fillAmountB, deadline, pull));
 
           showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
@@ -3422,7 +3893,13 @@ ${orderFields}
 
     showModal(`Fill ${orders.length} Orders`, body, async () => {
       try {
-        if (!payWithEth) {
+        // An approve-only token is approved once for the whole batch, as before.
+        // A signature-capable one is left alone here and signed per chunk below,
+        // because each chunk is its own transaction and spends its own nonce.
+        if (
+          !payWithEth &&
+          (await SB.pullStrategy(tokenB.address, totals.totalSend)) === "approve"
+        ) {
           showToast("Checking allowance...", "info", true);
           await SB.ensureAllowance(tokenB.address, totals.totalSend);
         }
@@ -3430,9 +3907,14 @@ ${orderFields}
         const deadline = Math.floor(Date.now() / 1000) + 300;
         const chunks = chunkArray(orders, CONFIG.MAX_BATCH_FILL);
 
-        const filled = await runBatchTransactions(chunks, "Filling", (chunk) =>
-          SB.fillOrders(chunk, deadline)
-        );
+        const filled = await runBatchTransactions(chunks, "Filling", async (chunk) => {
+          const pull = payWithEth
+            ? NO_PULL
+            : await SB.resolveBatchPull(
+                chunk.map((o) => ({ token: o.tokenB.address, amount: o.availableB }))
+              );
+          return SB.fillOrders(chunk, deadline, pull);
+        });
 
         clearSelection(false);
         showToast(`Filled ${filled} orders! Syncing...`, "success", true);
@@ -4077,7 +4559,12 @@ ${orderFields}
             totals.set(p.tokenA, (totals.get(p.tokenA) || 0n) + p.amountA);
           }
 
+          // Approve-only tokens get one transaction covering every row that uses
+          // them, as before. Signature-capable ones are skipped here and signed
+          // per chunk below: a permit nonce is spent by a single transaction, so
+          // it cannot be hoisted out of the chunk loop.
           for (const [token, total] of totals) {
+            if ((await SB.pullStrategy(token, total)) !== "approve") continue;
             setTextWithDots(createBtn, "Approving");
             showToast("Checking allowance...", "info", true);
             await SB.ensureAllowance(token, total);
@@ -4088,16 +4575,24 @@ ${orderFields}
           await runBatchTransactions(
             chunkArray(erc20Params, createChunkSize),
             "Creating",
-            (chunk) =>
-              chunk.length === 1
-                ? SB.createOrder(
-                    chunk[0].tokenA,
-                    chunk[0].amountA,
-                    chunk[0].tokenB,
-                    chunk[0].amountB,
-                    chunk[0].partialFillAllowed
-                  )
-                : SB.createOrders(chunk)
+            async (chunk) => {
+              if (chunk.length === 1) {
+                const one = chunk[0];
+                const pull = await SB.resolvePull(one.tokenA, one.amountA);
+                return SB.createOrder(
+                  one.tokenA,
+                  one.amountA,
+                  one.tokenB,
+                  one.amountB,
+                  one.partialFillAllowed,
+                  pull
+                );
+              }
+              const pull = await SB.resolveBatchPull(
+                chunk.map((c) => ({ token: c.tokenA, amount: c.amountA }))
+              );
+              return SB.createOrders(chunk, pull);
+            }
           );
 
           // v1 only (empty on v2): offering WETH means the amount rides in
@@ -5283,6 +5778,16 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
       createTokenSelector,
       disconnectWallet,
       ensureAllowance,
+      resolvePull,
+      resolveBatchPull,
+      readPullLeg,
+      resolvePermitDomain,
+      signTokenPermit,
+      signPermit2,
+      randomBytes32,
+      withPermit,
+      permitTuple,
+      tryRead,
       estimateCall,
       estimateGasCost,
       exportMyOrders,
