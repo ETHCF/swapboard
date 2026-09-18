@@ -25,7 +25,47 @@ const CONFIG = {
   MAX_BATCH_CREATE: 10,
 };
 
-const EXPECTED_CHAIN_ID = 1;
+/**
+ * Chains a build can target. The page talks to exactly one of them, picked by
+ * BUILD_TARGET below. `chain` is the EIP-3085 shape wallet_addEthereumChain takes.
+ * @constant {Object<string, Object>}
+ */
+const CHAINS = {
+  mainnet: {
+    id: 1,
+    label: "Ethereum mainnet",
+    chain: {
+      chainId: "0x1",
+      chainName: "Ethereum",
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q"],
+      blockExplorerUrls: ["https://etherscan.io"],
+    },
+  },
+  sepolia: {
+    id: 11155111,
+    label: "Sepolia",
+    chain: {
+      chainId: "0xaa36a7",
+      chainName: "Sepolia",
+      nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"],
+      blockExplorerUrls: ["https://sepolia.etherscan.io"],
+    },
+  },
+};
+
+/**
+ * The network this build points at. The trailing `deploy:network` marker is
+ * load-bearing: deploy.sh rewrites it to the network it just deployed to.
+ */
+const BUILD_TARGET = {
+  network: "sepolia", // deploy:network
+};
+
+const ACTIVE_CHAIN = CHAINS[BUILD_TARGET.network];
+
+const EXPECTED_CHAIN_ID = ACTIVE_CHAIN.id;
 
 /**
  * Sentinel address representing native ETH in v2 orders.
@@ -370,6 +410,65 @@ function coinGeckoUrl(address) {
   if (typeof address !== "string") return null;
   const id = COINGECKO_ID_MAP[address.toLowerCase()];
   return id ? "https://www.coingecko.com/en/coins/" + id : null;
+}
+
+// ============================================================================
+// Permit registry
+// ============================================================================
+
+/**
+ * Generated permit-support data (see permit-tokens.js for how it was derived).
+ * Loaded from the preceding script tag in the browser and required under Jest.
+ * An absent file degrades to an empty registry rather than throwing: every
+ * lookup then answers "unknown", which callers already treat as "use approve".
+ * @constant {{CHAIN_ID: number, GENERATED: string, TOKENS: Object<string,string>}}
+ */
+const PERMIT_DATA = (typeof module !== "undefined" && module.exports
+  ? require("./permit-tokens.js")
+  : typeof window !== "undefined" && window.SwapboardPermitTokens) || {
+  CHAIN_ID: 1,
+  GENERATED: "",
+  TOKENS: {},
+};
+
+/**
+ * Permit flavour a token implements, or "unknown" when it is not in the registry.
+ *
+ * The registry was read off Ethereum mainnet, so it is only consulted when the
+ * caller is on mainnet; on any other chain every token answers "unknown". Without
+ * that gate a Sepolia build would report mainnet verdicts for addresses that are
+ * unrelated tokens there.
+ *
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {string} "eip2612" | "dai" | "both" | "nonstandard" | "unverified" | "none" | "unknown"
+ */
+function permitKindFor(address, chainId = EXPECTED_CHAIN_ID) {
+  if (typeof address !== "string") return "unknown";
+  if (chainId !== PERMIT_DATA.CHAIN_ID) return "unknown";
+  return PERMIT_DATA.TOKENS[address.toLowerCase()] || "unknown";
+}
+
+/**
+ * Whether a token can be approved by signature instead of an approve() send.
+ *
+ * True only for the flavours a signature flow can actually drive. "nonstandard"
+ * is deliberately false: those tokens (Yearn-style, permit(...,bytes)) answer
+ * DOMAIN_SEPARATOR() and nonces() like a 2612 token but revert when called as
+ * one. "unknown" and "unverified" are false too, so an unrecognised token falls
+ * back to approve() rather than sending a permit that reverts -- a false
+ * negative costs one extra transaction, a false positive costs a failed swap.
+ *
+ * Callers still need permitKindFor() to pick the signature shape, since the DAI
+ * flavour takes a different argument list from EIP-2612.
+ *
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {boolean} True when a permit signature can replace approve()
+ */
+function supportsPermit(address, chainId = EXPECTED_CHAIN_ID) {
+  const kind = permitKindFor(address, chainId);
+  return kind === "eip2612" || kind === "dai" || kind === "both";
 }
 
 /**
@@ -1103,32 +1202,23 @@ const VERSION_CAPS = {
     version: 2,
     label: "v2",
     /**
-     * Placeholders until v2 ships: there is no deployed contract and no
-     * subgraph indexing one. `live: false` below is what keeps these from
-     * being reached, and validateConfig only enforces them once a version
-     * goes live. deploy.sh fills both in.
+     * Sepolia deployment of Swapboard v2, and the subgraph that indexes it.
+     * deploy.sh wrote both; being live, validateConfig now enforces them.
      */
-    contractAddress: "0x0000000000000000000000000000000000000000", // deploy:v2:contract
+    contractAddress: "0x0b2EA9B0bda7f25EfE2A89f86BaA4cD1c472d174", // deploy:v2:contract
     subgraphUrl:
-      "https://api.goldsky.com/api/public/project_YOUR_ID/subgraphs/swapboard-v2/2.0.0/gn", // deploy:v2:subgraph
+      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/swapboard-v2-sepolia/2.0.0/gn", // deploy:v2:subgraph
     partialFill: true,
     batch: true,
     nativeEth: true,
     multiCreate: true,
     remainingAmounts: true,
-    /**
-     * The connector encodes against the real v2 ABI, so a call can be priced.
-     * Until there is a deployment it declines to estimate against the zero
-     * placeholder, so the modal shows no figure rather than a made-up one.
-     */
+    /** The connector encodes against the real v2 ABI, so a call can be priced. */
     gasEstimate: true,
-    /** Off until a v2 subgraph is deployed: polling a placeholder only times out. */
-    subgraphPolling: false,
-    /**
-     * Not deployed. Writes still go through the real connector, which refuses
-     * to send to the zero placeholder outside mock mode — see requireDeployed().
-     */
-    live: false,
+    /** Real subgraph, so post-transaction indexing can be polled. */
+    subgraphPolling: true,
+    /** Writes hit chain. */
+    live: true,
   },
 };
 
@@ -1736,6 +1826,8 @@ if (typeof window !== "undefined") {
     // Config
     CONFIG,
     EXPECTED_CHAIN_ID,
+    CHAINS,
+    ACTIVE_CHAIN,
 
     // Utility functions
     escapeHtml,
@@ -1759,6 +1851,10 @@ if (typeof window !== "undefined") {
     PRICE_CACHE_TTL_MS,
     getCachedPrice,
     getTokenPrice,
+
+    // Permit registry
+    permitKindFor,
+    supportsPermit,
     fetchPrices,
     calculateMarketDeviation,
 
@@ -1843,6 +1939,8 @@ if (typeof module !== "undefined" && module.exports) {
     // Config
     CONFIG,
     EXPECTED_CHAIN_ID,
+    CHAINS,
+    ACTIVE_CHAIN,
     COINGECKO_ID_MAP,
     NATIVE_ETH,
 
@@ -1869,6 +1967,10 @@ if (typeof module !== "undefined" && module.exports) {
     coinGeckoUrl,
     priceRatio,
     calculateMarketDeviation,
+
+    // Permit registry
+    permitKindFor,
+    supportsPermit,
 
     // Token search
     searchTokens,
