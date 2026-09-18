@@ -2370,12 +2370,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 usedBits,
         uint256 length
     ) private pure {
-        // Empty batches reach here from classic settle (`_emptyTokenPermit2`). For `length == 256`,
-        // `1 << 256` is not representable; right-shift builds the mask for 0..=256 in unchecked.
-        uint256 mask;
-        unchecked {
-            mask = type(uint256).max >> (256 - length);
-        }
+        // Mask with the low `length` bits set. Built by right-shifting because `1 << 256` is not
+        // representable; `length == 0` shifts by 256 and yields the empty mask.
+        uint256 mask = type(uint256).max >> (256 - length);
         if (usedBits != mask) {
             revert UnusedPermit2();
         }
