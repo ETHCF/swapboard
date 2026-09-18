@@ -2197,6 +2197,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         if (wrapped.allowance(msg.sender, address(this)) < value) {
+            // forge-lint: disable-next-line(reentrancy-no-eth)
             IERC20Permit(token).permit(msg.sender, address(this), value, deadline, v, r, s);
         }
     }
