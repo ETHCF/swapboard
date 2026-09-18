@@ -83,7 +83,9 @@ The following are documented design decisions, not vulnerabilities:
 
 7. **No expiration**: Orders remain active until filled or cancelled. There is no automatic expiration mechanism.
 
-8. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
+8. **ETH goes to `msg.sender`, so an address that rejects ETH can lock itself out**: There is no recipient override on any path (`cancelOrder`, fills, and modify refunds all pay `msg.sender` via `Address.sendValue`). A maker that is a contract reverting in `receive`/`fallback` (by design, after an upgrade, or once self-destructed) can never cancel an ETH-tokenA order, and that escrow stays in the contract forever; their ETH-tokenB orders are also unfillable because the taker's payment to them reverts. Likewise a taker that cannot accept ETH cannot fill ETH-tokenA orders. This is self-inflicted and no third party profits from it, but counterparties can waste gas discovering it. Use an EOA or a contract that accepts ETH for orders involving native ETH.
+
+9. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
 
 ## Bug Bounty
 

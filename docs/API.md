@@ -739,5 +739,6 @@ async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
 - Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
 - The maker cannot fill their own order (`SelfFill`). A self-`transferFrom` of tokenB typically does not increase the recipient, so the exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board and back. Banning it keeps every fill payment a single pull to a distinct maker. (Multi-maker Permit2 still hops through the board to split one pull across makers.)
 - No expiry. Orders remain active until filled or canceled.
+- ETH always goes to `msg.sender` (no recipient override). An address that rejects ETH locks itself out of native-ETH orders: a maker that reverts on receive (or has self-destructed) can never cancel an ETH-tokenA order, so that escrow is stuck, and their ETH-tokenB orders cannot be filled; a taker that rejects ETH cannot fill ETH-tokenA orders. Use an EOA or an ETH-accepting contract for native-ETH orders.
 - To close an order or reclaim all escrow, call `cancelOrder` / `cancelOrders`. `modifyOrder` / `modifyOrders` cannot set remaining to 0 (`ZeroAmount`).
 - Contract has no admin functions. No pause. No upgrades.

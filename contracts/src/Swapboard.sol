@@ -54,6 +54,11 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///        possible after escrow release
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
 ///        can run `receive`/`fallback`; always after state updates (CEI)
+///      - ETH always goes to `msg.sender`; no path takes a recipient override. An address that
+///        reverts on receiving ETH (or self-destructs) locks itself out of native-ETH orders: as a
+///        maker it can never `cancelOrder` an ETH-tokenA order, so that escrow stays here forever,
+///        and its ETH-tokenB orders are unfillable; as a taker it cannot fill ETH-tokenA orders.
+///        Self-inflicted and unprofitable for third parties, but it can waste counterparty gas
 ///      - Floor rounding on `fillOrder` may leave tokenA dust in escrow; refunding that dust is
 ///        not worth the gas. It can later benefit a user who rounds favorably on another fill
 ///        where that dust token is tokenB
