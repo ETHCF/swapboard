@@ -474,11 +474,6 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast</code></pre
         <td>tokenA and tokenB are identical</td>
       </tr>
       <tr>
-        <td><code>NotAContract(address)</code></td>
-        <td><code>0x09ee12d5</code></td>
-        <td>Address has no code</td>
-      </tr>
-      <tr>
         <td><code>BalanceMismatch(uint256,uint256)</code></td>
         <td><code>0x2c5211c6</code></td>
         <td>Transfer mismatch on tokenA deposit or ERC20 tokenB payment to maker (fee-on-transfer, mid-transfer rebase, or phantom token)</td>
@@ -498,17 +493,23 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast</code></pre
         <td><code>0x3d693ada</code></td>
         <td>Caller is not order maker</td>
       </tr>
+      <tr>
+        <td><code>SelfFill()</code></td>
+        <td><code>0x9d7a930f</code></td>
+        <td>Maker attempted to fill their own order. Banned so tokenB can always be pulled directly to a distinct maker (<code>transferFrom(self, self)</code> does not increase the recipient)</td>
+      </tr>
     </table>
 
     <h2>Notes</h2>
     <ul>
       <li>All amounts are in base units (wei-style). Multiply by 10^decimals.</li>
       <li>Orders can be front-run. Consider using Flashbots for fills.</li>
-      <li>EIP-2612 <code>permit</code> overloads on create, fill, and modify set allowance in the same transaction (<code>v == 0</code> skips; existing signatures unchanged). Native ETH with a non-skip permit reverts <code>PermitOnNative</code>.</li>
+      <li>EIP-2612 <code>permit</code> and Permit2 SignatureTransfer overloads on create, fill, and modify pull in the same transaction (existing signatures unchanged). Native ETH with a non-skip permit reverts <code>PermitOnNative</code>.</li>
       <li>Post-deposit rebases (while tokenA sits in escrow) are not checked: a negative rebase can lock fill/cancel; a positive rebase can strand surplus. See <code>contracts/test/security-research/</code>.</li>
-      <li>Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release. Self-fill ERC20 tokenB still routes through the board (see security-research tests).</li>
-      <li>No partial fills. Orders are filled completely or not at all.</li>
-      <li>Self-fills are allowed (maker can fill own order).</li>
+      <li>Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying <code>transfer</code> can take all escrow of that token. Makers of the same scam token share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected.</li>
+      <li>Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release.</li>
+      <li>Partial fills are allowed only when <code>partialFillAllowed</code> is true (set at create or via <code>setPartialFillAllowed</code>).</li>
+      <li>The maker cannot fill their own order (<code>SelfFill</code>). A self-<code>transferFrom</code> of tokenB typically does not increase the recipient, so the exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board and back. Banning it keeps every fill payment a single pull to a distinct maker.</li>
       <li>No expiry. Orders remain active until filled or canceled.</li>
       <li>Contract has no admin functions. No pause. No upgrades.</li>
     </ul>

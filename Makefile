@@ -1,4 +1,4 @@
-.PHONY: all build build-contracts test test-contracts test-e2e clean install fmt fmt-check lint coverage coverage-html snapshot snapshot-save snapshot-diff anvil deploy-local slither serve help
+.PHONY: all build build-contracts size test test-contracts test-e2e clean install fmt fmt-check lint coverage coverage-html snapshot snapshot-save snapshot-diff anvil deploy-local slither serve help
 
 # Foundry project lives in contracts/ (repo git root is not the forge root).
 # Run forge from contracts/ — `forge … --root contracts` breaks solar import resolution.
@@ -32,6 +32,10 @@ build: lint build-contracts
 build-contracts:
 	$(FORGE) build --sizes
 
+# Show contract runtime / initcode sizes (EIP-170 margin)
+size:
+	$(FORGE) build --sizes
+
 # Run unit/integration tests (no full Docker e2e stack)
 test:
 	$(FORGE) test -vvv
@@ -46,6 +50,7 @@ test-e2e:
 	cd e2e && pnpm e2e
 
 # Run contract tests with coverage (src only; mocks/tests excluded from report)
+# `--ir-minimum`: coverage disables optimizer/viaIR; Swapboard needs IR to avoid stack-too-deep.
 coverage:
 	$(FORGE) coverage --report summary --report lcov --exclude-tests --no-match-coverage 'test/' --no-match-contract GasBenchmarks
 
@@ -119,6 +124,7 @@ help:
 	@echo "  install         - Install all dependencies"
 	@echo "  build           - Lint, then build contracts and subgraph"
 	@echo "  build-contracts - Build contracts only"
+	@echo "  size            - Show contract runtime / initcode sizes"
 	@echo "  test            - Run contract + subgraph tests"
 	@echo "  test-contracts  - Run contract tests only"
 	@echo "  test-e2e        - Run full Docker e2e stack (setup + test + teardown)"
