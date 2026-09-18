@@ -85,7 +85,9 @@ The following are documented design decisions, not vulnerabilities:
 
 8. **ETH goes to `msg.sender`, so an address that rejects ETH can lock itself out**: There is no recipient override on any path (`cancelOrder`, fills, and modify refunds all pay `msg.sender` via `Address.sendValue`). A maker that is a contract reverting in `receive`/`fallback` (by design, after an upgrade, or once self-destructed) can never cancel an ETH-tokenA order, and that escrow stays in the contract forever; their ETH-tokenB orders are also unfillable because the taker's payment to them reverts. Likewise a taker that cannot accept ETH cannot fill ETH-tokenA orders. This is self-inflicted and no third party profits from it, but counterparties can waste gas discovering it. Use an EOA or a contract that accepts ETH for orders involving native ETH.
 
-9. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
+9. **Makers must be able to hold tokenB**: Every ERC20 payment to a maker is verified by measuring the maker's balance delta and reverts `BalanceMismatch` when it does not match. A maker address that does not retain tokenB — a vault that forwards, stakes, or burns it inside a transfer hook, or a token with such hooks — therefore cannot be paid, and its orders are unfillable on every path (classic `transferFrom`, Permit2 direct pull, and the multi-maker board hop). This is the maker-side mirror of the inbound fee-on-transfer policy: receive tokenB at an address that simply holds it.
+
+10. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
 
 ## Bug Bounty
 

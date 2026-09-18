@@ -52,6 +52,11 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///        tokens in escrow are not affected
 ///      - Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains
 ///        possible after escrow release
+///      - Every ERC20 tokenB payment is verified against the recipient's balance delta, so a maker
+///        whose address does not retain tokenB (a vault that forwards/stakes/burns it in a transfer
+///        hook, or a hooked token) reverts `BalanceMismatch` and its orders are unfillable on every
+///        path (classic pull, Permit2 direct pull, multi-maker board hop). Makers must receive
+///        tokenB at an address that simply holds it
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
 ///        can run `receive`/`fallback`; always after state updates (CEI)
 ///      - ETH always goes to `msg.sender`; no path takes a recipient override. An address that
