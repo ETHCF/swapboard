@@ -886,27 +886,37 @@ const ERROR_SIGNATURES = {
   "0xd92e233d": "ZeroAddress",
   "0x1f2a2005": "ZeroAmount",
   "0x201b580a": "SameToken",
-  "0x8a8b41ec": "NotAContract",
   "0x6e65ed84": "BalanceMismatch",
   "0x4e90badc": "OrderNotFound",
   "0xd2c02610": "OrderNotActive",
+  "0x457802f0": "OrderStateMismatch",
   "0x98cd7222": "NotMaker",
   "0x8230dc8f": "ETHAmountMismatch",
   "0x1ab7da6b": "DeadlineExpired",
 
-  // v1 only: ETH is reached by wrapping, so the failures are WETH-shaped.
+  // v1 only: token-address validation, plus ETH reached by wrapping, so the
+  // remaining failures are WETH-shaped.
+  "0x8a8b41ec": "NotAContract",
   "0x6bdafcae": "ZeroETH",
   "0xcfc02c6e": "NotWETH",
   "0x1c988062": "ETHTransferFailed",
 
   // v2 only: partial fills, slippage bounds, batch entry points, and maker edits.
+  "0x9d7a930f": "SelfFill",
   "0xed38596f": "PartialFillNotAllowed",
   "0x535a34f0": "FillAmountTooHigh",
   "0x19113a72": "FillAmountMismatch",
-  "0x489a6af8": "FillPayTooHigh",
   "0x54b9c511": "DuplicateOrderId",
   "0xa88ee577": "NoChange",
-  "0xe796ec17": "OrderStateMismatch",
+
+  // v2 only: EIP-2612 permit and Permit2 signature transfers.
+  "0x62898bac": "PermitOnNative",
+  "0xddafbaef": "InvalidPermit",
+  "0xb1df4e7e": "UnusedPermit",
+  "0xc87bfe90": "DuplicatePermitToken",
+  "0x32d1c8da": "InvalidPermit2",
+  "0xc1abc68b": "UnusedPermit2",
+  "0x35d2fb43": "TooManyPermit2",
 
   // v2 only, from OpenZeppelin. Address.sendValue and SafeERC20 replace v1's
   // hand-rolled ETHTransferFailed, and the transient reentrancy guard has its
@@ -926,30 +936,40 @@ const ERROR_MESSAGES = {
   ZeroAddress: "Invalid token address",
   ZeroAmount: "Amount too small (check decimal places)",
   SameToken: "Offered and wanted tokens must be different",
-  NotAContract: "Token address is not a contract",
-  BalanceMismatch: "Token transfer amount mismatch (fee-on-transfer tokens not supported)",
+  BalanceMismatch:
+    "Token transfer amount mismatch (fee-on-transfer / mid-transfer rebase / phantom tokens not supported on deposits or tokenB payments)",
   OrderNotFound: (args) => `Order #${args[0]} not found`,
   OrderNotActive: (args) => `Order #${args[0]} is no longer active`,
   NotMaker: "You are not the maker of this order",
+  SelfFill: "You cannot fill your own order",
+  NotAContract: "Token address is not a contract",
   ZeroETH: "ETH amount cannot be zero",
   NotWETH: "Token is not WETH",
   ETHAmountMismatch: "ETH amount does not match required amount",
   ETHTransferFailed: "ETH transfer to recipient failed",
   DeadlineExpired: "Transaction deadline passed. Please try again.",
 
-  // v2. The three fill errors all mean the order moved between quote and
+  // v2. The two fill errors both mean the order moved between quote and
   // submission, so each says what to do rather than restating the numbers.
   PartialFillNotAllowed: (args) => `Order #${args[0]} must be filled in full`,
   FillAmountTooHigh: (args) =>
     `Order #${args[0]} has less left than you asked for. Refresh and try again.`,
   FillAmountMismatch: (args) =>
     `Order #${args[0]} repriced while you were confirming. Refresh and try again.`,
-  FillPayTooHigh: (args) =>
-    `Order #${args[0]} repriced while you were confirming. Refresh and try again.`,
   DuplicateOrderId: (args) => `Order #${args[0]} appears twice in this batch`,
   NoChange: "Nothing to change: the order already has these values",
   OrderStateMismatch: (args) =>
     `Order #${args[0]} changed while you were editing it. Refresh and try again.`,
+
+  // v2 permit / Permit2 signature failures.
+  PermitOnNative: "Cannot permit native ETH",
+  InvalidPermit: "Permit signature is invalid",
+  UnusedPermit: "Permit signature was not used in this transaction",
+  DuplicatePermitToken: "Duplicate permit token",
+  InvalidPermit2: "Permit2 signature is missing",
+  UnusedPermit2: "Permit2 signature was not used in this transaction",
+  TooManyPermit2: "Too many Permit2 entries (maximum 256)",
+
   FailedCall: "ETH transfer to recipient failed",
   InsufficientBalance: "The contract holds less ETH than this transfer needs",
   SafeERC20FailedOperation: "Token transfer failed",
@@ -1675,24 +1695,25 @@ function getShiftRangeIds(sortedOrders, anchorId, targetId, firstSelected, userA
 // V2: Partial fill math
 // ============================================================================
 //
-// These mirror `Swapboard._quoteFill` and `_quoteFillPaying` exactly. They
-// have to: v2 pays with an exact `msg.value` when the wanted token is native
-// ETH, so a formula that disagrees with the contract by one base unit is a
-// reverted transaction rather than a rounding artifact.
+// These mirror `Swapboard._quoteFill` exactly. They have to: v2 pays with an
+// exact `msg.value` when the wanted token is native ETH, so a formula that
+// disagrees with the contract by one base unit is a reverted transaction rather
+// than a rounding artifact.
 //
 // The UI fills by payment (`fillOrder`): the taker names the tokenB they pay,
 // which is exactly what leaves their wallet, and the tokenA they receive is
 // derived from it, floored in the maker's favour (computeFillFromPayment). That
 // derived receive is also sent as the fill's `minAmountA`, so it has to agree
 // with the chain to the base unit. The receive-driven pair, quoteFill /
-// computeFillFromReceive, mirrors `fillOrderPaying`, where the payment is
-// derived instead and ceiled.
+// computeFillFromReceive, runs the same arithmetic backwards — what a given
+// receive costs, ceiled — for the amount controls, which quote in either
+// direction even though the fill always goes out by payment.
 // ============================================================================
 
 /**
  * The tokenB payment for taking `amountA` of an order's offered token.
  *
- * Mirrors `Swapboard._quoteFillPaying`: taking the whole remainder pays exactly the
+ * Inverts `Swapboard._quoteFill`: taking the whole remainder pays exactly the
  * remaining tokenB (no rounding at all), and anything less ceils the
  * proportion. Ceiling rather than flooring is what keeps a sequence of small
  * fills from underpaying the maker.
@@ -1743,7 +1764,8 @@ function computeReceiveFromFill(order, amountB) {
  *
  * @param {Object} order - Order with availableA/availableB in base units
  * @param {string|bigint} receiveAmountA - Desired amount of the offered token
- * @returns {{amountA: bigint, amountB: bigint}} Arguments for fillOrderPaying
+ * @returns {{amountA: bigint, amountB: bigint}} The receive, and the payment it
+ *   costs; the fill goes out by payment, so amountB is fillOrder's amountB
  */
 function computeFillFromReceive(order, receiveAmountA) {
   const availableA = BigInt(order.availableA);

@@ -99,7 +99,7 @@ if (tokenA == address(0) || tokenB == address(0)) {
 }
 ```
 
-Keep separate `if`s when the error encodes different data (e.g. `NotAContract(tokenA)` vs `NotAContract(tokenB)`).
+Keep separate `if`s when the error encodes different data (e.g. `NotMaker(orderId, …)` vs a plain `ZeroAmount`).
 
 - Scope solhint disables tightly around intentional ABI choices (e.g. non-indexed fields on `OrderCreated`), and re-enable immediately after.
 

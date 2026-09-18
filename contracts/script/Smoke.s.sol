@@ -4,13 +4,15 @@ pragma solidity 0.8.36;
 import {Script, console} from "forge-std/Script.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "../test/mocks/MockERC20.sol";
+import {SmokeTaker} from "./SmokeTaker.sol";
 
 /// @title Smoke
 /// @author Number Group (numbergroup.xyz) for Ethereum Community Foundation
 /// @notice Drives every Swapboard v2 entry point against a live deployment
 /// @dev Testnets only: deploys two throwaway, freely mintable ERC20s and trades them against
-///      itself, so the broadcaster is both maker and taker. Ends with two orders left open so
-///      the subgraph and the UI have live orders to show.
+///      itself. The broadcaster is the maker of every order; a throwaway `SmokeTaker` it deploys
+///      fills them, since the board rejects a maker filling their own order. Ends with two orders
+///      left open so the subgraph and the UI have live orders to show.
 ///
 ///      CONTRACT_ADDRESS=0x... forge script script/Smoke.s.sol \
 ///          --rpc-url sepolia --account sepolia-deployer --broadcast
@@ -29,6 +31,9 @@ contract Smoke is Script {
 
     /// @notice Throwaway 6-decimal token
     MockERC20 internal _tokenB;
+
+    /// @notice Throwaway contract that takes the other side of every order
+    SmokeTaker internal _taker;
 
     /// @notice Thrown when the board is not in the state a step should have left it in
     /// @param step The step that failed
@@ -49,6 +54,11 @@ contract Smoke is Script {
         _tokenA.approve(address(_board), type(uint256).max);
         _tokenB.approve(address(_board), type(uint256).max);
 
+        // The taker pays tokenB and is funded for the one order wanting ETH.
+        _taker = new SmokeTaker{value: ETH_LEG}(_board);
+        _tokenB.mint(address(_taker), 1_000_000e6);
+        _taker.approve(_tokenB);
+
         _partialFillLifecycle();
         _nativeEth();
         _batches();
@@ -65,14 +75,14 @@ contract Smoke is Script {
         // solhint-enable no-console
     }
 
-    /// @notice One partially fillable ERC20 order through both fill styles, a reprice, a
+    /// @notice One partially fillable ERC20 order through two partial fills, a reprice, a
     ///         partial-fill flag flip, and a cancel
     function _partialFillLifecycle() internal {
         uint256 id = _board.createOrder(_params(address(_tokenA), 100e18, address(_tokenB), 200e6, true));
 
-        // At 2 SMKB per SMKA: paying 50 SMKB buys 25 SMKA, then 25 SMKA costs 50 SMKB.
-        _board.fillOrder(id, 50e6, 25e18, 0);
-        _board.fillOrderPaying(id, 25e18, 50e6, 0);
+        // At 2 SMKB per SMKA, each 50 SMKB payment buys 25 SMKA.
+        _taker.fillOrder(id, 50e6, 25e18, 0);
+        _taker.fillOrder(id, 50e6, 25e18, 0);
         ISwapboard.Order memory order = _board.getOrder(id);
         _check(order.availableA == 50e18 && order.availableB == 100e6, "partial fills");
 
@@ -88,11 +98,11 @@ contract Smoke is Script {
     /// @notice Native ETH on each side: sell ETH for a token, and sell a token for ETH
     function _nativeEth() internal {
         uint256 sellEth = _board.createOrder{value: ETH_LEG}(_params(_eth, ETH_LEG, address(_tokenB), 2e6, false));
-        _board.fillOrder(sellEth, 2e6, ETH_LEG, 0);
+        _taker.fillOrder(sellEth, 2e6, ETH_LEG, 0);
         _check(!_board.canFill(sellEth), "fill ETH-for-token");
 
         uint256 buyEth = _board.createOrder(_params(address(_tokenA), 10e18, _eth, ETH_LEG, false));
-        _board.fillOrder{value: ETH_LEG}(buyEth, ETH_LEG, 10e18, 0);
+        _taker.fillOrder{value: ETH_LEG}(buyEth, ETH_LEG, 10e18, 0);
         _check(!_board.canFill(buyEth), "fill token-for-ETH");
     }
 
@@ -108,14 +118,14 @@ contract Smoke is Script {
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
         fills[0] = ISwapboard.FillOrderParams({orderId: ids[0], amountB: 10e6, minAmountA: 5e18});
         fills[1] = ISwapboard.FillOrderParams({orderId: ids[1], amountB: 30e6, minAmountA: 10e18});
-        _board.fillOrders(fills, 0);
+        _taker.fillOrders(fills, 0);
         _check(_board.canFill(ids[0]) && !_board.canFill(ids[1]), "fillOrders");
 
         // Half of the ETH order, at 5 SMKB per ETH.
-        ISwapboard.FillOrderPayingParams[] memory pays = new ISwapboard.FillOrderPayingParams[](1);
-        pays[0] = ISwapboard.FillOrderPayingParams({orderId: ids[2], amountA: ETH_LEG / 2, maxAmountB: 2.5e6});
-        _board.fillOrdersPaying(pays, 0);
-        _check(_board.getOrder(ids[2]).availableA == ETH_LEG / 2, "fillOrdersPaying");
+        ISwapboard.FillOrderParams[] memory ethFills = new ISwapboard.FillOrderParams[](1);
+        ethFills[0] = ISwapboard.FillOrderParams({orderId: ids[2], amountB: 2.5e6, minAmountA: ETH_LEG / 2});
+        _taker.fillOrders(ethFills, 0);
+        _check(_board.getOrder(ids[2]).availableA == ETH_LEG / 2, "fillOrders (ETH payout)");
 
         ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](1);
         mods[0] = ISwapboard.ModifyOrdersParams({

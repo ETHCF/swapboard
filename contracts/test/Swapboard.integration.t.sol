@@ -170,8 +170,8 @@ contract SwapboardIntegrationTest is Test {
         vm.stopPrank();
 
         vm.startPrank(_charlie);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
-        _board.fillOrder(orderId, 30_000e6, 10 ether, 0);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
+        _board.fillOrder(orderId, 10 ether, 10 ether, 0);
         vm.stopPrank();
 
         assertFalse(_board.getOrder(orderId).active);
@@ -204,7 +204,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
 
         vm.prank(_alice);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotActive.selector, orderId));
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
         _board.cancelOrder(orderId);
     }
 
@@ -344,7 +344,7 @@ contract SwapboardIntegrationTest is Test {
         vm.startPrank(_alice);
         _weth.approve(address(_board), 10 ether);
 
-        vm.expectEmit(true, true, false, true);
+        vm.expectEmit(true, true, true, true);
         emit ISwapboard.OrderCreated({
             orderId: 0,
             maker: _alice,
@@ -493,10 +493,13 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
 
+        uint128 remainingB = _board.getOrder(orderId).availableB;
         vm.startPrank(_charlie);
         _usdc.approve(address(_board), 30_000e6);
-        vm.expectRevert(abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, 4 ether, remainingA));
-        _board.fillOrderPaying(orderId, 4 ether, type(uint128).max, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, remainingB + 1, remainingB)
+        );
+        _board.fillOrder(orderId, remainingB + 1, 0, 0);
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));
@@ -706,7 +709,7 @@ contract SwapboardIntegrationTest is Test {
         uint256 orderId = _board.createOrder(_order(address(_weth), 10 ether, address(_usdc), 30_000e6));
         assertFalse(_board.getOrder(orderId).partialFillAllowed);
 
-        vm.expectEmit(true, false, false, true, address(_board));
+        vm.expectEmit(true, true, false, true, address(_board));
         emit ISwapboard.OrderPartialFillUpdated(orderId, true);
         _board.setPartialFillAllowed(orderId, true);
         vm.stopPrank();

@@ -1962,6 +1962,9 @@ describe("decodeContractError", () => {
   test("interpolates decoded arguments into the message", () => {
     expect(decodeContractError("0xd2c02610" + pad(7)).message).toBe("Order #7 is no longer active");
     expect(decodeContractError("0x4e90badc" + pad(1234)).message).toBe("Order #1234 not found");
+    expect(decodeContractError("0x457802f0" + pad(42)).message).toBe(
+      "Order #42 changed while you were editing it. Refresh and try again."
+    );
   });
 
   // MUTATION: Omit the v2 selectors from the table
@@ -2000,18 +2003,9 @@ describe("decodeContractError", () => {
   //         generic failure instead of saying what happened
   test("recognizes the v2 maker-edit errors", () => {
     expect(decodeContractError("0xa88ee577").name).toBe("NoChange");
-    expect(decodeContractError("0xe796ec17" + pad(7) + pad(1).repeat(8))).toEqual({
+    expect(decodeContractError("0x457802f0" + pad(7))).toEqual({
       name: "OrderStateMismatch",
       message: "Order #7 changed while you were editing it. Refresh and try again.",
-    });
-  });
-
-  // MUTATION: Leave out the fill-by-receive bound
-  // BREAKS: a fillOrderPaying that would overcharge reports a generic failure
-  test("recognizes FillPayTooHigh", () => {
-    expect(decodeContractError("0x489a6af8" + pad(4) + pad(9) + pad(8))).toEqual({
-      name: "FillPayTooHigh",
-      message: "Order #4 repriced while you were confirming. Refresh and try again.",
     });
   });
 
@@ -2030,6 +2024,62 @@ describe("decodeContractError", () => {
     expect(decodeContractError("0x1ab7da6b")).toEqual({
       name: "DeadlineExpired",
       message: "Transaction deadline passed. Please try again.",
+    });
+  });
+
+  test("recognizes PermitOnNative", () => {
+    expect(decodeContractError("0x62898bac")).toEqual({
+      name: "PermitOnNative",
+      message: "Cannot permit native ETH",
+    });
+  });
+
+  test("recognizes InvalidPermit", () => {
+    expect(decodeContractError("0xddafbaef")).toEqual({
+      name: "InvalidPermit",
+      message: "Permit signature is invalid",
+    });
+  });
+
+  test("recognizes UnusedPermit", () => {
+    expect(decodeContractError("0xb1df4e7e")).toEqual({
+      name: "UnusedPermit",
+      message: "Permit signature was not used in this transaction",
+    });
+  });
+
+  test("recognizes DuplicatePermitToken", () => {
+    expect(decodeContractError("0xc87bfe90")).toEqual({
+      name: "DuplicatePermitToken",
+      message: "Duplicate permit token",
+    });
+  });
+
+  test("recognizes InvalidPermit2", () => {
+    expect(decodeContractError("0x32d1c8da")).toEqual({
+      name: "InvalidPermit2",
+      message: "Permit2 signature is missing",
+    });
+  });
+
+  test("recognizes UnusedPermit2", () => {
+    expect(decodeContractError("0xc1abc68b")).toEqual({
+      name: "UnusedPermit2",
+      message: "Permit2 signature was not used in this transaction",
+    });
+  });
+
+  test("recognizes TooManyPermit2", () => {
+    expect(decodeContractError("0x35d2fb43")).toEqual({
+      name: "TooManyPermit2",
+      message: "Too many Permit2 entries (maximum 256)",
+    });
+  });
+
+  test("recognizes SelfFill", () => {
+    expect(decodeContractError("0x9d7a930f")).toEqual({
+      name: "SelfFill",
+      message: "You cannot fill your own order",
     });
   });
 
@@ -2839,7 +2889,20 @@ describe("resolveVersion", () => {
   // MUTATION: Let the URLSearchParams throw escape
   // BREAKS: a malformed query string takes down startup before first render
   test("survives a search string it cannot parse", () => {
-    expect(resolveVersion({ search: "%", stored: "2" }).version).toBe(2);
+    const Orig = URLSearchParams;
+    global.URLSearchParams = class {
+      constructor() {
+        throw new TypeError("bad search");
+      }
+    };
+    try {
+      expect(resolveVersion({ search: "?v=1", stored: "2" })).toEqual({
+        version: 2,
+        pinned: false,
+      });
+    } finally {
+      global.URLSearchParams = Orig;
+    }
   });
 
   test("exposes the storage key it resolves against", () => {

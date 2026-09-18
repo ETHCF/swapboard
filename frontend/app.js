@@ -327,15 +327,25 @@
    */
   const CONTRACT_ABI_V2 = [
     "function createOrder(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed) order) external payable returns (uint256)",
+    "function createOrder(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed) order, tuple(uint256 amount, uint256 nonce, uint256 deadline, bytes signature) permit) external payable returns (uint256)",
+    "function createOrder(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed) order, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permit) external payable returns (uint256)",
     "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders) external payable returns (uint256[])",
+    "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits) external payable returns (uint256[])",
+    "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits) external payable returns (uint256[])",
     "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline) external payable",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, tuple(uint256 amount, uint256 nonce, uint256 deadline, bytes signature) permit) external payable",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permit) external payable",
     "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline) external payable",
-    "function fillOrderPaying(uint256 orderId, uint128 amountA, uint128 maxAmountB, uint256 deadline) external payable",
-    "function fillOrdersPaying(tuple(uint256 orderId, uint128 amountA, uint128 maxAmountB)[] fills, uint256 deadline) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits) external payable",
     "function cancelOrder(uint256 orderId) external",
     "function cancelOrders(uint256[] orderIds) external",
     "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder) external payable",
+    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder, tuple(uint256 amount, uint256 nonce, uint256 deadline, bytes signature) permit) external payable",
+    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permit) external payable",
     "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder)[] mods) external payable",
+    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder)[] mods, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits) external payable",
+    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder)[] mods, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits) external payable",
     "function setPartialFillAllowed(uint256 orderId, bool partialFillAllowed) external",
     "function getEth() external pure returns (address)",
     "function getNextOrderId() external view returns (uint256)",
@@ -343,32 +353,38 @@
     "function getOrders(uint256[] orderIds) external view returns (tuple(address maker, bool active, bool partialFillAllowed, address tokenA, address tokenB, uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB)[])",
     "function canFill(uint256 orderId) external view returns (bool)",
     "function version() external view returns (string)",
-    "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)",
-    "event OrderFilled(uint256 indexed orderId, address indexed taker, uint128 amountA, uint128 amountB)",
     "event OrderCanceled(uint256 indexed orderId)",
+    "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool indexed partialFillAllowed)",
+    "event OrderFilled(uint256 indexed orderId, address indexed taker, uint128 amountA, uint128 amountB)",
     "event OrderModified(uint256 indexed orderId, uint128 availableA, uint128 availableB)",
-    "event OrderPartialFillUpdated(uint256 indexed orderId, bool partialFillAllowed)",
+    "event OrderPartialFillUpdated(uint256 indexed orderId, bool indexed partialFillAllowed)",
+    "error BalanceMismatch(uint256 expected, uint256 received)",
+    "error DeadlineExpired()",
+    "error DuplicateOrderId(uint256 orderId)",
+    "error DuplicatePermitToken(address token)",
+    "error ETHAmountMismatch(uint256 required, uint256 sent)",
+    "error FailedCall()",
+    "error FillAmountMismatch(uint256 orderId, uint128 quoted, uint128 minimum)",
+    "error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining)",
+    "error InsufficientBalance(uint256 balance, uint256 needed)",
+    "error InvalidPermit()",
+    "error InvalidPermit2()",
+    "error NoChange()",
+    "error NotMaker(uint256 orderId, address caller, address maker)",
+    "error OrderNotActive(uint256 orderId)",
+    "error OrderNotFound(uint256 orderId)",
+    "error OrderStateMismatch(uint256 orderId)",
+    "error PartialFillNotAllowed(uint256 orderId)",
+    "error PermitOnNative()",
+    "error ReentrancyGuardReentrantCall()",
+    "error SafeERC20FailedOperation(address token)",
+    "error SameToken()",
+    "error SelfFill()",
+    "error TooManyPermit2()",
+    "error UnusedPermit()",
+    "error UnusedPermit2()",
     "error ZeroAddress()",
     "error ZeroAmount()",
-    "error NoChange()",
-    "error SameToken()",
-    "error NotAContract(address token)",
-    "error BalanceMismatch(uint256 expected, uint256 received)",
-    "error OrderNotFound(uint256 orderId)",
-    "error OrderNotActive(uint256 orderId)",
-    "error NotMaker(uint256 orderId, address caller, address maker)",
-    "error ETHAmountMismatch(uint256 required, uint256 sent)",
-    "error DeadlineExpired()",
-    "error PartialFillNotAllowed(uint256 orderId)",
-    "error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining)",
-    "error FillAmountMismatch(uint256 orderId, uint128 quoted, uint128 minimum)",
-    "error FillPayTooHigh(uint256 orderId, uint128 quoted, uint128 maximum)",
-    "error OrderStateMismatch(uint256 orderId, uint128 expectedAmountA, uint128 expectedAmountB, uint128 expectedAvailableA, uint128 expectedAvailableB, uint128 actualAmountA, uint128 actualAmountB, uint128 actualAvailableA, uint128 actualAvailableB)",
-    "error DuplicateOrderId(uint256 orderId)",
-    "error FailedCall()",
-    "error InsufficientBalance(uint256 balance, uint256 needed)",
-    "error SafeERC20FailedOperation(address token)",
-    "error ReentrancyGuardReentrantCall()",
   ];
 
   /**
@@ -4375,10 +4391,13 @@ ${orderFields}
         loadStats();
       });
 
-      contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
-        loadOrders();
-        loadStats();
-      });
+      contract.on(
+        "OrderCreated",
+        (orderId, maker, tokenA, amountA, tokenB, amountB, partialFillAllowed) => {
+          loadOrders();
+          loadStats();
+        }
+      );
 
       // Set up provider event listeners for the selected wallet
       setupProviderListeners(walletProvider, walletId);

@@ -5,9 +5,9 @@ pragma solidity 0.8.36;
 
 import {MockERC20} from "./MockERC20.sol";
 
-/// @title MockOutboundFOT
-/// @notice Exact transferFrom (no fee); 5% fee only on transfer (outbound payout)
-contract MockOutboundFOT is MockERC20 {
+/// @title OutboundFotToken
+/// @notice Exact `transferFrom` (no fee); 5% fee only on `transfer`
+contract OutboundFotToken is MockERC20 {
     uint256 private _feePercent = 5;
 
     constructor() MockERC20("Outbound Fee On Transfer", "OFOT", 18) {}

@@ -3,7 +3,7 @@ pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
-import {MockERC20} from "../../mocks/MockERC20.sol";
+import {MockERC20} from "./MockERC20.sol";
 
 /// @title UpgradeableToken
 /// @notice Simulates a token that can be upgraded to change behavior
