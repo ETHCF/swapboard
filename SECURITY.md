@@ -6,9 +6,10 @@ If you discover a security vulnerability in Swapboard, please report it responsi
 
 **DO NOT** create a public GitHub issue for security vulnerabilities.
 
-Instead, please send an email to: zak@numbergroup.xyz
+Instead, please send an email to: <zak@numbergroup.xyz>
 
 Include:
+
 - Description of the vulnerability
 - Steps to reproduce
 - Potential impact
@@ -17,11 +18,13 @@ Include:
 ## Scope
 
 The following are in scope:
+
 - Smart contract vulnerabilities in `contracts/src/`
 - Frontend vulnerabilities that could lead to fund loss
 - Subgraph data integrity issues
 
 The following are explicitly out of scope:
+
 - Known behaviors documented in "Trust Assumptions" and "Known Limitations" sections
 - Third-party dependencies (OpenZeppelin, ethers.js) - report to upstream maintainers
 - Theoretical attacks without proof of concept or economic viability analysis
@@ -36,7 +39,7 @@ The following are explicitly out of scope:
 ## Response Timeline
 
 | Phase | Timeframe |
-|-------|-----------|
+| ------- | ----------- |
 | Acknowledgment | 48 hours |
 | Initial assessment | 7 days |
 | Resolution | Varies by severity |
@@ -45,7 +48,7 @@ The following are explicitly out of scope:
 ## Severity Levels
 
 | Severity | Description | Example |
-|----------|-------------|---------|
+| ---------- | ------------- | --------- |
 | Critical | Direct fund loss possible | Reentrancy, unauthorized withdrawals |
 | High | Funds at risk under conditions | Denial of service, griefing |
 | Medium | Data integrity issues | State inconsistency, UI manipulation |
@@ -83,7 +86,11 @@ The following are documented design decisions, not vulnerabilities:
 
 7. **No expiration**: Orders remain active until filled or cancelled. There is no automatic expiration mechanism.
 
-8. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
+8. **ETH goes to `msg.sender`, so an address that rejects ETH can lock itself out**: There is no recipient override on any path (`cancelOrder`, fills, and modify refunds all pay `msg.sender` via `Address.sendValue`). A maker that is a contract reverting in `receive`/`fallback` (by design, after an upgrade, or once self-destructed) can never cancel an ETH-tokenA order, and that escrow stays in the contract forever; their ETH-tokenB orders are also unfillable because the taker's payment to them reverts. Likewise a taker that cannot accept ETH cannot fill ETH-tokenA orders. This is self-inflicted and no third party profits from it, but counterparties can waste gas discovering it. Use an EOA or a contract that accepts ETH for orders involving native ETH.
+
+9. **Makers must be able to hold tokenB**: Every ERC20 payment to a maker is verified by measuring the maker's balance delta and reverts `BalanceMismatch` when it does not match. A maker address that does not retain tokenB — a vault that forwards, stakes, or burns it inside a transfer hook, or a token with such hooks — therefore cannot be paid, and its orders are unfillable on every path (classic `transferFrom`, Permit2 direct pull, and the multi-maker board hop). This is the maker-side mirror of the inbound fee-on-transfer policy: receive tokenB at an address that simply holds it.
+
+10. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
 
 ## Bug Bounty
 
@@ -92,6 +99,7 @@ There is currently no formal bug bounty program. However, we may offer rewards f
 ## Contract Immutability
 
 The deployed contract is immutable. If a critical vulnerability is found:
+
 1. A new contract will be deployed
 2. Users will be notified to migrate
 3. Frontend will be updated to point to the new contract
@@ -100,6 +108,7 @@ The deployed contract is immutable. If a critical vulnerability is found:
 ## Security Tools
 
 The codebase is continuously scanned with:
+
 - **Slither**: Static analysis in CI pipeline
 - **Forge coverage**: Test coverage reporting
 - **Invariant testing**: Property-based testing with 8 invariants
@@ -108,7 +117,7 @@ The codebase is continuously scanned with:
 ## Audit Status
 
 | Status | Item |
-|--------|------|
+| -------- | ------ |
 | Complete | Internal review |
 | Complete | Slither analysis |
 | Complete | Invariant test suite |

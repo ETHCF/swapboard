@@ -10,14 +10,20 @@ import {Deploy} from "../script/Deploy.s.sol";
 import {Swapboard} from "../src/Swapboard.sol";
 import {ISwapboard} from "../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockPermit2} from "./mocks/MockPermit2.sol";
 
 /// @notice Unit tests for the Deploy script
 contract DeployTest is Test {
+    address private constant _PERMIT2_ADDR = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
+
     Deploy internal _deploy;
 
-    /// @notice Deploys the script contract for each test
+    /// @notice Deploys the script contract and the Permit2 dependency it checks for
     function setUp() public {
         _deploy = new Deploy();
+
+        MockPermit2 impl = new MockPermit2();
+        vm.etch(_PERMIT2_ADDR, address(impl).code);
     }
 
     /// @notice run deploys a usable Swapboard at version 2.0.0
@@ -41,6 +47,14 @@ contract DeployTest is Test {
         assertEq(board1.getNextOrderId(), 0);
     }
 
+    /// @notice run aborts when the canonical Permit2 has no code on the target chain
+    function test_run_revert_permit2NotDeployed() public {
+        vm.etch(_PERMIT2_ADDR, "");
+
+        vm.expectRevert(abi.encodeWithSelector(Deploy.Permit2NotDeployed.selector, _PERMIT2_ADDR));
+        _deploy.run();
+    }
+
     /// @notice Deployed Swapboard accepts ETH sell orders via the ETH sentinel
     function test_run_deployedBoardAcceptsEthOrders() public {
         Swapboard board = _deploy.run();
@@ -61,7 +75,7 @@ contract DeployTest is Test {
         assertEq(order.amountB, 100e6);
         assertEq(order.availableA, 1 ether);
         assertEq(order.availableB, 100e6);
-        assertTrue(order.active);
+        assertNotEq(order.maker, address(0));
         assertEq(board.getNextOrderId(), 1);
         assertEq(address(board).balance, 1 ether);
     }
@@ -91,7 +105,6 @@ contract DeployTest is Test {
         vm.stopPrank();
 
         assertFalse(board.canFill(fillId));
-        assertFalse(board.getOrder(fillId).active);
         assertEq(board.getOrder(fillId).availableA, 0);
         assertEq(token.getTransferFromCalls(), tokenPullsBefore + 1);
         assertEq(taker.balance, 1 ether);
@@ -103,7 +116,6 @@ contract DeployTest is Test {
         board.cancelOrder(cancelId);
 
         assertFalse(board.canFill(cancelId));
-        assertFalse(board.getOrder(cancelId).active);
         assertEq(board.getOrder(cancelId).availableA, 0);
         assertEq(maker.balance, makerEthBefore + 1 ether);
         assertEq(address(board).balance, 0);
@@ -135,7 +147,6 @@ contract DeployTest is Test {
         vm.stopPrank();
 
         assertFalse(board.canFill(orderId));
-        assertFalse(board.getOrder(orderId).active);
         assertEq(board.getOrder(orderId).availableA, 0);
         assertEq(token.getTransferFromCalls(), tokenPullsBefore);
         assertEq(maker.balance, makerEthBefore + 1 ether);
