@@ -2196,12 +2196,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert PermitOnNative();
         }
 
-        if (wrapped.allowance(msg.sender, address(this)) >= value) {
-            return;
+        if (wrapped.allowance(msg.sender, address(this)) < value) {
+            IERC20Permit(token).permit(msg.sender, address(this), value, deadline, v, r, s);
         }
-
-        // forge-lint: disable-next-line(reentrancy-no-eth)
-        IERC20Permit(token).permit(msg.sender, address(this), value, deadline, v, r, s);
     }
 
     /// @notice Validates a batch of EIP-2612 permits: non-zero v, no zero/native/duplicate tokens
