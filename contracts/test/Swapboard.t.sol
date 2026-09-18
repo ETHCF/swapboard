@@ -2651,7 +2651,6 @@ contract SwapboardTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, _maker);
-        assertNotEq(order.maker, address(0));
         assertTrue(order.partialFillAllowed);
         assertEq(order.tokenA, address(_tokenA));
         assertEq(order.tokenB, address(_tokenB));
@@ -5186,7 +5185,6 @@ contract SwapboardTest is Test {
         assertEq(after_.tokenA, address(_tokenA));
         assertEq(after_.tokenB, address(_tokenB));
         assertEq(after_.maker, _maker);
-        assertNotEq(after_.maker, address(0));
     }
 
     /// @notice Tests modifyOrder reverts when previousAmounts.amountA is stale

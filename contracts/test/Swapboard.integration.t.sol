@@ -226,7 +226,6 @@ contract SwapboardIntegrationTest is Test {
         for (uint256 i = 0; i < 10; ++i) {
             assertEq(orders[i].maker, _alice);
             assertEq(orders[i].amountA, 10 ether);
-            assertNotEq(orders[i].maker, address(0));
         }
 
         vm.startPrank(_bob);

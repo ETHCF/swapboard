@@ -46,11 +46,13 @@ For market makers and trading bots.
       "type": "tuple",
       "components": [
         { "name": "maker", "type": "address" },
+        { "name": "partialFillAllowed", "type": "bool" },
         { "name": "tokenA", "type": "address" },
-        { "name": "amountA", "type": "uint256" },
         { "name": "tokenB", "type": "address" },
-        { "name": "amountB", "type": "uint256" },
-        { "name": "active", "type": "bool" }
+        { "name": "amountA", "type": "uint128" },
+        { "name": "amountB", "type": "uint128" },
+        { "name": "availableA", "type": "uint128" },
+        { "name": "availableB", "type": "uint128" }
       ]
     }],
     "stateMutability": "view"
@@ -64,11 +66,13 @@ For market makers and trading bots.
       "type": "tuple[]",
       "components": [
         { "name": "maker", "type": "address" },
+        { "name": "partialFillAllowed", "type": "bool" },
         { "name": "tokenA", "type": "address" },
-        { "name": "amountA", "type": "uint256" },
         { "name": "tokenB", "type": "address" },
-        { "name": "amountB", "type": "uint256" },
-        { "name": "active", "type": "bool" }
+        { "name": "amountA", "type": "uint128" },
+        { "name": "amountB", "type": "uint128" },
+        { "name": "availableA", "type": "uint128" },
+        { "name": "availableB", "type": "uint128" }
       ]
     }],
     "stateMutability": "view"
