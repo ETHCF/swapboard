@@ -6,9 +6,10 @@ If you discover a security vulnerability in Swapboard, please report it responsi
 
 **DO NOT** create a public GitHub issue for security vulnerabilities.
 
-Instead, please send an email to: zak@numbergroup.xyz
+Instead, please send an email to: <zak@numbergroup.xyz>
 
 Include:
+
 - Description of the vulnerability
 - Steps to reproduce
 - Potential impact
@@ -17,11 +18,13 @@ Include:
 ## Scope
 
 The following are in scope:
+
 - Smart contract vulnerabilities in `contracts/src/`
 - Frontend vulnerabilities that could lead to fund loss
 - Subgraph data integrity issues
 
 The following are explicitly out of scope:
+
 - Known behaviors documented in "Trust Assumptions" and "Known Limitations" sections
 - Third-party dependencies (OpenZeppelin, ethers.js) - report to upstream maintainers
 - Theoretical attacks without proof of concept or economic viability analysis
@@ -36,7 +39,7 @@ The following are explicitly out of scope:
 ## Response Timeline
 
 | Phase | Timeframe |
-|-------|-----------|
+| ------- | ----------- |
 | Acknowledgment | 48 hours |
 | Initial assessment | 7 days |
 | Resolution | Varies by severity |
@@ -45,7 +48,7 @@ The following are explicitly out of scope:
 ## Severity Levels
 
 | Severity | Description | Example |
-|----------|-------------|---------|
+| ---------- | ------------- | --------- |
 | Critical | Direct fund loss possible | Reentrancy, unauthorized withdrawals |
 | High | Funds at risk under conditions | Denial of service, griefing |
 | Medium | Data integrity issues | State inconsistency, UI manipulation |
@@ -96,6 +99,7 @@ There is currently no formal bug bounty program. However, we may offer rewards f
 ## Contract Immutability
 
 The deployed contract is immutable. If a critical vulnerability is found:
+
 1. A new contract will be deployed
 2. Users will be notified to migrate
 3. Frontend will be updated to point to the new contract
@@ -104,6 +108,7 @@ The deployed contract is immutable. If a critical vulnerability is found:
 ## Security Tools
 
 The codebase is continuously scanned with:
+
 - **Slither**: Static analysis in CI pipeline
 - **Forge coverage**: Test coverage reporting
 - **Invariant testing**: Property-based testing with 8 invariants
@@ -112,7 +117,7 @@ The codebase is continuously scanned with:
 ## Audit Status
 
 | Status | Item |
-|--------|------|
+| -------- | ------ |
 | Complete | Internal review |
 | Complete | Slither analysis |
 | Complete | Invariant test suite |
