@@ -424,6 +424,7 @@ contract CreateOrder is Script {
 ```
 
 Run with:
+
 ```bash
 PRIVATE_KEY=0x... \
 BOARD_ADDRESS=0x... \
@@ -437,7 +438,7 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 ## Error Codes
 
 | Error | Selector | Description |
-|-------|----------|-------------|
+| ------- | ---------- | ------------- |
 | `ZeroAddress()` | `0xd92e233d` | Token address is zero |
 | `ZeroAmount()` | `0x1f2a2005` | Amount is zero. On `modifyOrder` / `modifyOrders`, also thrown when either remaining (`availableA` / `availableB`) is set to 0 — use `cancelOrder` / `cancelOrders` instead. Empty `modifyOrders` also reverts |
 | `NoChange()` | `0xa88ee577` | Modification would leave the order unchanged (including any item in a `modifyOrders` batch) |
