@@ -41,9 +41,13 @@ For the indexer that serves the deployed v1 contract, see [`../v1`](../v1).
 
 ### Notes for consumers
 
-- An order closes as soon as either side is exhausted, so a `FILLED` order can still carry
-  a non-zero `availableA`: that is the rounding dust the contract deliberately leaves in
-  escrow. Use `filledFraction` rather than `availableA == 0` to show fill progress.
+- `Fill.amountA` / `Fill.amountB` are what actually moved. Every fill (`fillOrder` /
+  `fillOrders`, including the permit and Permit2 overloads) names an exact `amountB`, and
+  `amountA` is its floored pro-rata share of the remaining tokenA. Paying the last of
+  tokenB takes exactly the last of tokenA, so a `FILLED` order ends with `availableA` and
+  `availableB` both `0`. Use `filledFraction` to show fill progress.
+- The contract rejects a maker filling their own order, so a `Fill`'s `taker` and `maker`
+  are always different accounts.
 - On a `CANCELED` order, `availableA` is the amount refunded to the maker.
 - `modifyOrder` resets the order's totals to the maker's new remainings — the contract
   does not preserve fill progress in `amountA`/`amountB` — so the subgraph zeroes

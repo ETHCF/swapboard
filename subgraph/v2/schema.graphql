@@ -127,9 +127,9 @@ type Fill @entity(immutable: true) {
   tokenB: Token! @index
   "The (tokenA, tokenB) pair traded"
   pair: Pair! @index
-  "Amount of tokenA transferred to the taker"
+  "Amount of tokenA transferred to the taker (floored pro rata from amountB; the full remainder on the closing fill)"
   amountA: BigInt!
-  "Amount of tokenB paid by the taker (ceiled on partial fills)"
+  "Amount of tokenB paid by the taker (exactly as requested by the taker)"
   amountB: BigInt!
   "Execution price in human units: tokenB per 1 tokenA (0 if undeterminable)"
   priceBPerA: BigDecimal!

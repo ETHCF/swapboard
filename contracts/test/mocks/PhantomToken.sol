@@ -3,7 +3,7 @@ pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
-import {MockERC20} from "../../mocks/MockERC20.sol";
+import {MockERC20} from "./MockERC20.sol";
 
 /// @title PhantomToken
 /// @notice Token that lies about transfers - returns true but doesn't transfer
