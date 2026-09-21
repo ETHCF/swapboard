@@ -248,8 +248,12 @@ function jsonResponse(payload) {
  * @param {Object} [over] - Overrides merged onto the generated fakes
  * @returns {Object} handles for assertions: { provider, signer, swap, token, tx, wallet }
  */
-/** Full signatures of the v2 permit overloads, as app.js addresses them. */
+/** Full signatures of the v2 overloads, as app.js addresses them. */
 const OVERLOAD = {
+  createOrderPlain: "createOrder((address,uint128,address,uint128,bool))",
+  createOrdersPlain: "createOrders((address,uint128,address,uint128,bool)[])",
+  fillOrderPlain: "fillOrder(uint256,uint128,uint128,uint256)",
+  fillOrdersPlain: "fillOrders((uint256,uint128,uint128)[],uint256)",
   createOrderPermit:
     "createOrder((address,uint128,address,uint128,bool),(uint256,uint256,uint8,bytes32,bytes32))",
   createOrderPermit2:
@@ -268,16 +272,30 @@ const OVERLOAD = {
 };
 
 /**
- * One jest.fn per permit overload, keyed by its full signature.
+ * One jest.fn per permit overload, keyed by its full signature. The plain
+ * overloads are left to aliasPlainOverloads.
  * @param {Object} tx - Transaction the fakes resolve with
  * @returns {Object<string, jest.Mock>}
  */
 function permitOverloadFakes(tx) {
   const fakes = {};
-  for (const signature of Object.values(OVERLOAD)) {
-    fakes[signature] = jest.fn().mockResolvedValue(tx);
+  for (const [key, signature] of Object.entries(OVERLOAD)) {
+    if (!key.endsWith("Plain")) fakes[signature] = jest.fn().mockResolvedValue(tx);
   }
   return fakes;
+}
+
+/**
+ * Points each plain v2 overload's full signature at the bare-name fake, unless
+ * a test supplied its own. v1 calls the same fake by bare name (it has no
+ * overloads), so sharing one jest.fn keeps a single assertion target for both.
+ * @param {Object} swap - Exchange contract fake, mutated in place
+ */
+function aliasPlainOverloads(swap) {
+  for (const [key, signature] of Object.entries(OVERLOAD)) {
+    if (!key.endsWith("Plain") || swap[signature]) continue;
+    swap[signature] = swap[signature.slice(0, signature.indexOf("("))];
+  }
 }
 
 function installEthers(over = {}) {
@@ -323,6 +341,7 @@ function installEthers(over = {}) {
     ...permitOverloadFakes(tx),
     ...(over.swap || {}),
   };
+  aliasPlainOverloads(swap);
 
   const signer = {
     getAddress: jest.fn().mockResolvedValue(WALLET_ADDRESS),
@@ -4653,7 +4672,7 @@ describe("v2 single-order entry points", () => {
   test("v2 prices the fill it will send", async () => {
     const { mod, h } = await v2();
     await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
-    expect(h.swap.interface.encodeFunctionData).toHaveBeenCalledWith("fillOrder", [
+    expect(h.swap.interface.encodeFunctionData).toHaveBeenCalledWith(OVERLOAD.fillOrderPlain, [
       "1",
       3000000000n,
       10n ** 18n,
@@ -4859,10 +4878,10 @@ describe("connector adapters", () => {
     let v2;
     let h;
 
-    /** (Re)connects v2, optionally on its pre-deploy placeholder. */
-    async function boot({ undeployed = false } = {}) {
+    /** (Re)connects v2, optionally on its pre-deploy placeholder or with fake overrides. */
+    async function boot({ undeployed = false, fakes } = {}) {
       v2 = loadApp({ search: "?v=2", undeployedV2: undeployed });
-      h = installEthers();
+      h = installEthers(fakes);
       routeFetch({ orders: [] });
       await connect(v2, h);
       await flush();
@@ -5087,6 +5106,45 @@ describe("connector adapters", () => {
     });
 
     describe("permit overload dispatch", () => {
+      // MUTATION: Return the bare method name when there is no permit
+      // BREAKS: ethers throws "ambiguous function description" on every plain
+      //         create or fill — any token without a permit, or already approved
+      test("the plain overloads are addressed by full signature too", async () => {
+        const ambiguous = () => {
+          throw new TypeError("ambiguous function description");
+        };
+        const tx = { hash: "0xtx", wait: jest.fn() };
+        const plain = {};
+        const bare = {};
+        for (const key of ["createOrder", "createOrders", "fillOrder", "fillOrders"]) {
+          plain[key] = jest.fn().mockResolvedValue(tx);
+          bare[key] = jest.fn(ambiguous);
+        }
+        await boot({
+          fakes: {
+            swap: {
+              ...bare,
+              [OVERLOAD.createOrderPlain]: plain.createOrder,
+              [OVERLOAD.createOrdersPlain]: plain.createOrders,
+              [OVERLOAD.fillOrderPlain]: plain.fillOrder,
+              [OVERLOAD.fillOrdersPlain]: plain.fillOrders,
+            },
+          },
+        });
+
+        await v2.V2.createOrder(A, 1n, B, 2n, true, { kind: "none" });
+        await v2.V2.createOrders([{ tokenA: A, amountA: 1n, tokenB: B, amountB: 2n }], {
+          kind: "approve",
+        });
+        await v2.V2.send(v2.V2.fillCall(pair(A, B), 3n, 4n, 99, { kind: "none" }));
+        await v2.V2.fillOrders([pair(A, B)], 99, { kind: "none" });
+
+        for (const key of Object.keys(plain)) {
+          expect(plain[key]).toHaveBeenCalledTimes(1);
+          expect(bare[key]).not.toHaveBeenCalled();
+        }
+      });
+
       // MUTATION: Call the bare method name
       // BREAKS: ethers cannot tell three createOrder overloads apart by name and
       //         throws an ambiguous-function error before anything is sent
@@ -5301,7 +5359,7 @@ describe("connector adapters", () => {
 
     test("fillCall pays exactly amountB and holds the receive to the quote", () => {
       expect(v2.V2.fillCall(pair(A, B), 3n, 4n, 99)).toEqual({
-        method: "fillOrder",
+        method: OVERLOAD.fillOrderPlain,
         args: ["1", 4n, 3n, 99],
         value: 0n,
       });
@@ -5314,7 +5372,7 @@ describe("connector adapters", () => {
     test("fillCall treats WETH as an ordinary ERC20 on either side", () => {
       for (const order of [pair(WETH, B), pair(A, WETH)]) {
         expect(v2.V2.fillCall(order, 3n, 4n, 99)).toMatchObject({
-          method: "fillOrder",
+          method: OVERLOAD.fillOrderPlain,
           value: 0n,
         });
       }

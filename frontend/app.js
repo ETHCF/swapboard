@@ -2749,13 +2749,15 @@ ${orderFields}
   // transaction. lib.js choosePullStrategy() decides which; everything here is
   // the I/O that decision needs, and the overload dispatch that follows from it.
   //
-  // ethers v6 refuses an overloaded method by bare name, so the permit paths
-  // address the contract by full signature. invokeContract() already indexes
-  // `contract[method]`, which accepts a signature string unchanged.
+  // ethers v6 refuses an overloaded method by bare name, so every path — the
+  // plain one included — addresses the contract by full signature.
+  // invokeContract() already indexes `contract[method]`, which accepts a
+  // signature string unchanged.
   // ==========================================================================
 
   /**
-   * Full signatures of the permit overloads, by entry point and strategy.
+   * Full signatures of the three overloads, by entry point and strategy:
+   * `plain` takes no permit and serves both "none" and "approve" pulls.
    *
    * Transcribed from CONTRACT_ABI_V2 above with the argument names dropped. Note
    * the batch tuples are NOT the single ones with a token bolted on: `TokenPermit`
@@ -2763,26 +2765,30 @@ ${orderFields}
    * is (value, deadline, v, r, s) — `v` moves to second. Getting that wrong
    * encodes cleanly and reverts on chain.
    *
-   * @constant {Object<string, {permit: string, permit2: string}>}
+   * @constant {Object<string, {plain: string, permit: string, permit2: string}>}
    */
   const PERMIT_OVERLOADS = {
     createOrder: {
+      plain: "createOrder((address,uint128,address,uint128,bool))",
       permit:
         "createOrder((address,uint128,address,uint128,bool),(uint256,uint256,uint8,bytes32,bytes32))",
       permit2:
         "createOrder((address,uint128,address,uint128,bool),(uint256,uint256,uint256,bytes))",
     },
     createOrders: {
+      plain: "createOrders((address,uint128,address,uint128,bool)[])",
       permit:
         "createOrders((address,uint128,address,uint128,bool)[],(address,uint8,uint256,uint256,bytes32,bytes32)[])",
       permit2:
         "createOrders((address,uint128,address,uint128,bool)[],(address,uint256,uint256,uint256,bytes)[])",
     },
     fillOrder: {
+      plain: "fillOrder(uint256,uint128,uint128,uint256)",
       permit: "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint8,bytes32,bytes32))",
       permit2: "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint256,bytes))",
     },
     fillOrders: {
+      plain: "fillOrders((uint256,uint128,uint128)[],uint256)",
       permit:
         "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint8,uint256,uint256,bytes32,bytes32)[])",
       permit2:
@@ -3085,9 +3091,12 @@ ${orderFields}
    * @returns {{method: string, args: Array}} Method and args to send
    */
   function withPermit(method, pull, args) {
-    if (!pull || pull.kind === "none" || pull.kind === "approve") return { method, args };
+    const overloads = PERMIT_OVERLOADS[method];
+    if (!pull || pull.kind === "none" || pull.kind === "approve") {
+      return { method: overloads.plain, args };
+    }
 
-    const overload = PERMIT_OVERLOADS[method][pull.kind];
+    const overload = overloads[pull.kind];
     const extra = pull.entries
       ? [pull.entries.map((e) => permitTuple(pull.kind, e))]
       : [permitTuple(pull.kind, pull.kind === "permit" ? pull.permit : pull.permit2)];
