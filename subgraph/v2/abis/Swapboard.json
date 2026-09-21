@@ -84,6 +84,33 @@
             "internalType": "bool"
           }
         ]
+      },
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.Permit2Permit",
+        "components": [
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "signature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -91,6 +118,291 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "createOrder",
+    "inputs": [
+      {
+        "name": "order",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.CreateOrderParams",
+        "components": [
+          {
+            "name": "tokenA",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "tokenB",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountB",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "partialFillAllowed",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.Permit",
+        "components": [
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "createOrder",
+    "inputs": [
+      {
+        "name": "order",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.CreateOrderParams",
+        "components": [
+          {
+            "name": "tokenA",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "tokenB",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountB",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "partialFillAllowed",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "createOrders",
+    "inputs": [
+      {
+        "name": "orders",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.CreateOrderParams[]",
+        "components": [
+          {
+            "name": "tokenA",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "tokenB",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountB",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "partialFillAllowed",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "permits",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.TokenPermit[]",
+        "components": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "createOrders",
+    "inputs": [
+      {
+        "name": "orders",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.CreateOrderParams[]",
+        "components": [
+          {
+            "name": "tokenA",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "tokenB",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountB",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "partialFillAllowed",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "permits",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.TokenPermit2[]",
+        "components": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "signature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "payable"
@@ -164,6 +476,38 @@
         "name": "deadline",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.Permit",
+        "components": [
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -171,7 +515,7 @@
   },
   {
     "type": "function",
-    "name": "fillOrderPaying",
+    "name": "fillOrder",
     "inputs": [
       {
         "name": "orderId",
@@ -179,12 +523,67 @@
         "internalType": "uint256"
       },
       {
-        "name": "amountA",
+        "name": "amountB",
         "type": "uint128",
         "internalType": "uint128"
       },
       {
-        "name": "maxAmountB",
+        "name": "minAmountA",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.Permit2Permit",
+        "components": [
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "signature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "fillOrder",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amountB",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "minAmountA",
         "type": "uint128",
         "internalType": "uint128"
       },
@@ -227,6 +626,43 @@
         "name": "deadline",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "permits",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.TokenPermit[]",
+        "components": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -234,12 +670,12 @@
   },
   {
     "type": "function",
-    "name": "fillOrdersPaying",
+    "name": "fillOrders",
     "inputs": [
       {
         "name": "fills",
         "type": "tuple[]",
-        "internalType": "struct ISwapboard.FillOrderPayingParams[]",
+        "internalType": "struct ISwapboard.FillOrderParams[]",
         "components": [
           {
             "name": "orderId",
@@ -247,12 +683,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "amountA",
+            "name": "amountB",
             "type": "uint128",
             "internalType": "uint128"
           },
           {
-            "name": "maxAmountB",
+            "name": "minAmountA",
             "type": "uint128",
             "internalType": "uint128"
           }
@@ -262,6 +698,73 @@
         "name": "deadline",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "fillOrders",
+    "inputs": [
+      {
+        "name": "fills",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.FillOrderParams[]",
+        "components": [
+          {
+            "name": "orderId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amountB",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "minAmountA",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "permits",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.TokenPermit2[]",
+        "components": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "signature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -477,6 +980,179 @@
             "internalType": "uint128"
           }
         ]
+      },
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.Permit2Permit",
+        "components": [
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "signature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "modifyOrder",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "previousAmounts",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.OrderAmounts",
+        "components": [
+          {
+            "name": "amountA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "amountB",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "availableA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "availableB",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      },
+      {
+        "name": "updatedOrder",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.ModifyOrderParams",
+        "components": [
+          {
+            "name": "availableA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "availableB",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      },
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.Permit",
+        "components": [
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "modifyOrder",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "previousAmounts",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.OrderAmounts",
+        "components": [
+          {
+            "name": "amountA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "amountB",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "availableA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "availableB",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      },
+      {
+        "name": "updatedOrder",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.ModifyOrderParams",
+        "components": [
+          {
+            "name": "availableA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "availableB",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -539,6 +1215,203 @@
                 "internalType": "uint128"
               }
             ]
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "modifyOrders",
+    "inputs": [
+      {
+        "name": "mods",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.ModifyOrdersParams[]",
+        "components": [
+          {
+            "name": "orderId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "previousAmounts",
+            "type": "tuple",
+            "internalType": "struct ISwapboard.OrderAmounts",
+            "components": [
+              {
+                "name": "amountA",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "amountB",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "availableA",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "availableB",
+                "type": "uint128",
+                "internalType": "uint128"
+              }
+            ]
+          },
+          {
+            "name": "updatedOrder",
+            "type": "tuple",
+            "internalType": "struct ISwapboard.ModifyOrderParams",
+            "components": [
+              {
+                "name": "availableA",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "availableB",
+                "type": "uint128",
+                "internalType": "uint128"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "permits",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.TokenPermit2[]",
+        "components": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "signature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "modifyOrders",
+    "inputs": [
+      {
+        "name": "mods",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.ModifyOrdersParams[]",
+        "components": [
+          {
+            "name": "orderId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "previousAmounts",
+            "type": "tuple",
+            "internalType": "struct ISwapboard.OrderAmounts",
+            "components": [
+              {
+                "name": "amountA",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "amountB",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "availableA",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "availableB",
+                "type": "uint128",
+                "internalType": "uint128"
+              }
+            ]
+          },
+          {
+            "name": "updatedOrder",
+            "type": "tuple",
+            "internalType": "struct ISwapboard.ModifyOrderParams",
+            "components": [
+              {
+                "name": "availableA",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "availableB",
+                "type": "uint128",
+                "internalType": "uint128"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "permits",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.TokenPermit[]",
+        "components": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }
@@ -633,7 +1506,7 @@
       {
         "name": "partialFillAllowed",
         "type": "bool",
-        "indexed": false,
+        "indexed": true,
         "internalType": "bool"
       }
     ],
@@ -708,7 +1581,7 @@
       {
         "name": "partialFillAllowed",
         "type": "bool",
-        "indexed": false,
+        "indexed": true,
         "internalType": "bool"
       }
     ],
@@ -743,6 +1616,17 @@
         "name": "orderId",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DuplicatePermitToken",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
@@ -811,27 +1695,6 @@
   },
   {
     "type": "error",
-    "name": "FillPayTooHigh",
-    "inputs": [
-      {
-        "name": "orderId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "quoted",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "maximum",
-        "type": "uint128",
-        "internalType": "uint128"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InsufficientBalance",
     "inputs": [
       {
@@ -848,19 +1711,18 @@
   },
   {
     "type": "error",
-    "name": "NoChange",
+    "name": "InvalidPermit",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "NotAContract",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
+    "name": "InvalidPermit2",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoChange",
+    "inputs": []
   },
   {
     "type": "error",
@@ -913,46 +1775,6 @@
         "name": "orderId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "expectedAmountA",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "expectedAmountB",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "expectedAvailableA",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "expectedAvailableB",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "actualAmountA",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "actualAmountB",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "actualAvailableA",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "actualAvailableB",
-        "type": "uint128",
-        "internalType": "uint128"
       }
     ]
   },
@@ -966,6 +1788,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PermitOnNative",
+    "inputs": []
   },
   {
     "type": "error",
@@ -986,6 +1813,26 @@
   {
     "type": "error",
     "name": "SameToken",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SelfFill",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyPermit2",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnusedPermit",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnusedPermit2",
     "inputs": []
   },
   {
