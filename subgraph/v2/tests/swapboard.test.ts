@@ -431,16 +431,20 @@ describe("handleOrderFilled", () => {
     assert.entityCount("Fill", 2);
   });
 
-  test("closes the order when tokenB is exhausted but tokenA dust remains", () => {
+  test("closes with nothing left when the final fill pays the rest of tokenB", () => {
     createPartialFillOrder();
-    // Ceiled tokenB payment consumes the whole tokenB side while tokenA dust is left behind.
-    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, REST_A, FIVE_HUNDRED_B, 1));
+    // Paying 1 unit of tokenB receives its floored share of tokenA.
+    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, "2000000000000", "1", 1));
+    // Paying the rest of tokenB receives exactly the rest of tokenA, so no dust is left in escrow.
+    handleOrderFilled(createOrderFilledEvent(1, TAKER_ADDRESS, "999999998000000000000", "499999999", 2));
 
     assert.fieldEquals("Order", "1", "status", "FILLED");
     assert.fieldEquals("Order", "1", "active", "false");
+    assert.fieldEquals("Order", "1", "availableA", "0");
     assert.fieldEquals("Order", "1", "availableB", "0");
-    assert.fieldEquals("Order", "1", "availableA", QUARTER_A);
-    assert.fieldEquals("Order", "1", "filledFraction", "0.75");
+    assert.fieldEquals("Order", "1", "filledA", THOUSAND_A);
+    assert.fieldEquals("Order", "1", "filledB", FIVE_HUNDRED_B);
+    assert.fieldEquals("Order", "1", "filledFraction", "1");
   });
 
   test("records a Fill per event", () => {
@@ -542,7 +546,7 @@ describe("handleOrderFilled", () => {
     assert.fieldEquals("GlobalStats", "global", "totalAccounts", "2");
   });
 
-  test("counts both sides when the maker fills their own order", () => {
+  test("counts both sides if maker and taker are the same account (contract rejects self-fills)", () => {
     createFullFillOrder();
     handleOrderFilled(createOrderFilledEvent(0, MAKER_ADDRESS, HUNDRED_A, TWO_HUNDRED_B, 1));
 

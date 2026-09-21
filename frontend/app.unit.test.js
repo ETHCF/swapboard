@@ -284,8 +284,6 @@ function installEthers(over = {}) {
     createOrders: jest.fn().mockResolvedValue(tx),
     fillOrder: jest.fn().mockResolvedValue(tx),
     fillOrders: jest.fn().mockResolvedValue(tx),
-    fillOrderPaying: jest.fn().mockResolvedValue(tx),
-    fillOrdersPaying: jest.fn().mockResolvedValue(tx),
     cancelOrder: jest.fn().mockResolvedValue(tx),
     cancelOrders: jest.fn().mockResolvedValue(tx),
     getOrder: jest.fn().mockResolvedValue({}),
@@ -3917,7 +3915,6 @@ describe("v2 create and batch entry points", () => {
       expect.any(Number)
     );
     expect(h.swap.fillOrders.mock.calls[0][0]).toHaveLength(2);
-    expect(h.swap.fillOrdersPaying).not.toHaveBeenCalled();
   }, 20000);
 
   test("batch fill paying in ETH skips the approval", async () => {
@@ -4544,7 +4541,6 @@ describe("v2 single-order entry points", () => {
     // fill by payment, holding the receive to what the modal quoted.
     expect(h.token.approve).toHaveBeenCalledWith(expect.any(String), 3000000000n);
     expect(h.swap.fillOrder).toHaveBeenCalledWith("1", 3000000000n, 10n ** 18n, expect.any(Number));
-    expect(h.swap.fillOrderPaying).not.toHaveBeenCalled();
   }, 20000);
 
   test("a partial fill pays exactly the chosen amount", async () => {
