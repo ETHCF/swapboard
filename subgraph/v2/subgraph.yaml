@@ -30,7 +30,7 @@ dataSources:
         - name: ERC20
           file: ./abis/ERC20.json
       eventHandlers:
-        - event: OrderCreated(indexed uint256,indexed address,address,uint128,address,uint128,bool)
+        - event: OrderCreated(indexed uint256,indexed address,address,uint128,address,uint128,indexed bool)
           handler: handleOrderCreated
         - event: OrderFilled(indexed uint256,indexed address,uint128,uint128)
           handler: handleOrderFilled
@@ -38,6 +38,6 @@ dataSources:
           handler: handleOrderCanceled
         - event: OrderModified(indexed uint256,uint128,uint128)
           handler: handleOrderModified
-        - event: OrderPartialFillUpdated(indexed uint256,bool)
+        - event: OrderPartialFillUpdated(indexed uint256,indexed bool)
           handler: handleOrderPartialFillUpdated
       file: ./src/mapping.ts

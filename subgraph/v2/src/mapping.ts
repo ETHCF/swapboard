@@ -138,8 +138,10 @@ export function handleOrderCreated(event: OrderCreated): void {
  * Handles OrderFilled: records the fill and, when the order runs out of tokenA or
  * tokenB, takes it off the board.
  *
- * The contract closes an order as soon as either side is exhausted, so tokenA dust
- * left on a closed order is expected and stays visible in `availableA`.
+ * Every fill names an exact tokenB amount and receives a floored share of the
+ * remaining tokenA, so paying the last of tokenB takes exactly the last of tokenA and
+ * both sides reach zero together. The contract deletes the order once either side is
+ * exhausted, so checking either side mirrors it.
  */
 export function handleOrderFilled(event: OrderFilled): void {
   let id = event.params.orderId.toString();
@@ -230,8 +232,8 @@ export function handleOrderFilled(event: OrderFilled): void {
   taker.fillsTakenCount = taker.fillsTakenCount.plus(ONE_BI);
   taker.save();
 
-  // Reloaded after the taker is saved so a maker filling their own order still sees
-  // both increments.
+  // Reloaded after the taker is saved. The contract rejects self-fills (`SelfFill`), but
+  // if maker and taker were ever the same account both increments would still land.
   let maker = getOrCreateAccount(Address.fromString(order.maker), timestamp);
   maker.fillsReceivedCount = maker.fillsReceivedCount.plus(ONE_BI);
   if (closed) {
