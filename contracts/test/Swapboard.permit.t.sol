@@ -40,7 +40,7 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_plainOrder(), permit);
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
         assertEq(_tokenA.allowance(_maker, address(_board)), 0);
     }
@@ -53,7 +53,7 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_plainOrder(), _skipPermit());
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
     }
 
@@ -78,7 +78,7 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder{value: _AMOUNT_A}(_ethOffered(), _skipPermit());
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(address(_board).balance, _AMOUNT_A);
     }
 
@@ -885,6 +885,68 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         vm.prank(_maker);
         vm.expectRevert(MockERC20Permit.InvalidSigner.selector);
         _board.createOrder(_plainOrder(), permit);
+    }
+
+    /// @notice createOrder still works when the permit nonce was spent by a front-runner
+    function test_createOrder_permit_frontRunNonce_stillCreates() public {
+        ISwapboard.Permit memory permit = _signPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A);
+        _frontRunPermit(_permitA, permit);
+
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(_plainOrder(), permit);
+
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
+        assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
+        assertEq(_permitA.nonces(_maker), 1);
+    }
+
+    /// @notice createOrders still works when a batch permit nonce was spent by a front-runner
+    function test_createOrders_permit_frontRunNonce_stillCreates() public {
+        ISwapboard.TokenPermit memory tokenPermit = _tokenPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A);
+        _frontRunPermit(
+            _permitA,
+            ISwapboard.Permit({
+                value: tokenPermit.value,
+                deadline: tokenPermit.deadline,
+                v: tokenPermit.v,
+                r: tokenPermit.r,
+                s: tokenPermit.s
+            })
+        );
+
+        vm.prank(_maker);
+        uint256[] memory ids = _board.createOrders(_single(_plainOrder()), _single(tokenPermit));
+
+        assertEq(ids.length, 1);
+        assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
+        assertEq(_permitA.nonces(_maker), 1);
+    }
+
+    /// @notice A permit already covered by the current allowance is not sent to the token
+    function test_createOrder_permit_existingAllowance_skipsPermit() public {
+        ISwapboard.Permit memory permit = _signPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A);
+
+        vm.prank(_maker);
+        _tokenA.approve(address(_board), _AMOUNT_A);
+
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(_plainOrder(), permit);
+
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
+        assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
+        assertEq(_permitA.nonces(_maker), 0);
+    }
+
+    /// @notice Submits the maker's permit signature from another account, spending the nonce
+    function _frontRunPermit(
+        MockERC20Permit token,
+        ISwapboard.Permit memory permit
+    ) private {
+        vm.prank(vm.addr(0xF00D));
+        token.permit(_maker, address(_board), permit.value, permit.deadline, permit.v, permit.r, permit.s);
+
+        assertEq(token.nonces(_maker), 1);
+        assertEq(token.allowance(_maker, address(_board)), permit.value);
     }
 
     function _createPairOrder() private returns (uint256) {

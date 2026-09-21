@@ -27,7 +27,10 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///        satisfy the exact-receive check. Forbidding it keeps every fill payment a one-hop
 ///        pull to a distinct maker.
 ///      - Native ETH uses the `0xEeee...eE` sentinel (`getEth()`)
-///      - EIP-2612 `permit` overloads set token allowance in the same transaction as the pull
+///      - EIP-2612 `permit` overloads set token allowance in the same transaction as the pull,
+///        skipping the `permit` call when the existing allowance already covers the signed value
+///        (a replayed signature spends the nonce but leaves the same allowance, so the pull still
+///        works)
 ///      - Permit2 SignatureTransfer overloads pull via the canonical Permit2 contract
 ///      - Order amounts use `uint128` (sufficient for practical sizes); originals and available
 ///        remaining amounts are packed separately so fill % is readable on-chain
@@ -49,8 +52,18 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///        tokens in escrow are not affected
 ///      - Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains
 ///        possible after escrow release
+///      - Every ERC20 tokenB payment is verified against the recipient's balance delta, so a maker
+///        whose address does not retain tokenB (a vault that forwards/stakes/burns it in a transfer
+///        hook, or a hooked token) reverts `BalanceMismatch` and its orders are unfillable on every
+///        path (classic pull, Permit2 direct pull, multi-maker board hop). Makers must receive
+///        tokenB at an address that simply holds it
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
 ///        can run `receive`/`fallback`; always after state updates (CEI)
+///      - ETH always goes to `msg.sender`; no path takes a recipient override. An address that
+///        reverts on receiving ETH (or self-destructs) locks itself out of native-ETH orders: as a
+///        maker it can never `cancelOrder` an ETH-tokenA order, so that escrow stays here forever,
+///        and its ETH-tokenB orders are unfillable; as a taker it cannot fill ETH-tokenA orders.
+///        Self-inflicted and unprofitable for third parties, but it can waste counterparty gas
 ///      - Floor rounding on `fillOrder` may leave tokenA dust in escrow; refunding that dust is
 ///        not worth the gas. It can later benefit a user who rounds favorably on another fill
 ///        where that dust token is tokenB
@@ -163,8 +176,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     uint256 private _nextOrderId;
 
     /// @notice Mapping from order ID to Order struct
-    /// @dev Non-existent and fully filled orders return the default struct with maker=address(0)
-    ///      and active=false (full fills `delete` storage)
+    /// @dev Non-existent, fully filled, and cancelled orders return the default struct with
+    ///      maker=address(0) (full fills and cancels `delete` storage)
     mapping(uint256 orderId => Order order) private _orders;
 
     /// @notice Initializes Swapboard
@@ -416,13 +429,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         bool partialFillAllowed
     ) external nonReentrant {
         Order storage order = _orders[orderId];
-        (address maker, bool active, bool currentPartialFillAllowed) =
-            (order.maker, order.active, order.partialFillAllowed);
+        (address maker, bool currentPartialFillAllowed) = (order.maker, order.partialFillAllowed);
         if (maker == address(0)) {
             revert OrderNotFound(orderId);
-        }
-        if (!active) {
-            revert OrderNotActive(orderId);
         }
         _requireMaker(orderId, maker);
         if (partialFillAllowed == currentPartialFillAllowed) {
@@ -470,23 +479,19 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     function canFill(
         uint256 orderId
     ) external view returns (bool) {
-        return _orders[orderId].active;
+        return _orders[orderId].maker != address(0);
     }
 
-    /// @notice Reverts unless the order exists and is active
+    /// @notice Reverts unless the order exists
+    /// @dev A stored order is always fillable: full fills and cancels `delete` it.
     /// @param orderId Order to load
-    /// @return order Storage pointer to the active order
+    /// @return order Storage pointer to the live order
     function _requireActiveOrder(
         uint256 orderId
     ) private view returns (Order storage) {
         Order storage order = _orders[orderId];
-        (address maker, bool active) = (order.maker, order.active);
-        if (maker == address(0)) {
+        if (order.maker == address(0)) {
             revert OrderNotFound(orderId);
-        }
-
-        if (!active) {
-            revert OrderNotActive(orderId);
         }
 
         return order;
@@ -709,7 +714,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @return aggregated Distinct ERC20 deposits plus summed ETH
     function _aggregateDepositAssets(
         CreateOrderParams[] calldata orders
-    ) private view returns (AggregatedAmounts memory aggregated) {
+    ) private pure returns (AggregatedAmounts memory aggregated) {
         uint256 length = orders.length;
         aggregated.tokens = new address[](length);
         aggregated.amounts = new uint256[](length);
@@ -862,7 +867,6 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ) private {
         _orders[orderId] = Order({
             maker: msg.sender,
-            active: true,
             partialFillAllowed: params.partialFillAllowed,
             tokenA: params.tokenA,
             tokenB: params.tokenB,
@@ -2160,7 +2164,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Applies an EIP-2612 permit for `token` from `msg.sender` to this contract
     /// @dev `v == 0` is a no-op (other fields are not read). Native ETH with `v != 0` reverts
-    ///      `PermitOnNative`.
+    ///      `PermitOnNative`. A permit whose `value` is already covered by the current allowance
+    ///      is also a no-op (see `_callPermit`).
     /// @param token Token to permit
     /// @param permit Signature payload
     function _permit(
@@ -2176,6 +2181,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Calls token `permit` after native-ETH check. Caller must ensure `v != 0`.
+    /// @dev No-ops when the board's allowance from `msg.sender` already covers `value`. EIP-2612
+    ///      nonces are single-use and the signature is not bound to a submitter, so anyone can
+    ///      replay it first: the allowance ends up the same but the nonce is spent, and calling
+    ///      `permit` again with a spent nonce reverts on the signature check. Skipping the
+    ///      redundant call keeps the pull working instead of bricking every permit overload for
+    ///      that signature, and saves the call when a plain `approve` already covers the pull.
     /// @param token Token to permit
     /// @param value Signed allowance
     /// @param deadline Permit deadline
@@ -2190,12 +2201,15 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         bytes32 r,
         bytes32 s
     ) private {
-        if (Token.wrap(token).isNative()) {
+        Token wrapped = Token.wrap(token);
+        if (wrapped.isNative()) {
             revert PermitOnNative();
         }
 
-        // forge-lint: disable-next-line(reentrancy-no-eth)
-        IERC20Permit(token).permit(msg.sender, address(this), value, deadline, v, r, s);
+        if (wrapped.allowance(msg.sender, address(this)) < value) {
+            // forge-lint: disable-next-line(reentrancy-no-eth)
+            IERC20Permit(token).permit(msg.sender, address(this), value, deadline, v, r, s);
+        }
     }
 
     /// @notice Validates a batch of EIP-2612 permits: non-zero v, no zero/native/duplicate tokens
@@ -2356,12 +2370,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 usedBits,
         uint256 length
     ) private pure {
-        // Empty batches reach here from classic settle (`_emptyTokenPermit2`). For `length == 256`,
-        // `1 << 256` is not representable; right-shift builds the mask for 0..=256 in unchecked.
-        uint256 mask;
-        unchecked {
-            mask = type(uint256).max >> (256 - length);
-        }
+        // Mask with the low `length` bits set. Built by right-shifting because `1 << 256` is not
+        // representable; `length == 0` shifts by 256 and yields the empty mask.
+        uint256 mask = type(uint256).max >> (256 - length);
         if (usedBits != mask) {
             revert UnusedPermit2();
         }
