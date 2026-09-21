@@ -141,17 +141,22 @@ The Swapboard contract allows:
 
 - **createOrder**: Deposit tokenA, specify tokenB amount wanted
 - **fillOrder** / **fillOrders**: Send exact tokenB (`amountB`), with `minAmountA`
-- **fillOrderPaying** / **fillOrdersPaying**: Receive exact tokenA (`amountA`), with `maxAmountB`
 - **modifyOrder** / **modifyOrders**: Maker updates remaining liquidity (cannot set remaining to 0 — cancel instead)
+- EIP-2612 `permit` and Permit2 SignatureTransfer overloads on create, fill, and modify set allowance / pull in the same transaction (existing signatures unchanged)
 - **setPartialFillAllowed**: Maker enables or disables partial fills (amounts unchanged)
 - **cancelOrder**: Maker reclaims tokenA
 
-All operations are atomic. No partial fills. No admin functions.
+All operations are atomic. Partial fills are opt-in via `partialFillAllowed`. No admin functions.
 
 ## Security
 
 - Reentrancy protection via OpenZeppelin
-- Inbound fee-on-transfer / mid-transfer rebase / phantom token detection on deposits and tokenB pulls
+- Fee-on-transfer / mid-transfer rebase / phantom detection on tokenA deposits and ERC20 tokenB payments to the maker (including multi-maker Permit2 board→maker distribution)
+- The maker cannot fill their own order (`SelfFill`): a self-`transferFrom` of tokenB does not increase the recipient, so supporting self-fill needed a board hop. Forbidding it keeps tokenB a one-hop pull to a distinct maker
+- Post-deposit rebase (negative lock / positive surplus in escrow) remains an accepted limitation (see `contracts/test/security-research/`)
+- Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying transfer can take all escrow of that token; makers of the same scam token race whatever balance remains after a rebase. Other tokens in escrow are not affected
+- The board does not check that token addresses have code; makers must verify tokenA/tokenB before creating, and takers before filling
+- Outbound fee-on-transfer on tokenA payout to the taker remains an accepted limitation (see `contracts/test/security-research/`)
 - `Token` helpers for ERC20 and native ETH transfers (zero-amount no-op; ETH via `sendValue`)
 - No proxy, no upgrades, no owner
 

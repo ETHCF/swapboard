@@ -297,14 +297,15 @@
     "function canFill(uint256 orderId) external view returns (bool)",
     "function getNextOrderId() external view returns (uint256)",
     "function getWeth() external view returns (address)",
-    "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB)",
-    "event OrderFilled(uint256 indexed orderId, address indexed taker)",
+    "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool indexed partialFillAllowed)",
+    "event OrderFilled(uint256 indexed orderId, address indexed taker, uint128 amountA, uint128 amountB)",
     "event OrderCanceled(uint256 indexed orderId)",
+    "event OrderModified(uint256 indexed orderId, uint128 availableA, uint128 availableB)",
+    "event OrderPartialFillUpdated(uint256 indexed orderId, bool indexed partialFillAllowed)",
     "error ZeroAddress()",
     "error ZeroAmount()",
     "error ZeroETH()",
     "error SameToken()",
-    "error NotAContract(address token)",
     "error NotWETH(address expected, address actual)",
     "error ETHAmountMismatch(uint256 required, uint256 sent)",
     "error ETHTransferFailed(address recipient)",
@@ -4196,7 +4197,7 @@
         loadStats();
       });
 
-      contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
+      contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB, partialFillAllowed) => {
         loadOrders();
         loadStats();
       });
@@ -5055,7 +5056,7 @@
               loadStats();
             });
 
-            contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
+            contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB, partialFillAllowed) => {
               loadOrders();
               loadStats();
             });
