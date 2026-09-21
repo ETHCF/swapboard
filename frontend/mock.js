@@ -628,24 +628,24 @@
   }
 
   /**
-   * The tokenB owed for taking `amountA`, ceiled — `Swapboard._quoteFill`.
+   * The tokenA received for paying `amountB`, floored — `Swapboard._quoteFill`.
    *
    * Kept here rather than imported from lib.js so the mock's chain state is
    * derived from the contract's own rule, not from the UI's copy of it. If the
    * two ever drift, that is a bug the mock should surface, not paper over.
    */
-  function quoteFill(order, amountA) {
+  function quoteFill(order, amountB) {
     const availableA = BigInt(order.availableA);
     const availableB = BigInt(order.availableB);
-    const want = BigInt(amountA);
-    if (want >= availableA) return availableB;
-    return (want * availableB + availableA - 1n) / availableA;
+    const pay = BigInt(amountB);
+    if (pay >= availableB) return availableA;
+    return (pay * availableA) / availableB;
   }
 
   /**
    * Mirrors handleOrderFilled, including the Fill entity it emits.
    * @param {string} orderId - Order being filled
-   * @param {Object} spec - {taker, amountA, timestamp, block, txNonce, logIndex}
+   * @param {Object} spec - {taker, amountB, timestamp, block, txNonce, logIndex}
    */
   function applyFill(orderId, spec) {
     const order = STORE.orders.get(String(orderId));
@@ -656,8 +656,8 @@
     const taker = getOrCreateAccount(spec.taker, spec.timestamp);
     const ts = String(spec.timestamp);
 
-    const amountA = BigInt(spec.amountA);
-    const amountB = quoteFill(order, amountA);
+    const amountB = BigInt(spec.amountB);
+    const amountA = quoteFill(order, amountB);
     const wasPartiallyFilled = order.status === STATUS.PARTIALLY_FILLED;
 
     order.availableA = (BigInt(order.availableA) - amountA).toString();
@@ -676,9 +676,9 @@
     order.updatedAt = ts;
 
     const txHash = generateTxHash(spec.txNonce);
-    // An order closes when either side is exhausted; ceil rounding on tokenB
-    // means tokenA dust can be left stranded, which is exactly the contract's
-    // behaviour and not something to tidy up here.
+    // An order closes when either side is exhausted. Flooring tokenA means
+    // tokenB always runs out first or both together, so tokenA is never left
+    // stranded; checking either side mirrors the contract regardless.
     const closed = BigInt(order.availableA) === 0n || BigInt(order.availableB) === 0n;
     if (closed) {
       order.status = STATUS.FILLED;
@@ -958,7 +958,7 @@
       if (isFilled) {
         applyFill(i, {
           taker: taker,
-          amountA: amountA,
+          amountB: amountB,
           timestamp: closedAt,
           block: blockAt(closedAt),
           txNonce: i * 1000 + 1,
@@ -971,7 +971,7 @@
         // display and the fill math have something to work on.
         applyFill(i, {
           taker: generateAddress(0x3000 + (i % 20)),
-          amountA: ((BigInt(amountA) * 60n) / 100n).toString(),
+          amountB: ((BigInt(amountB) * 60n) / 100n).toString(),
           timestamp: createdAt + 600,
           block: blockAt(createdAt + 600),
           txNonce: i * 1000 + 3,
@@ -1026,7 +1026,7 @@
     if (spec.partFilled && spec.partialFillAllowed) {
       applyFill(spec.orderId, {
         taker: MAKER_ADDRESSES[spec.orderId % MAKER_ADDRESSES.length],
-        amountA: ((BigInt(spec.amountA) * 65n) / 100n).toString(),
+        amountB: ((BigInt(spec.amountB) * 65n) / 100n).toString(),
         timestamp: createdAt + 300,
         block: blockAt(createdAt + 300),
         txNonce: spec.orderId * 1000 + 4,
@@ -2016,7 +2016,7 @@
    * v2 view calls, answered from the same store the subgraph mock serves.
    *
    * Serving both from one store is what makes a fill quote testable: the UI
-   * prices a fill off the indexed order and submits the result as `minAmountB`,
+   * prices a fill off the indexed order and submits the result as `minAmountA`,
    * and on chain that has to agree with what `getOrder` reports to the wei.
    */
   const V2_CALLS = {

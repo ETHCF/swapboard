@@ -807,6 +807,9 @@ const ERROR_SIGNATURES = {
   "0x54b9c511": "DuplicateOrderId",
   "0x9d7a930f": "SelfFill",
 
+  // v2 only: modifyOrder(s) and setPartialFillAllowed.
+  "0xa88ee577": "NoChange",
+
   // v2 only, from OpenZeppelin. Address.sendValue and SafeERC20 replace v1's
   // hand-rolled ETHTransferFailed, and the transient reentrancy guard has its
   // own error rather than a require string.
@@ -854,6 +857,7 @@ const ERROR_MESSAGES = {
   FillAmountMismatch: (args) =>
     `Order #${args[0]} repriced while you were confirming. Refresh and try again.`,
   DuplicateOrderId: (args) => `Order #${args[0]} appears twice in this batch`,
+  NoChange: "Nothing to change: the order already has these settings",
   FailedCall: "ETH transfer to recipient failed",
   InsufficientBalance: "The contract holds less ETH than this transfer needs",
   SafeERC20FailedOperation: "Token transfer failed",
@@ -1569,62 +1573,52 @@ function getShiftRangeIds(sortedOrders, anchorId, targetId, firstSelected, userA
 // V2: Partial fill math
 // ============================================================================
 //
-// These mirror `Swapboard._quoteFill` exactly. They have to: v2 pays with an
-// exact `msg.value` when the wanted token is native ETH, and submits the quote
-// it computed as `minAmountB`, so a formula that disagrees with the contract by
-// one base unit is a reverted transaction rather than a rounding artifact.
+// These mirror `Swapboard._quoteFill` exactly. They have to: v2 submits the
+// tokenA it quoted as `minAmountA`, so a formula that disagrees with the
+// contract by one base unit is a reverted transaction rather than a rounding
+// artifact.
 //
-// A fill is expressed as `amountA` — the offered token the taker receives —
-// and the payment is derived from it, ceiled in the maker's favour.
+// A fill is expressed as `amountB` — the exact wanted token the taker pays,
+// which is also the exact `msg.value` when that token is native ETH — and the
+// tokenA received is derived from it, floored in the maker's favour.
 // ============================================================================
 
 /**
- * The tokenB payment for taking `amountA` of an order's offered token.
+ * The tokenA received for paying `amountB` of an order's wanted token.
  *
- * Mirrors `Swapboard._quoteFill`: taking the whole remainder pays exactly the
- * remaining tokenB (no rounding at all), and anything less ceils the
- * proportion. Ceiling rather than flooring is what keeps a sequence of small
- * fills from underpaying the maker.
+ * Mirrors `Swapboard._quoteFill`: paying the whole remainder takes exactly the
+ * remaining tokenA (no rounding at all), and anything less floors the
+ * proportion. Flooring is what keeps a sequence of small fills from draining
+ * the maker's tokenA faster than their tokenB is paid.
  *
- * @param {Object} order - Order with availableA/availableB in base units
- * @param {string|bigint} amountA - Offered token requested, in base units
- * @returns {bigint} tokenB owed, or 0 when the request is empty or unfillable
- */
-function quoteFill(order, amountA) {
-  const availableA = BigInt(order.availableA);
-  const availableB = BigInt(order.availableB);
-  const want = BigInt(amountA);
-
-  if (want <= 0n || availableA === 0n || availableB === 0n) return 0n;
-  if (want >= availableA) return availableB;
-
-  return (want * availableB + availableA - 1n) / availableA;
-}
-
-/**
- * Largest `amountA` obtainable for a given tokenB budget.
- *
- * The inverse of quoteFill, and floored, so the quote for the returned amount
- * never exceeds the budget. Used to drive the fill controls when the taker
- * thinks in terms of what they are paying rather than what they receive.
+ * A payment above the remainder quotes 0 rather than being clamped: the
+ * contract reverts it with FillAmountTooHigh, and so does a payment too small
+ * to earn a single base unit (ZeroAmount).
  *
  * @param {Object} order - Order with availableA/availableB in base units
- * @param {string|bigint} amountB - Budget in the wanted token, in base units
- * @returns {bigint} Amount of the offered token received
+ * @param {string|bigint} amountB - Wanted token paid, in base units
+ * @returns {bigint} tokenA received, or 0 when the payment is unfillable
  */
-function computeReceiveFromFill(order, amountB) {
+function quoteFill(order, amountB) {
   const availableA = BigInt(order.availableA);
   const availableB = BigInt(order.availableB);
-  const budget = BigInt(amountB);
+  const pay = BigInt(amountB);
 
-  if (availableB === 0n || budget <= 0n) return 0n;
-  if (budget >= availableB) return availableA;
-  return (budget * availableA) / availableB;
+  if (pay <= 0n || pay > availableB || availableA === 0n) return 0n;
+  if (pay === availableB) return availableA;
+
+  return (pay * availableA) / availableB;
 }
 
 /**
  * Resolves a desired receive amount into the pair of values a fill is
  * submitted with.
+ *
+ * The taker thinks in what they receive, but the contract takes an exact
+ * payment, so this finds the smallest `amountB` whose floored quote covers the
+ * request. That quote can land a base unit or so above the request; it is
+ * returned as `minAmountA` so the UI shows, and the fill bounds, exactly what
+ * the contract will pay out.
  *
  * Clamps to what is actually left rather than rejecting an over-large request:
  * the fill controls open at 100% of the remainder, and an order shrinking
@@ -1632,15 +1626,18 @@ function computeReceiveFromFill(order, amountB) {
  *
  * @param {Object} order - Order with availableA/availableB in base units
  * @param {string|bigint} receiveAmountA - Desired amount of the offered token
- * @returns {{amountA: bigint, amountB: bigint}} Arguments for fillOrder
+ * @returns {{amountB: bigint, minAmountA: bigint}} Arguments for fillOrder
  */
 function computeFillFromReceive(order, receiveAmountA) {
   const availableA = BigInt(order.availableA);
+  const availableB = BigInt(order.availableB);
   let want = BigInt(receiveAmountA);
-  if (want < 0n) want = 0n;
   if (want > availableA) want = availableA;
 
-  return { amountA: want, amountB: quoteFill(order, want) };
+  if (want <= 0n || availableB === 0n) return { amountB: 0n, minAmountA: 0n };
+
+  const amountB = (want * availableB + availableA - 1n) / availableA;
+  return { amountB, minAmountA: quoteFill(order, amountB) };
 }
 
 /**
@@ -1786,7 +1783,6 @@ if (typeof window !== "undefined") {
 
     // V2: partial fill math
     quoteFill,
-    computeReceiveFromFill,
     computeFillFromReceive,
     allowsPartialFill,
     summarizeFillBatch,
@@ -1895,7 +1891,6 @@ if (typeof module !== "undefined" && module.exports) {
 
     // V2: partial fill math
     quoteFill,
-    computeReceiveFromFill,
     computeFillFromReceive,
     allowsPartialFill,
     summarizeFillBatch,

@@ -57,7 +57,6 @@ const {
   canSelectOrder,
   getShiftRangeIds,
   quoteFill,
-  computeReceiveFromFill,
   computeFillFromReceive,
   allowsPartialFill,
   summarizeFillBatch,
@@ -1952,6 +1951,13 @@ describe("decodeContractError", () => {
     });
   });
 
+  test("recognizes NoChange", () => {
+    expect(decodeContractError("0xa88ee577")).toEqual({
+      name: "NoChange",
+      message: "Nothing to change: the order already has these settings",
+    });
+  });
+
   // MUTATION: Return a partial object instead of null
   // BREAKS: An unknown revert renders as "undefined"
   test("returns null for input it cannot decode", () => {
@@ -2466,82 +2472,45 @@ describe("getShiftRangeIds", () => {
 describe("quoteFill", () => {
   const order = { availableA: "1000", availableB: "2000" };
 
-  // MUTATION: Floor the proportion instead of ceiling it
-  // BREAKS: The taker underpays, and the contract rejects the quote
-  test("ceils a partial proportion, in the maker's favour", () => {
-    // 1 of 3 at 3:2 -> 2/3, ceiled to 1
+  // MUTATION: Ceil the proportion instead of flooring it
+  // BREAKS: The quote promises more tokenA than the contract pays, and the
+  // fill reverts with FillAmountMismatch
+  test("floors a partial proportion, in the maker's favour", () => {
+    // 1 of 2 at 3:2 -> 1.5, floored to 1
     expect(quoteFill({ availableA: "3", availableB: "2" }, 1n)).toBe(1n);
-    expect(quoteFill(order, 1n)).toBe(2n);
+    // 3 * 1000 / 2000 = 1.5 -> 1
+    expect(quoteFill(order, 3n)).toBe(1n);
+    expect(quoteFill(order, 1000n)).toBe(500n);
   });
 
-  // MUTATION: Ceil the whole-remainder case too
-  // BREAKS: Taking the entire order costs one base unit more than it holds
-  test("taking the whole remainder pays exactly the remainder", () => {
-    expect(quoteFill(order, 1000n)).toBe(2000n);
+  test("paying the whole remainder takes exactly the remainder", () => {
+    expect(quoteFill(order, 2000n)).toBe(1000n);
   });
 
-  // MUTATION: Let the quote scale past the remainder
-  // BREAKS: Overpayment on a request larger than the order
-  test("clamps a request larger than the order to the remainder", () => {
-    expect(quoteFill(order, 5000n)).toBe(2000n);
+  // MUTATION: Clamp an over-large payment to the remainder
+  // BREAKS: The UI quotes a fill the contract rejects with FillAmountTooHigh
+  test("quotes zero for a payment larger than the order", () => {
+    expect(quoteFill(order, 2001n)).toBe(0n);
   });
 
-  test("returns zero for an empty request or an exhausted order", () => {
+  test("returns zero for an empty payment or an exhausted order", () => {
     expect(quoteFill(order, 0n)).toBe(0n);
     expect(quoteFill(order, -5n)).toBe(0n);
     expect(quoteFill({ availableA: "0", availableB: "0" }, 10n)).toBe(0n);
-    expect(quoteFill({ availableA: "1000", availableB: "0" }, 10n)).toBe(0n);
+    expect(quoteFill({ availableA: "0", availableB: "1000" }, 10n)).toBe(0n);
+  });
+
+  // The contract reverts ZeroAmount on a quote of 0, so the UI must see it too.
+  test("returns zero for a payment too small to earn a base unit", () => {
+    expect(quoteFill({ availableA: "1", availableB: "1000" }, 999n)).toBe(0n);
   });
 
   // The formula this has to match, spelled out. If Swapboard._quoteFill ever
   // changes, this is the test that should fail first.
-  test("agrees with the contract's ceil division across the range", () => {
-    const o = { availableA: "997", availableB: "1301" };
-    for (let want = 1n; want < 997n; want += 37n) {
-      const expected = (want * 1301n + 996n) / 997n;
-      expect(quoteFill(o, want)).toBe(expected);
-    }
-  });
-});
-
-describe("computeReceiveFromFill", () => {
-  const order = { availableA: "1000", availableB: "2000" };
-
-  // MUTATION: Round up instead of down
-  // BREAKS: Taker receives more than their budget covers, and the fill reverts
-  test("rounds down in the maker's favour", () => {
-    // 3 * 1000 / 2000 = 1.5 -> 1
-    expect(computeReceiveFromFill(order, 3n)).toBe(1n);
-  });
-
-  test("scales proportionally", () => {
-    expect(computeReceiveFromFill(order, 1000n)).toBe(500n);
-  });
-
-  // MUTATION: Return a scaled value past the remainder
-  // BREAKS: UI promises more than the order holds
-  test("caps at the full remaining amount", () => {
-    expect(computeReceiveFromFill(order, 2000n)).toBe(1000n);
-    expect(computeReceiveFromFill(order, 9999n)).toBe(1000n);
-  });
-
-  test("returns zero for a zero or negative fill", () => {
-    expect(computeReceiveFromFill(order, 0n)).toBe(0n);
-    expect(computeReceiveFromFill(order, -5n)).toBe(0n);
-  });
-
-  // MUTATION: Divide without guarding
-  // BREAKS: Division by zero on a fully filled order
-  test("returns zero when nothing is wanted", () => {
-    expect(computeReceiveFromFill({ availableA: "1000", availableB: "0" }, 100n)).toBe(0n);
-  });
-
-  // MUTATION: Ceil here as well as in quoteFill
-  // BREAKS: The suggested receive amount costs more than the stated budget
-  test("never suggests a receive amount the budget cannot pay for", () => {
-    const o = { availableA: "997", availableB: "1301" };
-    for (let budget = 1n; budget < 1301n; budget += 53n) {
-      expect(quoteFill(o, computeReceiveFromFill(o, budget))).toBeLessThanOrEqual(budget);
+  test("agrees with the contract's floor division across the range", () => {
+    const o = { availableA: "1301", availableB: "997" };
+    for (let pay = 1n; pay < 997n; pay += 37n) {
+      expect(quoteFill(o, pay)).toBe((pay * 1301n) / 997n);
     }
   });
 });
@@ -2550,32 +2519,57 @@ describe("computeFillFromReceive", () => {
   const order = { availableA: "1000", availableB: "2000" };
 
   test("returns the pair of values a fill is submitted with", () => {
-    expect(computeFillFromReceive(order, 500n)).toEqual({ amountA: 500n, amountB: 1000n });
+    expect(computeFillFromReceive(order, 500n)).toEqual({ amountB: 1000n, minAmountA: 500n });
   });
 
-  // MUTATION: Round the payment down
-  // BREAKS: The taker underpays and the contract rejects the fill
-  test("prices the request the way the contract will", () => {
+  // MUTATION: Floor the payment
+  // BREAKS: The fill pays out less than the taker asked for
+  test("rounds the payment up so the request is covered", () => {
+    // 1 of 3 at 3:2 -> pay 2/3, ceiled to 1, which buys floor(1.5) = 1
     const odd = { availableA: "3", availableB: "2" };
-    expect(computeFillFromReceive(odd, 1n)).toEqual({ amountA: 1n, amountB: 1n });
+    expect(computeFillFromReceive(odd, 1n)).toEqual({ amountB: 1n, minAmountA: 1n });
+  });
+
+  // MUTATION: Return the typed amount as minAmountA instead of the quote
+  // BREAKS: The UI shows less than the fill will actually pay out
+  test("reports the contract's quote, which can exceed the request", () => {
+    // 2 of 3 at 3:2 -> pay 4/3, ceiled to 2: the whole remainder, so all 3
+    const odd = { availableA: "3", availableB: "2" };
+    expect(computeFillFromReceive(odd, 2n)).toEqual({ amountB: 2n, minAmountA: 3n });
+  });
+
+  test("pays the least tokenB that covers the request", () => {
+    const o = { availableA: "997", availableB: "1301" };
+    for (let want = 1n; want <= 997n; want += 41n) {
+      const { amountB, minAmountA } = computeFillFromReceive(o, want);
+      expect(minAmountA).toBe(quoteFill(o, amountB));
+      expect(minAmountA).toBeGreaterThanOrEqual(want);
+      expect(quoteFill(o, amountB - 1n)).toBeLessThan(want);
+    }
   });
 
   // MUTATION: Pass the request through unclamped
   // BREAKS: FillAmountTooHigh, on an order that shrank under an open modal
   test("clamps a request larger than the order to what is left", () => {
-    expect(computeFillFromReceive(order, 1000n)).toEqual({ amountA: 1000n, amountB: 2000n });
-    expect(computeFillFromReceive(order, 5000n)).toEqual({ amountA: 1000n, amountB: 2000n });
+    expect(computeFillFromReceive(order, 1000n)).toEqual({ amountB: 2000n, minAmountA: 1000n });
+    expect(computeFillFromReceive(order, 5000n)).toEqual({ amountB: 2000n, minAmountA: 1000n });
   });
 
   test("returns zero for a zero or negative request", () => {
-    expect(computeFillFromReceive(order, 0n)).toEqual({ amountA: 0n, amountB: 0n });
-    expect(computeFillFromReceive(order, -1n)).toEqual({ amountA: 0n, amountB: 0n });
+    expect(computeFillFromReceive(order, 0n)).toEqual({ amountB: 0n, minAmountA: 0n });
+    expect(computeFillFromReceive(order, -1n)).toEqual({ amountB: 0n, minAmountA: 0n });
   });
 
+  // MUTATION: Divide without guarding
+  // BREAKS: Division by zero on an exhausted order
   test("returns zero on an empty order", () => {
     expect(computeFillFromReceive({ availableA: "0", availableB: "0" }, 10n)).toEqual({
-      amountA: 0n,
       amountB: 0n,
+      minAmountA: 0n,
+    });
+    expect(computeFillFromReceive({ availableA: "1000", availableB: "0" }, 10n)).toEqual({
+      amountB: 0n,
+      minAmountA: 0n,
     });
   });
 });

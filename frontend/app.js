@@ -2489,12 +2489,12 @@ ${orderFields}
   //   struct CreateOrderParams { address tokenA; uint128 amountA;
   //                              address tokenB; uint128 amountB;
   //                              bool partialFillAllowed; }
-  //   struct FillOrderParams   { uint256 orderId; uint128 amountA;
-  //                              uint128 minAmountB; }
+  //   struct FillOrderParams   { uint256 orderId; uint128 amountB;
+  //                              uint128 minAmountA; }
   //
   //   createOrder(CreateOrderParams)                          payable -> uint256
   //   createOrders(CreateOrderParams[])                       payable -> uint256[]
-  //   fillOrder(orderId, amountA, minAmountB, deadline)       payable
+  //   fillOrder(orderId, amountB, minAmountA, deadline)       payable
   //   fillOrders(FillOrderParams[], deadline)                 payable
   //   cancelOrder(orderId) / cancelOrders(orderId[])
   //
@@ -2510,8 +2510,8 @@ ${orderFields}
   //   * There is no `tryFillOrders`. `fillOrders` reverts the whole batch, so
   //     fillSelectedOrders()'s "skip what can no longer fill" promise is not
   //     backed by anything and has to change.
-  //   * A fill is keyed on `amountA` — the offered token the taker receives —
-  //     plus the quoted `minAmountB`, not on a tokenB amount with 0 meaning
+  //   * A fill is keyed on `amountB` — the exact wanted token the taker pays —
+  //     plus the quoted `minAmountA`, not on a tokenB amount with 0 meaning
   //     "the rest". lib.js quoteFill() computes the quote the contract will.
   //   * createOrder takes a struct, and amounts are uint128.
   //
@@ -2903,11 +2903,12 @@ ${orderFields}
    * Builds the partial-fill controls for the fill confirmation.
    *
    * The user types how much of the offered token they want to receive; the
-   * amount they pay is derived from it. Presets are percentages of what is
-   * *left* on the order, so they stay meaningful on a partly filled order.
+   * exact amount they pay is derived from it. Presets are percentages of what
+   * is *left* on the order, so they stay meaningful on a partly filled order.
    *
    * @param {Object} order - Order being filled
-   * @param {function(bigint): void} onChange - Called with the new fillAmountB
+   * @param {function(bigint, bigint): void} onChange - Called with the quoted
+   *   tokenA (minAmountA) and the exact tokenB payment (amountB)
    * @returns {HTMLElement}
    */
   function buildPartialFillControls(order, onChange) {
@@ -2941,20 +2942,20 @@ ${orderFields}
      * @param {boolean} writeBack - Whether to rewrite the input box
      */
     function update(receive, writeBack) {
-      const { amountA, amountB } = computeFillFromReceive(order, receive);
+      const { amountB, minAmountA } = computeFillFromReceive(order, receive);
 
       input.classList.toggle("input-error", amountB === 0n);
       if (writeBack) {
-        input.value = formatAmount(amountA, order.tokenA.decimals);
+        input.value = formatAmount(minAmountA, order.tokenA.decimals);
       }
 
       send.textContent =
         "You send: " + formatAmount(amountB, order.tokenB.decimals) + " " + order.tokenB.symbol;
 
-      // Both halves are reported: v2 submits the requested tokenA *and* the
-      // quote it was priced at, and the payment has to be the exact quote
-      // because an ETH-denominated fill pays it as msg.value.
-      onChange(amountA, amountB);
+      // Both halves are reported: v2 submits the exact tokenB payment *and*
+      // the tokenA it quotes as `minAmountA`. The quote can sit a base unit
+      // above what was typed, since the payment is rounded up to cover it.
+      onChange(minAmountA, amountB);
     }
 
     for (const percent of [25, 50, 75, 100]) {
@@ -3057,9 +3058,9 @@ ${orderFields}
           }
 
           const deadline = Math.floor(Date.now() / 1000) + 300;
-          // Submitted as-is: v2 keys a fill on the tokenA requested and takes
-          // the quoted payment as an exact floor, so neither value can be
-          // rounded off or replaced with a "fill the rest" sentinel.
+          // Submitted as-is: v2 keys a fill on the exact tokenB paid and takes
+          // the quoted tokenA as a floor, so neither value can be rounded off
+          // or replaced with a "fill the rest" sentinel.
           const fillArg = fillAmountB;
 
           let tx;
