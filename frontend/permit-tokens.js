@@ -37,7 +37,7 @@
  *   "none"        no permit; requires approve() or Permit2.
  *
  * Distribution (chain 1): {"none":593,"eip2612":398,"dai":3,"unverified":3,"both":1,"nonstandard":2}
- * Distribution (chain 11155111): {"none":2,"eip2612":4}
+ * Distribution (chain 11155111): {"none":3,"eip2612":5}
  *
  * Shape: {GENERATED, CHAINS: {"<chainId>": {TOKENS: {"<address>": "<flavour>"}}}}.
  * A chain with no section is not "no permit anywhere" -- lib.js answers "unknown"
@@ -1081,6 +1081,10 @@
           "0xff34b3d4aee8ddcd6f9afffb6fe49bd371b8a357": "eip2612",
           // Aave faucet USDT.
           "0xaa8e23fb1079ea71e0a56f48a2aa51851d8433d0": "eip2612",
+          // Seed.s.sol SMKA (MockERC20Permit).
+          "0xcb650b2bcf7437af4e806fbff2dcd4109c4ccdff": "eip2612",
+          // Seed.s.sol SMKB (MockERC20) — no permit.
+          "0x8125d46e9b27914d112ce6271fe4a7e4f977cfde": "none",
         },
       },
     },

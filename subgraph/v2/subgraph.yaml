@@ -9,9 +9,9 @@ dataSources:
     network: sepolia
     source:
       # Placeholder: deploy.sh rewrites address and startBlock after deployment.
-      address: "0x0b2EA9B0bda7f25EfE2A89f86BaA4cD1c472d174"
+      address: "0x2cB5Ec296470793A36d08882630B9bf00fFB5938"
       abi: Swapboard
-      startBlock: 11703743
+      startBlock: 11752289
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
