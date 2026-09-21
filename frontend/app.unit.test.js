@@ -20,7 +20,26 @@ const path = require("path");
 // The chain the build targets, read from lib.js rather than hardcoded: deploy.sh
 // rewrites BUILD_TARGET in place, and a harness pinned to mainnet makes
 // validateNetwork reject every connect the moment a build points elsewhere.
-const { EXPECTED_CHAIN_ID, deploymentFor, PERMIT2_ADDRESS } = require("./lib");
+const { EXPECTED_CHAIN_ID, ACTIVE_CHAIN, deploymentFor, PERMIT2_ADDRESS } = require("./lib");
+
+/** The build's chain as a wallet reports it on chainChanged, e.g. "0xaa36a7". */
+const EXPECTED_CHAIN_HEX = "0x" + EXPECTED_CHAIN_ID.toString(16);
+
+/** Matches the "switch to <chain>" wording for whichever chain the build targets. */
+const SWITCH_TO_EXPECTED = new RegExp(`switch to ${ACTIVE_CHAIN.label}`, "i");
+
+/**
+ * v2 as it ships before deploy.sh has run: zero contract, placeholder subgraph,
+ * nothing live. The "not deployed" paths are exercised against this rather than
+ * against whatever lib.js holds, because deploy.sh rewrites those slots in place
+ * and a test that assumes the placeholder breaks the moment v2 is deployed.
+ */
+const UNDEPLOYED_V2 = {
+  contractAddress: "0x0000000000000000000000000000000000000000",
+  subgraphUrl: "https://api.goldsky.com/api/public/project_YOUR_ID/subgraphs/swapboard-v2/2.0.0/gn",
+  subgraphPolling: false,
+  live: false,
+};
 
 // jsdom implements no layout, so Element.scrollIntoView does not exist. renderOrders
 // schedules one on a timer to reveal a linked order, which lands in whichever test
@@ -36,13 +55,14 @@ const BODY_HTML = INDEX_HTML.match(/<body[^>]*>([\s\S]*)<\/body>/i)[1];
  * ACTIVE_VERSION and CAPS are resolved once at IIFE execution time from the URL
  * and localStorage, so the protocol version has to be set on the location before
  * the require -- there is no setter afterwards. Pass { search: "?v=2" } to load
- * the v2 capability set (batch, partial fills, native ETH).
+ * the v2 capability set (batch, partial fills, native ETH), and
+ * { undeployedV2: true } to put v2 back on its pre-deploy placeholder.
  *
- * @param {{search?: string, hash?: string}} [opts]
+ * @param {{search?: string, hash?: string, undeployedV2?: boolean}} [opts]
  */
 function loadApp(opts = {}) {
   jest.resetModules();
-  const { search = "", hash = "" } = opts;
+  const { search = "", hash = "", undeployedV2 = false } = opts;
   window.history.replaceState({}, "", "/" + search + hash);
   // innerHTML alone leaves the body's own class list and dataset behind, so
   // dark-mode / data-version leak into the next test.
@@ -51,7 +71,10 @@ function loadApp(opts = {}) {
   document.body.innerHTML = BODY_HTML;
   // init() appends the ethers CDN tag to <head>, which innerHTML on body misses.
   document.head.querySelectorAll("script").forEach((s) => s.remove());
-  window.SwapboardLib = require("./lib");
+  // A fresh lib per load (resetModules above), so the override cannot leak.
+  const lib = require("./lib");
+  if (undeployedV2) Object.assign(lib.VERSION_CAPS[2], UNDEPLOYED_V2);
+  window.SwapboardLib = lib;
   return require("./app");
 }
 
@@ -1576,8 +1599,8 @@ describe("connector plumbing", () => {
   const ZERO = "0x0000000000000000000000000000000000000000";
 
   /** Boots v2 and connects, so the connector has a provider and contract. */
-  async function v2(over) {
-    const mod = loadApp({ search: "?v=2" });
+  async function v2(over, { undeployed = false } = {}) {
+    const mod = loadApp({ search: "?v=2", undeployedV2: undeployed });
     const h = installEthers(over);
     routeFetch({ orders: [] });
     await connect(mod, h);
@@ -1611,7 +1634,7 @@ describe("connector plumbing", () => {
   });
 
   test("requireDeployed refuses the zero placeholder outside mock mode", async () => {
-    const { mod, h } = await v2();
+    const { mod, h } = await v2(undefined, { undeployed: true });
     delete window.SWAPBOARD_MOCK;
     const err = await mod.requireDeployed().catch((e) => e);
     expect(err.message).toBe("Swapboard v2 is not deployed yet");
@@ -1621,7 +1644,7 @@ describe("connector plumbing", () => {
   });
 
   test("requireDeployed accepts the placeholder in mock mode once it holds code", async () => {
-    const { mod, h } = await v2();
+    const { mod, h } = await v2(undefined, { undeployed: true });
     await expect(mod.requireDeployed()).resolves.toBeUndefined();
     expect(h.provider.getCode).toHaveBeenCalledWith(ZERO);
   });
@@ -1629,7 +1652,7 @@ describe("connector plumbing", () => {
   test("requireDeployed refuses an address with no code", async () => {
     const { mod } = await v2({ provider: { getCode: jest.fn().mockResolvedValue("0x") } });
     await expect(mod.requireDeployed()).rejects.toThrow(
-      `No Swapboard v2 contract found at ${ZERO}`
+      `No Swapboard v2 contract found at ${deploymentFor(2).CONTRACT_ADDRESS}`
     );
   });
 
@@ -3821,8 +3844,8 @@ describe("v2 create and batch entry points", () => {
   const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 
   /** Boots v2, connects, and returns the module plus ethers handles. */
-  async function v2() {
-    const mod = loadApp({ search: "?v=2" });
+  async function v2({ undeployed = false } = {}) {
+    const mod = loadApp({ search: "?v=2", undeployedV2: undeployed });
     const h = installEthers();
     routeFetch({ orders: [] });
     await connect(mod, h);
@@ -4443,7 +4466,7 @@ describe("remaining wiring", () => {
     const restore = stubLocation();
     try {
       // Back on the expected chain: reload so every cached read is re-fetched.
-      call[1]("0x1");
+      call[1](EXPECTED_CHAIN_HEX);
       expect(window.location.reload).toHaveBeenCalled();
     } finally {
       restore();
@@ -4456,7 +4479,7 @@ describe("remaining wiring", () => {
     await connect(app, h);
     const call = h.wallet.on.mock.calls.find((c) => c[0] === "chainChanged");
     call[1]("0x89"); // Polygon
-    expect(document.querySelector("#toast").textContent).toMatch(/switch to Ethereum mainnet/i);
+    expect(document.querySelector("#toast").textContent).toMatch(SWITCH_TO_EXPECTED);
     expect(document.querySelector("#connect-btn").textContent).toMatch(/connect/i);
   });
 
@@ -4516,8 +4539,8 @@ describe("v2 single-order entry points", () => {
   const A = "0x1111111111111111111111111111111111111111";
   const B = "0x2222222222222222222222222222222222222222";
 
-  async function v2() {
-    const mod = loadApp({ search: "?v=2" });
+  async function v2({ undeployed = false } = {}) {
+    const mod = loadApp({ search: "?v=2", undeployedV2: undeployed });
     const h = installEthers();
     routeFetch({ orders: [] });
     await connect(mod, h);
@@ -4604,7 +4627,7 @@ describe("v2 single-order entry points", () => {
   }, 20000);
 
   test("without a deployment a fill says so, approving and sending nothing", async () => {
-    const { mod, h } = await v2();
+    const { mod, h } = await v2({ undeployed: true });
     delete window.SWAPBOARD_MOCK;
     await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
     expect(document.querySelector("#modal-body .gas-estimate")).toBeNull();
@@ -4672,7 +4695,6 @@ describe("connector adapters", () => {
   const B = "0x2222222222222222222222222222222222222222";
   const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
   const WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
-  const ZERO = "0x0000000000000000000000000000000000000000";
 
   /** An indexed order offering `tokenA` for `tokenB`. */
   function pair(tokenA, tokenB, over = {}) {
@@ -4801,13 +4823,16 @@ describe("connector adapters", () => {
     let v2;
     let h;
 
-    beforeEach(async () => {
-      v2 = loadApp({ search: "?v=2" });
+    /** (Re)connects v2, optionally on its pre-deploy placeholder. */
+    async function boot({ undeployed = false } = {}) {
+      v2 = loadApp({ search: "?v=2", undeployedV2: undeployed });
       h = installEthers();
       routeFetch({ orders: [] });
       await connect(v2, h);
       await flush();
-    });
+    }
+
+    beforeEach(() => boot());
 
     // ======================================================================
     // Signature-based approvals
@@ -5298,6 +5323,7 @@ describe("connector adapters", () => {
     });
 
     test("nothing is sent without a deployment", async () => {
+      await boot({ undeployed: true });
       delete window.SWAPBOARD_MOCK;
       await expect(v2.V2.cancelOrder("1")).rejects.toThrow("Swapboard v2 is not deployed yet");
       expect(h.swap.cancelOrder).not.toHaveBeenCalled();
@@ -5307,10 +5333,11 @@ describe("connector adapters", () => {
       await expect(v2.V2.ensureAllowance(NATIVE, 1n)).resolves.toBe(false);
       expect(h.token.approve).not.toHaveBeenCalled();
       await expect(v2.V2.ensureAllowance(A, 1n)).resolves.toBe(true);
-      expect(h.token.approve).toHaveBeenCalledWith(ZERO, 1n);
+      expect(h.token.approve).toHaveBeenCalledWith(deploymentFor(2).CONTRACT_ADDRESS, 1n);
     });
 
     test("ensureAllowance approves nothing without a deployment", async () => {
+      await boot({ undeployed: true });
       delete window.SWAPBOARD_MOCK;
       await expect(v2.V2.ensureAllowance(A, 1n)).rejects.toThrow(/not deployed yet/);
       expect(h.token.approve).not.toHaveBeenCalled();
@@ -5323,6 +5350,7 @@ describe("connector adapters", () => {
     });
 
     test("estimateFor reports nothing rather than pricing a transfer to an empty address", async () => {
+      await boot({ undeployed: true });
       delete window.SWAPBOARD_MOCK;
       h.provider.estimateGas.mockClear();
       await expect(v2.V2.estimateFor("cancelOrder", ["1"])).resolves.toBeNull();
@@ -5330,6 +5358,7 @@ describe("connector adapters", () => {
     });
 
     test("syncAfter has no v2 subgraph to poll", async () => {
+      await boot({ undeployed: true });
       delete window.SWAPBOARD_MOCK;
       global.fetch.mockClear();
       await expect(v2.V2.syncAfter("1", false)).resolves.toBeUndefined();
@@ -5767,7 +5796,7 @@ describe("coverage of remaining branches", () => {
     // v2 ships a zero address and a YOUR_ID subgraph URL on purpose: nothing is
     // deployed yet. Failing on that would take the whole preview offline, so the
     // guard is gated on CAPS.live rather than on the values themselves.
-    const v2 = loadApp({ search: "?v=2" });
+    const v2 = loadApp({ search: "?v=2", undeployedV2: true });
     const restore = stubLocation();
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -6028,9 +6057,7 @@ describe("last mile", () => {
     });
     routeFetch({ orders: [] });
     await connect(app, h);
-    expect(document.querySelector("#toast").textContent).toMatch(
-      /Please switch to Ethereum mainnet/
-    );
+    expect(document.querySelector("#toast").textContent).toMatch(SWITCH_TO_EXPECTED);
   });
 
   test("the CSV button reports an empty table", async () => {
