@@ -101,9 +101,10 @@ For market makers and trading bots.
       { "name": "orderId", "type": "uint256", "indexed": true },
       { "name": "maker", "type": "address", "indexed": true },
       { "name": "tokenA", "type": "address", "indexed": false },
-      { "name": "amountA", "type": "uint256", "indexed": false },
+      { "name": "amountA", "type": "uint128", "indexed": false },
       { "name": "tokenB", "type": "address", "indexed": false },
-      { "name": "amountB", "type": "uint256", "indexed": false }
+      { "name": "amountB", "type": "uint128", "indexed": false },
+      { "name": "partialFillAllowed", "type": "bool", "indexed": true }
     ]
   },
   {
@@ -111,7 +112,9 @@ For market makers and trading bots.
     "name": "OrderFilled",
     "inputs": [
       { "name": "orderId", "type": "uint256", "indexed": true },
-      { "name": "taker", "type": "address", "indexed": true }
+      { "name": "taker", "type": "address", "indexed": true },
+      { "name": "amountA", "type": "uint128", "indexed": false },
+      { "name": "amountB", "type": "uint128", "indexed": false }
     ]
   },
   {
@@ -119,6 +122,23 @@ For market makers and trading bots.
     "name": "OrderCanceled",
     "inputs": [
       { "name": "orderId", "type": "uint256", "indexed": true }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "OrderModified",
+    "inputs": [
+      { "name": "orderId", "type": "uint256", "indexed": true },
+      { "name": "availableA", "type": "uint128", "indexed": false },
+      { "name": "availableB", "type": "uint128", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "OrderPartialFillUpdated",
+    "inputs": [
+      { "name": "orderId", "type": "uint256", "indexed": true },
+      { "name": "partialFillAllowed", "type": "bool", "indexed": true }
     ]
   }
 ]
@@ -267,7 +287,7 @@ async function createOrder(
 
   // Get orderId from event
   const event = receipt.logs.find(
-    log => log.topics[0] === ethers.id("OrderCreated(uint256,address,address,uint256,address,uint256)")
+    log => log.topics[0] === ethers.id("OrderCreated(uint256,address,address,uint128,address,uint128,bool)")
   );
   const orderId = BigInt(event.topics[1]);
 
@@ -304,8 +324,8 @@ async function fillOrder(provider, signer, orderId) {
 async function monitorOrders(provider) {
   const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
 
-  contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
-    console.log(`New order ${orderId}: ${amountA} ${tokenA} for ${amountB} ${tokenB}`);
+  contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB, partialFillAllowed) => {
+    console.log(`New order ${orderId}: ${amountA} ${tokenA} for ${amountB} ${tokenB} (partial=${partialFillAllowed})`);
   });
 
   contract.on("OrderFilled", (orderId, taker) => {
@@ -418,19 +438,97 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 | `ZeroAmount()` | `0x1f2a2005` | Amount is zero. On `modifyOrder` / `modifyOrders`, also thrown when either remaining (`availableA` / `availableB`) is set to 0 — use `cancelOrder` / `cancelOrders` instead. Empty `modifyOrders` also reverts |
 | `NoChange()` | `0xa88ee577` | Modification would leave the order unchanged (including any item in a `modifyOrders` batch) |
 | `SameToken()` | `0x201b580a` | tokenA and tokenB are identical |
-| `NotAContract(address)` | `0x8a8b41ec` | Address has no code |
-| `BalanceMismatch(uint256,uint256)` | `0x6e65ed84` | Inbound transfer mismatch (fee-on-transfer, mid-transfer rebase, or phantom token) |
+| `BalanceMismatch(uint256,uint256)` | `0x6e65ed84` | Transfer mismatch on tokenA deposit or ERC20 tokenB payment to maker (fee-on-transfer, mid-transfer rebase, or phantom token) |
 | `OrderNotFound(uint256)` | `0x4e90badc` | Order doesn't exist |
 | `OrderNotActive(uint256)` | `0xd2c02610` | Order already filled/cancelled |
 | `NotMaker(uint256,address,address)` | `0x98cd7222` | Caller is not order maker |
+| `SelfFill()` | `0x9d7a930f` | Maker attempted to fill their own order. Banned so tokenB can always be pulled directly to a distinct maker (`transferFrom(self, self)` does not increase the recipient, so an exact-receive check would fail) |
 | `ETHAmountMismatch(uint256,uint256)` | `0x8230dc8f` | `msg.value` does not match the required ETH amount |
-| `OrderStateMismatch(uint256,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128)` | `0xe796ec17` | `modifyOrder` / `modifyOrders` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` |
+| `OrderStateMismatch(uint256)` | `0x457802f0` | `modifyOrder` / `modifyOrders` race: snapshot amounts do not match on-chain `amountA`/`amountB`/`availableA`/`availableB` (re-read via `getOrder`) |
 | `DuplicateOrderId(uint256)` | `0x54b9c511` | Same `orderId` appears more than once in a `cancelOrders` or `modifyOrders` batch |
-| `FillAmountTooHigh(uint256,uint128,uint128)` | `0x535a34f0` | Requested fill amount exceeds remaining liquidity (`amountB` for `fillOrder`, `amountA` for `fillOrderPaying`) |
+| `FillAmountTooHigh(uint256,uint128,uint128)` | `0x535a34f0` | Requested `amountB` exceeds remaining liquidity (`fillOrder` / `fillOrders`) |
 | `FillAmountMismatch(uint256,uint128,uint128)` | `0x19113a72` | Quoted tokenA receive is below the taker's `minAmountA` (`fillOrder`) |
-| `FillPayTooHigh(uint256,uint128,uint128)` | `0x489a6af8` | Quoted tokenB payment exceeds the taker's `maxAmountB` (`fillOrderPaying`) |
+| `PermitOnNative()` | `0x62898bac` | EIP-2612 / Permit2 signature supplied for the native ETH sentinel |
+| `InvalidPermit()` | `0xddafbaef` | Batch EIP-2612 permit entry has `v == 0` |
+| `UnusedPermit()` | `0xb1df4e7e` | EIP-2612 permit was not used by any pull (batch unused entry or refund-only `modifyOrder`) |
+| `DuplicatePermitToken(address)` | `0xc87bfe90` | Same token appears more than once in a permit batch |
+| `InvalidPermit2()` | `0x32d1c8da` | Batch Permit2 entry has an empty signature |
+| `UnusedPermit2()` | `0xc1abc68b` | Permit2 signature was not used by any pull (batch unused entry or refund-only `modifyOrder`) |
+| `TooManyPermit2()` | `0x35d2fb43` | Permit2 batch has more than 256 entries |
 
 ## Methods
+
+### EIP-2612 permits
+
+`createOrder`, `createOrders`, `fillOrder`, `fillOrders`, `modifyOrder`, and `modifyOrders` have overloads that take an EIP-2612 permit as the last argument so allowance can be set in the same transaction as the pull. Existing signatures are unchanged.
+
+```solidity
+struct Permit {
+    uint256 value;
+    uint256 deadline;
+    uint8 v;          // 27/28; 0 skips the permit
+    bytes32 r;
+    bytes32 s;
+}
+
+struct TokenPermit {
+    address token;
+    uint8 v;          // 27/28; 0 reverts InvalidPermit
+    uint256 value;
+    uint256 deadline;
+    bytes32 r;
+    bytes32 s;
+}
+```
+
+Behavior:
+
+- Spender is always this Swapboard. Owner is `msg.sender`.
+- Single-path: `v == 0` skips (caller must already have allowance). Native ETH with `v != 0` reverts `PermitOnNative`. A non-skip permit on a refund-only `modifyOrder` (no top-up) reverts `UnusedPermit`.
+- Batch: empty array means no permits. `v == 0` reverts `InvalidPermit`. Duplicate `token` reverts `DuplicatePermitToken`. `token == 0` reverts `ZeroAddress`. Native ETH reverts `PermitOnNative`. Unused permit (token not pulled) reverts `UnusedPermit`.
+- Token `permit` errors bubble (expired, wrong signer, non-permit token).
+- Permits are applied immediately before the corresponding pull (create tokenA, fill tokenB, modify tokenA top-up).
+- If a permit is front-run, the call reverts; retry with `v == 0` once allowance is set.
+
+```solidity
+function createOrder(CreateOrderParams calldata order, Permit calldata permit) external payable returns (uint256);
+function createOrders(CreateOrderParams[] calldata orders, TokenPermit[] calldata permits) external payable returns (uint256[] memory);
+```
+
+### Permit2 SignatureTransfer
+
+The same six entrypoints also have Permit2 overloads. Users approve the canonical Permit2 contract (`0x000000000022D473030F116dDEE9F6B43aC78BA3`) once per token, then pass a SignatureTransfer signature so Swapboard can pull without a direct ERC20 allowance to Swapboard.
+
+```solidity
+struct Permit2Permit {
+    uint256 amount;      // signed TokenPermissions.amount
+    uint256 nonce;
+    uint256 deadline;
+    bytes signature;     // empty skips
+}
+
+struct TokenPermit2 {
+    address token;
+    uint256 amount;
+    uint256 nonce;
+    uint256 deadline;
+    bytes signature;     // empty reverts InvalidPermit2
+}
+```
+
+Behavior:
+
+- Spender in the signed message must be this Swapboard. Owner is `msg.sender`.
+- Single-path: empty `signature` skips (classic `transferFrom` / existing Swapboard allowance). Native ETH with a non-empty signature reverts `PermitOnNative`. A non-empty signature on a refund-only `modifyOrder` (no top-up) reverts `UnusedPermit2`.
+- Batch: empty array means none. Empty signature → `InvalidPermit2`. Unused Permit2 token (not pulled) → `UnusedPermit2`. More than 256 entries → `TooManyPermit2`. Duplicate `token` → `DuplicatePermitToken`. Zero/native token → `ZeroAddress` / `PermitOnNative`.
+- Signed `amount` must cover the exact pull (aggregated for batches). Permit2 / token errors bubble.
+- Single fills pull ERC20 tokenB directly to the maker. Batch fills with Permit2 pull each distinct ERC20 tokenB total to Swapboard, then distribute to makers.
+- Create/modify pulls go to escrow on Swapboard.
+
+```solidity
+function createOrder(CreateOrderParams calldata order, Permit2Permit calldata permit) external payable returns (uint256);
+function createOrders(CreateOrderParams[] calldata orders, TokenPermit2[] calldata permits) external payable returns (uint256[] memory);
+```
 
 ### `fillOrder`
 
@@ -450,9 +548,23 @@ function fillOrder(
     uint256 deadline
 ) external payable;
 
+function fillOrder(
+    uint256 orderId,
+    uint128 amountB,
+    uint128 minAmountA,
+    uint256 deadline,
+    Permit calldata permit
+) external payable;
+
 function fillOrders(
     FillOrderParams[] calldata fills,
     uint256 deadline
+) external payable;
+
+function fillOrders(
+    FillOrderParams[] calldata fills,
+    uint256 deadline,
+    TokenPermit[] calldata permits
 ) external payable;
 ```
 
@@ -464,39 +576,6 @@ Behavior:
 - Reverts with `FillAmountTooHigh` when `amountB` exceeds `availableB`.
 - If tokenB is ETH, `msg.value` must equal `amountB`.
 - Empty `fillOrders` reverts with `ZeroAmount`.
-
-### `fillOrderPaying`
-
-Taker receives exact `amountA` of tokenA and pays ceiled proportional tokenB. `maxAmountB` is the maximum they will send.
-
-```solidity
-struct FillOrderPayingParams {
-    uint256 orderId;
-    uint128 amountA;      // exact tokenA to receive
-    uint128 maxAmountB;   // maximum tokenB willing to send
-}
-
-function fillOrderPaying(
-    uint256 orderId,
-    uint128 amountA,
-    uint128 maxAmountB,
-    uint256 deadline
-) external payable;
-
-function fillOrdersPaying(
-    FillOrderPayingParams[] calldata fills,
-    uint256 deadline
-) external payable;
-```
-
-Behavior:
-
-- tokenA out is exact: `amountA` (or all remaining tokenA when the ceiled payment consumes remaining tokenB, so escrow is not stranded).
-- tokenB in is ceiled: `(amountA * availableB + availableA - 1) / availableA` (full remaining `amountA == availableA` pays all `availableB`).
-- Reverts with `FillPayTooHigh` when quoted tokenB exceeds `maxAmountB`.
-- Reverts with `FillAmountTooHigh` when `amountA` exceeds `availableA`.
-- Same ETH / aggregation / deadline rules as `fillOrder` / `fillOrders` (`msg.value` must equal the quoted tokenB payment when tokenB is ETH).
-- Empty `fillOrdersPaying` reverts with `ZeroAmount`.
 
 ### `modifyOrder`
 
@@ -519,6 +598,13 @@ function modifyOrder(
     uint256 orderId,
     OrderAmounts calldata previousAmounts,
     ModifyOrderParams calldata updatedOrder
+) external payable;
+
+function modifyOrder(
+    uint256 orderId,
+    OrderAmounts calldata previousAmounts,
+    ModifyOrderParams calldata updatedOrder,
+    Permit calldata permit
 ) external payable;
 ```
 
@@ -544,6 +630,11 @@ struct ModifyOrdersParams {
 }
 
 function modifyOrders(ModifyOrdersParams[] calldata mods) external payable;
+
+function modifyOrders(
+    ModifyOrdersParams[] calldata mods,
+    TokenPermit[] calldata permits
+) external payable;
 ```
 
 Behavior:
@@ -638,10 +729,12 @@ async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
 
 - All amounts are in base units (wei-style). Multiply by 10^decimals.
 - Orders can be front-run. Consider using Flashbots for fills.
-- Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and tokenB pulls (`BalanceMismatch`).
-- Outbound fee-on-transfer / mid-transfer rebase on maker payout remains possible after an exact tokenB pull.
+- Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and on ERC20 tokenB payments to the maker (`BalanceMismatch`), including multi-maker Permit2 board→maker distribution.
+- Post-deposit rebases (while tokenA sits in escrow) are not checked: a negative rebase can lock fill/cancel; a positive rebase can strand surplus. See `contracts/test/security-research/`.
+- Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying `transfer` can take all escrow of that token. Makers of the same scam token share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected.
+- Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release.
 - Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
-- Self-fills are allowed (maker can fill own order).
+- The maker cannot fill their own order (`SelfFill`). A self-`transferFrom` of tokenB typically does not increase the recipient, so the exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board and back. Banning it keeps every fill payment a single pull to a distinct maker. (Multi-maker Permit2 still hops through the board to split one pull across makers.)
 - No expiry. Orders remain active until filled or canceled.
 - To close an order or reclaim all escrow, call `cancelOrder` / `cancelOrders`. `modifyOrder` / `modifyOrders` cannot set remaining to 0 (`ZeroAmount`).
 - Contract has no admin functions. No pause. No upgrades.

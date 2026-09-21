@@ -787,10 +787,10 @@ const ERROR_SIGNATURES = {
   "0xd92e233d": "ZeroAddress",
   "0x1f2a2005": "ZeroAmount",
   "0x201b580a": "SameToken",
-  "0x8a8b41ec": "NotAContract",
   "0x6e65ed84": "BalanceMismatch",
   "0x4e90badc": "OrderNotFound",
   "0xd2c02610": "OrderNotActive",
+  "0x457802f0": "OrderStateMismatch",
   "0x98cd7222": "NotMaker",
   "0x8230dc8f": "ETHAmountMismatch",
   "0x1ab7da6b": "DeadlineExpired",
@@ -805,6 +805,7 @@ const ERROR_SIGNATURES = {
   "0x535a34f0": "FillAmountTooHigh",
   "0x19113a72": "FillAmountMismatch",
   "0x54b9c511": "DuplicateOrderId",
+  "0x9d7a930f": "SelfFill",
 
   // v2 only, from OpenZeppelin. Address.sendValue and SafeERC20 replace v1's
   // hand-rolled ETHTransferFailed, and the transient reentrancy guard has its
@@ -813,6 +814,15 @@ const ERROR_SIGNATURES = {
   "0xcf479181": "InsufficientBalance",
   "0x5274afe7": "SafeERC20FailedOperation",
   "0x3ee5aeb5": "ReentrancyGuardReentrantCall",
+
+  // v2 only: EIP-2612 and Permit2 signature entry points.
+  "0x62898bac": "PermitOnNative",
+  "0xddafbaef": "InvalidPermit",
+  "0xb1df4e7e": "UnusedPermit",
+  "0xc87bfe90": "DuplicatePermitToken",
+  "0x32d1c8da": "InvalidPermit2",
+  "0xc1abc68b": "UnusedPermit2",
+  "0x35d2fb43": "TooManyPermit2",
 };
 
 /**
@@ -824,11 +834,12 @@ const ERROR_MESSAGES = {
   ZeroAddress: "Invalid token address",
   ZeroAmount: "Amount too small (check decimal places)",
   SameToken: "Offered and wanted tokens must be different",
-  NotAContract: "Token address is not a contract",
-  BalanceMismatch: "Token transfer amount mismatch (fee-on-transfer tokens not supported)",
+  BalanceMismatch: "Token transfer amount mismatch (fee-on-transfer / mid-transfer rebase / phantom tokens not supported on deposits or tokenB payments)",
   OrderNotFound: (args) => `Order #${args[0]} not found`,
   OrderNotActive: (args) => `Order #${args[0]} is no longer active`,
+  OrderStateMismatch: (args) => `Order #${args[0]} changed; refresh and try again`,
   NotMaker: "You are not the maker of this order",
+  SelfFill: "You cannot fill your own order",
   ZeroETH: "ETH amount cannot be zero",
   NotWETH: "Token is not WETH",
   ETHAmountMismatch: "ETH amount does not match required amount",
@@ -847,6 +858,13 @@ const ERROR_MESSAGES = {
   InsufficientBalance: "The contract holds less ETH than this transfer needs",
   SafeERC20FailedOperation: "Token transfer failed",
   ReentrancyGuardReentrantCall: "Reentrant call rejected",
+  PermitOnNative: "Cannot permit native ETH",
+  InvalidPermit: "Permit signature is invalid",
+  UnusedPermit: "Permit signature was not used in this transaction",
+  DuplicatePermitToken: "Duplicate permit token",
+  InvalidPermit2: "Permit2 signature is missing",
+  UnusedPermit2: "Permit2 signature was not used in this transaction",
+  TooManyPermit2: "Too many Permit2 entries (maximum 256)",
 };
 
 /**

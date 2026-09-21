@@ -424,17 +424,6 @@
   },
   {
     "type": "error",
-    "name": "NotAContract",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NotMaker",
     "inputs": [
       {
