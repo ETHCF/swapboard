@@ -33,9 +33,9 @@ install:
 build: lint build-contracts
 	cd $(SUBGRAPH_DIR) && pnpm build
 
-# Build contracts only
+# Build contracts only (solc warnings are errors here so they cannot slip through CI)
 build-contracts:
-	$(FORGE) build --sizes
+	$(FORGE) build --sizes --deny warnings
 
 # Show contract runtime / initcode sizes (EIP-170 margin)
 size:
@@ -55,7 +55,6 @@ test-e2e:
 	cd e2e && pnpm e2e
 
 # Run contract tests with coverage (src only; mocks/tests excluded from report)
-# `--ir-minimum`: coverage disables optimizer/viaIR; Swapboard needs IR to avoid stack-too-deep.
 coverage:
 	$(FORGE) coverage --report summary --report lcov --exclude-tests --no-match-coverage 'test/' --no-match-contract GasBenchmarks
 
@@ -87,7 +86,7 @@ clean:
 anvil:
 	anvil --block-time 1 --host 0.0.0.0 --port $(ANVIL_PORT)
 
-# Deploy to local Anvil
+# Deploy to local Anvil (the script aborts unless the node has Permit2 code, e.g. a forked Anvil)
 deploy-local:
 	@$(FORGE) script script/Deploy.s.sol \
 		--rpc-url $(ANVIL_RPC_URL) \

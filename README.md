@@ -109,6 +109,8 @@ DEPLOYER_ACCOUNT=sepolia-deployer ./deploy.sh sepolia
 ./deploy.sh mainnet
 ```
 
+Deployment aborts with `Permit2NotDeployed` when the target chain has no code at the canonical Permit2 address (`0x000000000022D473030F116dDEE9F6B43aC78BA3`), since the Permit2 overloads would revert with empty returndata there. A bare local Anvil has no Permit2: fork a chain that does (`anvil --fork-url …`) or seed the code with `cast rpc anvil_setCode` before `make deploy-local`.
+
 The script will:
 
 1. Deploy the contract and verify on Etherscan

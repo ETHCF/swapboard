@@ -10,6 +10,8 @@ Follow the Solidity Style Guide unless this document says otherwise.
 
 Enforce formatting with Foundry (`make fmt`) and lint with `make lint` (`forge lint` + solhint). Config lives in `contracts/foundry.toml` and `contracts/.solhint.json`.
 
+`make build-contracts` builds with `--deny warnings`, so solc warnings (unused variable, over-broad mutability, shadowing, …) fail the build instead of scrolling past. Fix the warning rather than silencing it; `forge build` alone is incremental and can hide warnings from cached files, so re-check with `forge build --force --deny warnings` after touching mutability or visibility.
+
 ### Tooling defaults
 
 | Setting | Value | Notes |
@@ -52,7 +54,6 @@ Always use **named** fields for struct literals and event emits. Never rely on p
 ```solidity
 _orders[orderId] = Order({
     maker: msg.sender,
-    active: true,
     partialFillAllowed: partialFillAllowed,
     tokenA: tokenA,
     tokenB: tokenB,
@@ -108,8 +109,8 @@ Keep separate `if`s when the error encodes different data (e.g. `NotMaker(orderI
 - **Snapshot storage structs into locals** (tuple unpack) before a sequence of checks/transfers when multiple fields are read:
 
 ```solidity
-(address maker, bool active, address tokenA, address tokenB, uint128 amountA, uint128 amountB) =
-    (order.maker, order.active, order.tokenA, order.tokenB, order.amountA, order.amountB);
+(address maker, bool partialFillAllowed, address tokenA, address tokenB, uint128 amountA, uint128 amountB) =
+    (order.maker, order.partialFillAllowed, order.tokenA, order.tokenB, order.amountA, order.amountB);
 ```
 
 - Use **named mapping keys**: `mapping(uint256 orderId => Order order)`.
@@ -119,7 +120,7 @@ Keep separate `if`s when the error encodes different data (e.g. `NotMaker(orderI
 
 ### Checks-Effects-Interactions and `unchecked`
 
-- For paths that move value (ETH or ERC20), follow **Checks → Effects → Interactions**: validate, then write effects (e.g. `order.active = false`), then transfer/`sendValue`, then emit.
+- For paths that move value (ETH or ERC20), follow **Checks → Effects → Interactions**: validate, then write effects (e.g. `delete _orders[orderId]`), then transfer/`sendValue`, then emit.
 - Exception: escrow **pulls on create** may run before recording the order so a failed pull never leaves a live order.
 - Document that ETH outflows use `Token.safeTransfer` → `Address.sendValue` (forwards gas) and always run after effects.
 - Use **`unchecked` only with an adjacent justification** (comment or obvious impossibility of overflow): monotonic counters, loop indices bounded by `array.length`, and post-transfer balance deltas.
@@ -189,7 +190,7 @@ These are intentional project choices (mostly via `forge fmt`):
 
 1. **Long function headers** keep visibility/modifiers/`returns` on the same line as the closing `)` of the parameter list (`params_first`), instead of putting each modifier on its own line under `)`.
 2. **Immutables / constants** use `_UPPER_CASE` (guide treats plain state as mixedCase and only constants as `UPPER_CASE`).
-3. Put a **blank line between unrelated steps** in a function body (e.g. validate → pull → assign id → store → emit). Keep tightly related CEI pairs grouped (effect immediately above its interaction) without forcing a blank line between `active = false` and the first transfer.
+3. Put a **blank line between unrelated steps** in a function body (e.g. validate → pull → assign id → store → emit). Keep tightly related CEI pairs grouped (effect immediately above its interaction) without forcing a blank line between `delete _orders[orderId]` and the first transfer.
 4. Prefer **named `{key: value}`** construction for structs and events even when `forge fmt` packs short emits onto one line.
 
 ### NatSpec
