@@ -1146,7 +1146,6 @@ const ERROR_SIGNATURES = {
   "0x201b580a": "SameToken",
   "0x6e65ed84": "BalanceMismatch",
   "0x4e90badc": "OrderNotFound",
-  "0xd2c02610": "OrderNotActive",
   "0x98cd7222": "NotMaker",
   "0x8230dc8f": "ETHAmountMismatch",
   "0x1ab7da6b": "DeadlineExpired",
@@ -1158,6 +1157,10 @@ const ERROR_SIGNATURES = {
 
   // v1 only: v2 dropped the code-size check on token addresses.
   "0x8a8b41ec": "NotAContract",
+
+  // v1 only: v2 deletes an order when it closes, so a filled or canceled id
+  // reverts OrderNotFound instead.
+  "0xd2c02610": "OrderNotActive",
 
   // v2 only: partial fills, slippage bounds, batch entry points, and maker edits.
   "0x9d7a930f": "SelfFill",

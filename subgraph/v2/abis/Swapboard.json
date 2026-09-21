@@ -818,11 +818,6 @@
             "internalType": "address"
           },
           {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
             "name": "partialFillAllowed",
             "type": "bool",
             "internalType": "bool"
@@ -882,11 +877,6 @@
             "name": "maker",
             "type": "address",
             "internalType": "address"
-          },
-          {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
           },
           {
             "name": "partialFillAllowed",
@@ -1742,17 +1732,6 @@
         "name": "maker",
         "type": "address",
         "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OrderNotActive",
-    "inputs": [
-      {
-        "name": "orderId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },

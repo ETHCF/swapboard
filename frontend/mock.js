@@ -1981,22 +1981,21 @@
 
   /**
    * The Order tuple as ISwapboard declares it. Field order is load-bearing:
-   * maker, active and partialFillAllowed come first, then both tokens, then
-   * all four amounts.
+   * maker and partialFillAllowed come first, then both tokens, then all four
+   * amounts. There is no `active` flag: a stored order is always live.
    */
   function encOrderTuple(order) {
-    // cancelOrder deletes the slot before emitting OrderCanceled, so on chain a
-    // cancelled id is indistinguishable from one that never existed. The
-    // subgraph keeps the row — that is the point of an indexer — but a view call
-    // must not, or the UI would be reading state the contract has dropped.
-    if (!order || order.status === STATUS.CANCELED) {
+    // A full fill or a cancel deletes the slot, so on chain a closed id is
+    // indistinguishable from one that never existed. The subgraph keeps the
+    // row — that is the point of an indexer — but a view call must not, or the
+    // UI would be reading state the contract has dropped.
+    if (!order || !order.active) {
       // getOrder on an unknown id returns a zeroed struct rather than
       // reverting, exactly as the contract does.
-      return word(0).repeat(9);
+      return word(0).repeat(8);
     }
     return (
       encAddress(order.maker) +
-      word(order.active ? 1 : 0) +
       word(order.partialFillAllowed ? 1 : 0) +
       encAddress(order.tokenA) +
       encAddress(order.tokenB) +
