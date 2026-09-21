@@ -434,6 +434,40 @@ async function connect(mod, handles) {
   await mod.connectWithProvider(handles.wallet, "TestWallet");
 }
 
+/** Real intervals armed during the current test, and the setInterval they went through. */
+const liveIntervals = new Set();
+let realSetInterval = null;
+
+/**
+ * Routes setInterval through a tracker for the duration of one test.
+ *
+ * initApp() (reached via init() and bootstrap()) arms startAutoRefresh's real 30s
+ * interval, and nothing in the page ever clears it. The module that armed it
+ * outlives its test and keeps ticking into later ones: each tick queries the
+ * shared fetch mock, v1-normalizes the very order objects the running test
+ * handed routeFetch (in place), and re-renders the shared #order-table. On a
+ * loaded machine that lands mid-test and makes whichever test is running flake.
+ *
+ * Re-armed per test rather than once, because jest.useRealTimers() restores the
+ * timer functions it captured at environment setup, dropping any wrapper.
+ */
+function trackIntervals() {
+  realSetInterval = global.setInterval;
+  global.setInterval = (...args) => {
+    const id = realSetInterval(...args);
+    liveIntervals.add(id);
+    return id;
+  };
+}
+
+/** Clears every interval the test armed and puts setInterval back. */
+function clearTrackedIntervals() {
+  for (const id of liveIntervals) clearInterval(id);
+  liveIntervals.clear();
+  if (realSetInterval) global.setInterval = realSetInterval;
+  realSetInterval = null;
+}
+
 let app;
 
 beforeEach(() => {
@@ -444,10 +478,12 @@ beforeEach(() => {
   // them and fire toasts into later ones. The flag is the app's own escape
   // hatch; waitForOrderUpdate is covered directly instead.
   window.SWAPBOARD_MOCK = true;
+  trackIntervals();
   app = loadApp();
 });
 
 afterEach(() => {
+  clearTrackedIntervals();
   delete global.ethers;
   delete window.ethereum;
   delete window.SWAPBOARD_MOCK;
