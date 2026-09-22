@@ -406,12 +406,12 @@ contract SwapboardHandler is Test {
         return result;
     }
 
-    /// @notice Loads a bounded active order; returns false when missing or inactive
+    /// @notice Loads a bounded live order; returns false when the ID has no stored order
     function _tryLoadActiveOrder(
         uint256 orderIdSeed
     ) private view returns (LoadedOrder memory result) {
         result = _tryLoadOrder(orderIdSeed);
-        if (!result.ok || !result.order.active) {
+        if (!result.ok || result.order.maker == address(0)) {
             result.ok = false;
         }
 
@@ -436,7 +436,7 @@ contract SwapboardHandler is Test {
 
         result.order1 = _board.getOrder(result.id1);
         result.order2 = _board.getOrder(result.id2);
-        if (!result.order1.active || !result.order2.active) {
+        if (result.order1.maker == address(0) || result.order2.maker == address(0)) {
             return result;
         }
         if (result.order1.tokenB != result.order2.tokenB || result.order1.tokenB == _ETH) {
@@ -598,7 +598,7 @@ contract SwapboardHandler is Test {
         uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
         ISwapboard.Order memory order = _board.getOrder(orderId);
 
-        if (!order.active) {
+        if (order.maker == address(0)) {
             return;
         }
 
@@ -639,9 +639,6 @@ contract SwapboardHandler is Test {
 
         ISwapboard.Order memory order1 = _board.getOrder(id1);
         ISwapboard.Order memory order2 = _board.getOrder(id2);
-        if (!order1.active || !order2.active) {
-            return;
-        }
         if (order1.maker != _currentActor || order2.maker != _currentActor) {
             return;
         }
@@ -676,7 +673,7 @@ contract SwapboardHandler is Test {
 
         uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        if (!order.active || order.maker != _currentActor) {
+        if (order.maker != _currentActor) {
             return;
         }
 
@@ -837,9 +834,6 @@ contract SwapboardHandler is Test {
 
         result.order1 = _board.getOrder(result.id1);
         result.order2 = _board.getOrder(result.id2);
-        if (!result.order1.active || !result.order2.active) {
-            return result;
-        }
         if (result.order1.maker != _currentActor || result.order2.maker != _currentActor) {
             return result;
         }
@@ -962,7 +956,7 @@ contract SwapboardHandler is Test {
 
         uint256 orderId = bound(orderIdSeed, 0, nextId - 1);
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        if (!order.active || order.maker != _currentActor) {
+        if (order.maker != _currentActor) {
             return;
         }
         if (order.partialFillAllowed == partialFillAllowed) {
@@ -988,7 +982,7 @@ contract SwapboardHandler is Test {
     }
 
     /// @notice Asserts amount/available invariants across all created orders
-    /// @dev Originals never change; available never exceeds originals; active iff both available > 0
+    /// @dev Originals never change; available never exceeds originals; stored ⇒ both available > 0
     function assertAmountInvariants() external view {
         uint256 nextId = _board.getNextOrderId();
 
@@ -1003,7 +997,6 @@ contract SwapboardHandler is Test {
             assertTrue(order.amountA > 0 && order.amountB > 0);
             assertTrue(!(order.availableA > order.amountA));
             assertTrue(!(order.availableB > order.amountB));
-            assertTrue(order.active);
             assertTrue(order.availableA > 0 && order.availableB > 0);
             // Fully filled / cancelled orders are deleted (maker == 0) and skipped above.
         }
