@@ -46,11 +46,13 @@ For market makers and trading bots.
       "type": "tuple",
       "components": [
         { "name": "maker", "type": "address" },
+        { "name": "partialFillAllowed", "type": "bool" },
         { "name": "tokenA", "type": "address" },
-        { "name": "amountA", "type": "uint256" },
         { "name": "tokenB", "type": "address" },
-        { "name": "amountB", "type": "uint256" },
-        { "name": "active", "type": "bool" }
+        { "name": "amountA", "type": "uint128" },
+        { "name": "amountB", "type": "uint128" },
+        { "name": "availableA", "type": "uint128" },
+        { "name": "availableB", "type": "uint128" }
       ]
     }],
     "stateMutability": "view"
@@ -64,11 +66,13 @@ For market makers and trading bots.
       "type": "tuple[]",
       "components": [
         { "name": "maker", "type": "address" },
+        { "name": "partialFillAllowed", "type": "bool" },
         { "name": "tokenA", "type": "address" },
-        { "name": "amountA", "type": "uint256" },
         { "name": "tokenB", "type": "address" },
-        { "name": "amountB", "type": "uint256" },
-        { "name": "active", "type": "bool" }
+        { "name": "amountA", "type": "uint128" },
+        { "name": "amountB", "type": "uint128" },
+        { "name": "availableA", "type": "uint128" },
+        { "name": "availableB", "type": "uint128" }
       ]
     }],
     "stateMutability": "view"
@@ -420,6 +424,7 @@ contract CreateOrder is Script {
 ```
 
 Run with:
+
 ```bash
 PRIVATE_KEY=0x... \
 BOARD_ADDRESS=0x... \
@@ -433,14 +438,13 @@ forge script script/CreateOrder.s.sol --rpc-url $RPC_URL --broadcast
 ## Error Codes
 
 | Error | Selector | Description |
-|-------|----------|-------------|
+| ------- | ---------- | ------------- |
 | `ZeroAddress()` | `0xd92e233d` | Token address is zero |
 | `ZeroAmount()` | `0x1f2a2005` | Amount is zero. On `modifyOrder` / `modifyOrders`, also thrown when either remaining (`availableA` / `availableB`) is set to 0 — use `cancelOrder` / `cancelOrders` instead. Empty `modifyOrders` also reverts |
 | `NoChange()` | `0xa88ee577` | Modification would leave the order unchanged (including any item in a `modifyOrders` batch) |
 | `SameToken()` | `0x201b580a` | tokenA and tokenB are identical |
 | `BalanceMismatch(uint256,uint256)` | `0x6e65ed84` | Transfer mismatch on tokenA deposit or ERC20 tokenB payment to maker (fee-on-transfer, mid-transfer rebase, or phantom token) |
-| `OrderNotFound(uint256)` | `0x4e90badc` | Order doesn't exist |
-| `OrderNotActive(uint256)` | `0xd2c02610` | Order already filled/cancelled |
+| `OrderNotFound(uint256)` | `0x4e90badc` | Order doesn't exist, or was filled/cancelled (both `delete` storage) |
 | `NotMaker(uint256,address,address)` | `0x98cd7222` | Caller is not order maker |
 | `SelfFill()` | `0x9d7a930f` | Maker attempted to fill their own order. Banned so tokenB can always be pulled directly to a distinct maker (`transferFrom(self, self)` does not increase the recipient, so an exact-receive check would fail) |
 | `ETHAmountMismatch(uint256,uint256)` | `0x8230dc8f` | `msg.value` does not match the required ETH amount |
@@ -488,7 +492,7 @@ Behavior:
 - Batch: empty array means no permits. `v == 0` reverts `InvalidPermit`. Duplicate `token` reverts `DuplicatePermitToken`. `token == 0` reverts `ZeroAddress`. Native ETH reverts `PermitOnNative`. Unused permit (token not pulled) reverts `UnusedPermit`.
 - Token `permit` errors bubble (expired, wrong signer, non-permit token).
 - Permits are applied immediately before the corresponding pull (create tokenA, fill tokenB, modify tokenA top-up).
-- If a permit is front-run, the call reverts; retry with `v == 0` once allowance is set.
+- The `permit` call is skipped whenever the current allowance already covers `value`, so a front-run permit does not brick the call: anyone may submit the signature first, which spends the EIP-2612 nonce but leaves the same allowance, and the pull proceeds. This also means a permit whose `value` is already approved is never validated (no revert on an expired or malformed signature).
 
 ```solidity
 function createOrder(CreateOrderParams calldata order, Permit calldata permit) external payable returns (uint256);
@@ -524,6 +528,7 @@ Behavior:
 - Signed `amount` must cover the exact pull (aggregated for batches). Permit2 / token errors bubble.
 - Single fills pull ERC20 tokenB directly to the maker. Batch fills with Permit2 pull each distinct ERC20 tokenB total to Swapboard, then distribute to makers.
 - Create/modify pulls go to escrow on Swapboard.
+- The Permit2 address is a compile-time constant. On a chain where Permit2 is not deployed, every Permit2 overload reverts with empty returndata (the call target has no code); the other paths are unaffected. `script/Deploy.s.sol` refuses to deploy there and reverts `Permit2NotDeployed(address)`.
 
 ```solidity
 function createOrder(CreateOrderParams calldata order, Permit2Permit calldata permit) external payable returns (uint256);
@@ -639,7 +644,7 @@ function modifyOrders(
 
 Behavior:
 
-- Same per-order rules as `modifyOrder` (race check, remainings-only, reset totals, `ZeroAmount` / `NoChange` / `OrderStateMismatch` / `NotMaker` / `OrderNotActive`).
+- Same per-order rules as `modifyOrder` (race check, remainings-only, reset totals, `ZeroAmount` / `NoChange` / `OrderStateMismatch` / `NotMaker` / `OrderNotFound`).
 - Duplicate `orderId`s revert with `DuplicateOrderId`.
 - Empty `mods` reverts with `ZeroAmount`.
 - Per unique tokenA (and ETH), top-ups are **netted** against refunds: only the net delta is pulled or sent. Equal opposing flows cancel with no transfer. `msg.value` must equal the net ETH top-up (0 when flat or net refund).
@@ -733,8 +738,10 @@ async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
 - Post-deposit rebases (while tokenA sits in escrow) are not checked: a negative rebase can lock fill/cancel; a positive rebase can strand surplus. See `contracts/test/security-research/`.
 - Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying `transfer` can take all escrow of that token. Makers of the same scam token share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected.
 - Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release.
+- Makers must be able to hold tokenB. Every ERC20 payment to a maker is checked against the maker's balance delta, so a maker that forwards, stakes, or burns tokenB in a transfer hook reverts `BalanceMismatch` and its orders cannot be filled on any path (classic pull, Permit2 direct pull, multi-maker board hop).
 - Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
 - The maker cannot fill their own order (`SelfFill`). A self-`transferFrom` of tokenB typically does not increase the recipient, so the exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board and back. Banning it keeps every fill payment a single pull to a distinct maker. (Multi-maker Permit2 still hops through the board to split one pull across makers.)
 - No expiry. Orders remain active until filled or canceled.
+- ETH always goes to `msg.sender` (no recipient override). An address that rejects ETH locks itself out of native-ETH orders: a maker that reverts on receive (or has self-destructed) can never cancel an ETH-tokenA order, so that escrow is stuck, and their ETH-tokenB orders cannot be filled; a taker that rejects ETH cannot fill ETH-tokenA orders. Use an EOA or an ETH-accepting contract for native-ETH orders.
 - To close an order or reclaim all escrow, call `cancelOrder` / `cancelOrders`. `modifyOrder` / `modifyOrders` cannot set remaining to 0 (`ZeroAmount`).
 - Contract has no admin functions. No pause. No upgrades.
