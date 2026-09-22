@@ -18,6 +18,8 @@ const {
   formatNumber,
   formatTimeAgo,
   formatRatio,
+  formatTinyDecimal,
+  setNumberText,
   parseAmount,
   getCachedPrice,
   getTokenPrice,
@@ -433,11 +435,19 @@ describe("formatUsd", () => {
     expect(formatUsd(0.0123)).toBe("$0.0123");
   });
 
-  // MUTATION: Use toFixed(4) instead of toExponential(2)
-  // BREAKS: Returns "$0.0000" instead of "$1.00e-6"
-  test("formats values < 0.01 in scientific notation", () => {
-    expect(formatUsd(0.001)).toBe("$1.00e-3");
-    expect(formatUsd(0.000001)).toBe("$1.00e-6");
+  // MUTATION: Use toFixed(4) for values < 0.01
+  // BREAKS: 0.00123 shows as "$0.0012"
+  test("shows up to 6 plain decimals for values < 0.01 >= 0.0001", () => {
+    expect(formatUsd(0.001)).toBe("$0.001");
+    expect(formatUsd(0.00123)).toBe("$0.00123");
+    expect(formatUsd(0.0001)).toBe("$0.0001");
+  });
+
+  // MUTATION: Use toFixed(6) for tiny values
+  // BREAKS: 0.0000017163 shows as "$0.000002"
+  test("keeps 4 significant digits for values < 0.0001", () => {
+    expect(formatUsd(0.000001)).toBe("$0.000001");
+    expect(formatUsd(0.0000017163)).toBe("$0.000001716");
   });
 });
 
@@ -636,10 +646,79 @@ describe("formatRatio", () => {
   });
 
   // MUTATION: Use toFixed(6) for tiny values
-  // BREAKS: Returns "0.000000" instead of "1.00e-5"
-  test("uses scientific notation for values < 0.0001", () => {
-    expect(formatRatio(0.00001)).toBe("1.00e-5");
-    expect(formatRatio(0.000000018)).toBe("1.80e-8");
+  // BREAKS: 0.000000018 shows as "0"
+  test("keeps 4 significant digits for values < 0.0001", () => {
+    expect(formatRatio(0.00001)).toBe("0.00001");
+    expect(formatRatio(0.000000018)).toBe("0.000000018");
+  });
+});
+
+// ============================================================================
+// formatTinyDecimal
+// ============================================================================
+
+describe("formatTinyDecimal", () => {
+  // MUTATION: Use 3 significant digits instead of 4
+  // BREAKS: 0.0000123456 shows as "0.0000123"
+  test("rounds to 4 significant digits and strips trailing zeros", () => {
+    expect(formatTinyDecimal(0.0000017163)).toBe("0.000001716");
+    expect(formatTinyDecimal(0.0000123456)).toBe("0.00001235");
+    expect(formatTinyDecimal(0.0000120001)).toBe("0.000012");
+  });
+
+  // MUTATION: Remove the Math.min(100, ...) cap
+  // BREAKS: toFixed throws RangeError for more than 100 digits
+  test("caps precision at toFixed's 100 digit limit", () => {
+    expect(formatTinyDecimal(2.5e-21)).toBe("0.0000000000000000000025");
+    expect(formatTinyDecimal(1e-120)).toBe("0");
+  });
+
+  // MUTATION: Remove the non-positive guard
+  // BREAKS: 0 hits log10(0) and toFixed(Infinity) throws
+  test("returns 0 for zero, negative or NaN input", () => {
+    expect(formatTinyDecimal(0)).toBe("0");
+    expect(formatTinyDecimal(-0.00001)).toBe("0");
+    expect(formatTinyDecimal(NaN)).toBe("0");
+  });
+});
+
+// ============================================================================
+// setNumberText
+// ============================================================================
+
+describe("setNumberText", () => {
+  // MUTATION: Put the zeros in data-n only and drop them from the DOM
+  // BREAKS: textContent reads "0.01716" instead of the real value
+  test("collapses 4+ zeros after 0. but keeps the real value in textContent", () => {
+    const el = document.createElement("span");
+    setNumberText(el, "$0.000001716 / WETH");
+    const run = el.querySelector(".zero-run");
+    expect(run.dataset.n).toBe("5");
+    expect(run.querySelector(".zero-run-digits").textContent).toBe("0000");
+    expect(el.firstChild.textContent).toBe("$0.0");
+    expect(el.textContent).toBe("$0.000001716 / WETH");
+  });
+
+  // MUTATION: Use 0{3,} in ZERO_RUN_RE
+  // BREAKS: 0.0001 gets collapsed to 0.0₃1
+  test("leaves short zero runs and non-decimal zeros as plain text", () => {
+    const el = document.createElement("span");
+    for (const text of ["0.0001", "$0.00123", "10.000005", "$ --", "0.00000"]) {
+      setNumberText(el, text);
+      expect(el.querySelector(".zero-run")).toBeNull();
+      expect(el.textContent).toBe(text);
+    }
+  });
+
+  // MUTATION: Stop after the first match
+  // BREAKS: second value in the string stays uncollapsed
+  test("collapses every run in the string and replaces old content", () => {
+    const el = document.createElement("span");
+    el.textContent = "stale";
+    setNumberText(el, "(~0.00000123 ETH / $0.0000045)");
+    const runs = el.querySelectorAll(".zero-run");
+    expect([...runs].map((r) => r.dataset.n)).toEqual(["5", "5"]);
+    expect(el.textContent).toBe("(~0.00000123 ETH / $0.0000045)");
   });
 });
 

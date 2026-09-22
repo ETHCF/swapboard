@@ -188,7 +188,53 @@ function formatUsd(usdValue) {
   if (usdValue >= 0.01) {
     return "$" + usdValue.toFixed(4);
   }
-  return "$" + usdValue.toExponential(2);
+  if (usdValue >= 0.0001) {
+    return "$" + usdValue.toFixed(6).replace(/\.?0+$/, "");
+  }
+  return "$" + formatTinyDecimal(usdValue);
+}
+
+/**
+ * Formats a value below 0.0001 as a plain decimal with 4 significant digits,
+ * e.g. 0.0000017163 -> "0.000001716". Use setNumberText to display it with
+ * the zero run collapsed to a subscript count.
+ * @param {number} num - Value in (0, 0.0001)
+ * @returns {string}
+ */
+function formatTinyDecimal(num) {
+  if (!(num > 0)) return "0";
+  const zeros = -Math.floor(Math.log10(num)) - 1;
+  return num.toFixed(Math.min(100, zeros + 4)).replace(/\.?0+$/, "");
+}
+
+// "0." followed by 4+ zeros and then a significant digit
+const ZERO_RUN_RE = /(?<!\d)0\.(0{4,})(?=[1-9])/g;
+
+/**
+ * Sets an element's text, collapsing long zero runs after "0." into a
+ * subscript count (0.000001716 renders as 0.0₅1716). The zeros stay in the
+ * DOM, visually hidden, so textContent and copy/paste keep the real number;
+ * the count is drawn by CSS from data-n (see .zero-run in style.css).
+ * @param {HTMLElement} el
+ * @param {string} text
+ */
+function setNumberText(el, text) {
+  el.textContent = "";
+  let last = 0;
+  for (const match of text.matchAll(ZERO_RUN_RE)) {
+    const zeros = match[1];
+    el.appendChild(document.createTextNode(text.slice(last, match.index) + "0.0"));
+    const run = document.createElement("span");
+    run.className = "zero-run";
+    run.dataset.n = String(zeros.length);
+    const hidden = document.createElement("span");
+    hidden.className = "zero-run-digits";
+    hidden.textContent = zeros.slice(1);
+    run.appendChild(hidden);
+    el.appendChild(run);
+    last = match.index + match[0].length;
+  }
+  el.appendChild(document.createTextNode(text.slice(last)));
 }
 
 /**
@@ -260,7 +306,7 @@ function formatRatio(num) {
   if (num >= 0.0001) {
     return num.toFixed(6).replace(/\.?0+$/, "");
   }
-  return num.toExponential(2);
+  return formatTinyDecimal(num);
 }
 
 /**
@@ -2117,6 +2163,8 @@ if (typeof window !== "undefined") {
     formatNumber,
     formatTimeAgo,
     formatRatio,
+    formatTinyDecimal,
+    setNumberText,
     parseAmount,
 
     // Price registry
@@ -2246,6 +2294,8 @@ if (typeof module !== "undefined" && module.exports) {
     formatNumber,
     formatTimeAgo,
     formatRatio,
+    formatTinyDecimal,
+    setNumberText,
     parseAmount,
 
     // Price functions

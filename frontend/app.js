@@ -35,6 +35,8 @@
     formatNumber,
     formatTimeAgo,
     formatRatio,
+    formatTinyDecimal,
+    setNumberText,
     parseAmount,
     parseContractError,
     orderStatus,
@@ -720,7 +722,7 @@
 
       return {
         gas: gasEstimate.toString(),
-        eth: gasCostEth < 0.0001 ? gasCostEth.toExponential(2) : gasCostEth.toFixed(6),
+        eth: gasCostEth < 0.0001 ? formatTinyDecimal(gasCostEth) : gasCostEth.toFixed(6),
         usd: gasCostUsd ? formatUsd(gasCostUsd) : "$--",
       };
     } catch (e) {
@@ -1367,17 +1369,18 @@
       const gasDiv = document.createElement("div");
       gasDiv.className = "gas-estimate";
       gasDiv.appendChild(document.createElement("br"));
-      gasDiv.appendChild(
-        document.createTextNode(
-          "Estimated gas: " +
-            gasEstimate.gas +
-            " (~" +
-            gasEstimate.eth +
-            " ETH / " +
-            gasEstimate.usd +
-            ")"
-        )
+      const gasText = document.createElement("span");
+      setNumberText(
+        gasText,
+        "Estimated gas: " +
+          gasEstimate.gas +
+          " (~" +
+          gasEstimate.eth +
+          " ETH / " +
+          gasEstimate.usd +
+          ")"
       );
+      gasDiv.appendChild(gasText);
       bodyEl.appendChild(gasDiv);
     }
 
@@ -1523,7 +1526,7 @@
     const tokenAPrice = getTokenPrice(order.tokenA.address);
     if (tokenAPrice !== null && amountA > 0n) {
       const humanAmountA = Number(amountA) / Math.pow(10, tokenADecimals);
-      usdEl.textContent = formatUsd(humanAmountA * tokenAPrice);
+      setNumberText(usdEl, formatUsd(humanAmountA * tokenAPrice));
     } else {
       usdEl.textContent = "$ --";
     }
@@ -2564,7 +2567,7 @@ ${orderFields}
       // Column 8: USD Val (nowrap to keep $ and value on same line)
       const tdUsd = document.createElement("td");
       tdUsd.dataset.label = "USD Val";
-      tdUsd.textContent = usdVal;
+      setNumberText(tdUsd, usdVal);
       tdUsd.style.whiteSpace = "nowrap";
       tr.appendChild(tdUsd);
 
@@ -2572,7 +2575,7 @@ ${orderFields}
       const tdPrice = document.createElement("td");
       tdPrice.dataset.label = "Price";
       const priceSpan = document.createElement("span");
-      priceSpan.textContent = priceNormal;
+      setNumberText(priceSpan, priceNormal);
       tdPrice.appendChild(priceSpan);
 
       // Add market deviation indicator
@@ -2601,7 +2604,10 @@ ${orderFields}
         tdPrice.addEventListener("click", function (e) {
           e.stopPropagation();
           const isNormal = this.dataset.showingNormal === "true";
-          priceSpan.textContent = isNormal ? this.dataset.priceInverted : this.dataset.priceNormal;
+          setNumberText(
+            priceSpan,
+            isNormal ? this.dataset.priceInverted : this.dataset.priceNormal
+          );
           this.dataset.showingNormal = isNormal ? "false" : "true";
         });
       }
@@ -3776,7 +3782,7 @@ ${orderFields}
     row.appendChild(labelSpan);
 
     const valueSpan = document.createElement("span");
-    valueSpan.textContent = value;
+    setNumberText(valueSpan, value);
     row.appendChild(valueSpan);
 
     parent.appendChild(row);

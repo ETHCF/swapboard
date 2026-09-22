@@ -1638,3 +1638,27 @@ input.input-native-eth {
     gap: 10px;
   }
 }
+
+/* Collapsed zero run in tiny numbers: 0.000001716 renders as 0.0₅1716.
+   The zeros stay in the DOM (clipped, not display:none) so copy/paste and
+   textContent keep the real value; the count comes from data-n. */
+.zero-run {
+  position: relative;
+}
+
+.zero-run::after {
+  content: attr(data-n);
+  font-size: 0.7em;
+  vertical-align: sub;
+  line-height: 0;
+  padding: 0 0.05em;
+}
+
+.zero-run-digits {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
