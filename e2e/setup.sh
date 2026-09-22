@@ -76,8 +76,10 @@ echo "TokenA: $TOKENA_ADDR"
 echo "TokenB: $TOKENB_ADDR"
 
 # Update subgraph manifest
+# NOTE: this stack still exercises the v1 pipeline (v1 subgraph + v1 frontend).
+# It needs its own pass onto subgraph/v2 once the v2 UI exists.
 echo "Updating subgraph manifest..."
-cd "$ROOT_DIR/subgraph"
+cd "$ROOT_DIR/subgraph/v1"
 
 # Create e2e subgraph.yaml
 cat > subgraph.e2e.yaml << EOF
