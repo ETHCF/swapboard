@@ -51,6 +51,7 @@ const {
   validateConfig,
   NATIVE_ETH,
   isNativeEth,
+  nativeEthTotal,
   chunkArray,
   resolveSelectionMode,
   isSamePair,
@@ -58,6 +59,7 @@ const {
   getShiftRangeIds,
   quoteFill,
   computeFillFromReceive,
+  computeFillFromPayment,
   allowsPartialFill,
   summarizeFillBatch,
   VERSION_STORAGE_KEY,
@@ -1842,7 +1844,7 @@ describe("decodeContractError", () => {
     expect(decodeContractError("0xd2c02610" + pad(7)).message).toBe("Order #7 is no longer active");
     expect(decodeContractError("0x4e90badc" + pad(1234)).message).toBe("Order #1234 not found");
     expect(decodeContractError("0x457802f0" + pad(42)).message).toBe(
-      "Order #42 changed; refresh and try again"
+      "Order #42 changed while you were editing it. Refresh and try again."
     );
   });
 
@@ -1877,6 +1879,17 @@ describe("decodeContractError", () => {
     expect(decodeContractError("0x3ee5aeb5").name).toBe("ReentrancyGuardReentrantCall");
   });
 
+  // MUTATION: Leave out the maker-edit errors
+  // BREAKS: a modify that raced a fill, or that changed nothing, would report a
+  //         generic failure instead of saying what happened
+  test("recognizes the v2 maker-edit errors", () => {
+    expect(decodeContractError("0xa88ee577").name).toBe("NoChange");
+    expect(decodeContractError("0x457802f0" + pad(7))).toEqual({
+      name: "OrderStateMismatch",
+      message: "Order #7 changed while you were editing it. Refresh and try again.",
+    });
+  });
+
   // MUTATION: Drop the v1-only selectors when adding the v2 ones
   // BREAKS: v1 is the deployed, live version — its WETH errors would stop
   //         decoding for every user on mainnet
@@ -1884,6 +1897,7 @@ describe("decodeContractError", () => {
     expect(decodeContractError("0x6bdafcae").name).toBe("ZeroETH");
     expect(decodeContractError("0xcfc02c6e").name).toBe("NotWETH");
     expect(decodeContractError("0x1c988062").name).toBe("ETHTransferFailed");
+    expect(decodeContractError("0x8a8b41ec" + pad(0)).name).toBe("NotAContract");
   });
 
   // MUTATION: Omit DeadlineExpired from the table
@@ -2574,6 +2588,42 @@ describe("computeFillFromReceive", () => {
   });
 });
 
+describe("computeFillFromPayment", () => {
+  const order = { availableA: "1000", availableB: "2000" };
+
+  test("returns the receive and the exact payment", () => {
+    expect(computeFillFromPayment(order, 1000n)).toEqual({ amountA: 500n, amountB: 1000n });
+  });
+
+  // MUTATION: Round the receive up
+  // BREAKS: The UI promises tokenA the contract will not pay out
+  test("floors the receive the way the contract will", () => {
+    const odd = { availableA: "2", availableB: "3" };
+    expect(computeFillFromPayment(odd, 2n)).toEqual({ amountA: 1n, amountB: 2n });
+  });
+
+  // MUTATION: Pass the payment through unclamped
+  // BREAKS: FillAmountTooHigh, on an order that shrank under an open modal
+  test("clamps a payment larger than the order to what is left", () => {
+    expect(computeFillFromPayment(order, 2000n)).toEqual({ amountA: 1000n, amountB: 2000n });
+    expect(computeFillFromPayment(order, 5000n)).toEqual({ amountA: 1000n, amountB: 2000n });
+  });
+
+  // MUTATION: Report the payment's receive as at least 1
+  // BREAKS: The controls would offer a fill the contract rejects with ZeroAmount
+  test("reports no receive for a payment too small to buy one base unit", () => {
+    expect(computeFillFromPayment({ availableA: "1", availableB: "3" }, 1n)).toEqual({
+      amountA: 0n,
+      amountB: 1n,
+    });
+  });
+
+  test("returns zero for a zero or negative payment", () => {
+    expect(computeFillFromPayment(order, 0n)).toEqual({ amountA: 0n, amountB: 0n });
+    expect(computeFillFromPayment(order, -1n)).toEqual({ amountA: 0n, amountB: 0n });
+  });
+});
+
 describe("allowsPartialFill", () => {
   // MUTATION: Treat a missing flag as permission
   // BREAKS: Partial-fill controls appear on an all-or-nothing order, and every
@@ -2750,18 +2800,19 @@ describe("capsFor", () => {
     expect(v1.remainingAmounts).toBe(false);
   });
 
-  // MUTATION: Enable gasEstimate/subgraphPolling on v2
-  // BREAKS: gas estimation encodes against an ABI with no deployment behind
-  //         it, and polling waits out its full timeout on every transaction
-  test("v1 alone can estimate gas and poll the subgraph", () => {
+  // MUTATION: Turn v2 gas estimates off, or v2 subgraph polling on
+  // BREAKS: the v2 modal loses a figure its real ABI can price, or every v2
+  //         transaction waits out the full poll timeout against a placeholder
+  test("both versions estimate gas; only v1 polls a subgraph", () => {
     expect(capsFor(1).gasEstimate).toBe(true);
     expect(capsFor(1).subgraphPolling).toBe(true);
-    expect(capsFor(2).gasEstimate).toBe(false);
+    expect(capsFor(2).gasEstimate).toBe(true);
     expect(capsFor(2).subgraphPolling).toBe(false);
   });
 
   // MUTATION: Mark v2 live
-  // BREAKS: the UI would present simulated transactions as real ones
+  // BREAKS: validateConfig would demand deployment coordinates v2 does not have
+  //         yet, and the empty board would stop saying v2 is undeployed
   test("only v1 is live", () => {
     expect(capsFor(1).live).toBe(true);
     expect(capsFor(2).live).toBe(false);
@@ -3081,6 +3132,36 @@ describe("normalizeOrder", () => {
   test("passes a missing order straight through", () => {
     expect(normalizeOrder(null, 1)).toBe(null);
     expect(normalizeOrder(undefined, 2)).toBe(undefined);
+  });
+});
+
+describe("nativeEthTotal", () => {
+  const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+  const WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+
+  // MUTATION: Count every leg, or only the first native one
+  // BREAKS: msg.value misses the exact total and v2 reverts ETHAmountMismatch
+  test("sums exactly the native-ETH legs", () => {
+    expect(
+      nativeEthTotal([
+        { token: NATIVE, amount: 3n },
+        { token: WETH, amount: 100n },
+        { token: NATIVE.toLowerCase(), amount: "5" },
+      ])
+    ).toBe(8n);
+  });
+
+  // MUTATION: Return undefined or a Number when no leg is native
+  // BREAKS: an ERC20-only call gets a bogus msg.value override attached
+  test("is 0n when no leg is native ETH", () => {
+    expect(nativeEthTotal([{ token: WETH, amount: 1n }])).toBe(0n);
+    expect(nativeEthTotal([])).toBe(0n);
+  });
+
+  // MUTATION: Assume an array
+  // BREAKS: a malformed call throws instead of carrying no value
+  test("treats a non-array as no legs", () => {
+    expect(nativeEthTotal(undefined)).toBe(0n);
   });
 });
 

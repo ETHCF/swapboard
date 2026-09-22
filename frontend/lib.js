@@ -790,7 +790,6 @@ const ERROR_SIGNATURES = {
   "0x6e65ed84": "BalanceMismatch",
   "0x4e90badc": "OrderNotFound",
   "0xd2c02610": "OrderNotActive",
-  "0x457802f0": "OrderStateMismatch",
   "0x98cd7222": "NotMaker",
   "0x8230dc8f": "ETHAmountMismatch",
   "0x1ab7da6b": "DeadlineExpired",
@@ -800,7 +799,10 @@ const ERROR_SIGNATURES = {
   "0xcfc02c6e": "NotWETH",
   "0x1c988062": "ETHTransferFailed",
 
-  // v2 only: partial fills, slippage bounds, and batch entry points.
+  // v1 only: v2 dropped the code-size check on token addresses.
+  "0x8a8b41ec": "NotAContract",
+
+  // v2 only: partial fills, slippage bounds, batch entry points, and maker edits.
   "0xed38596f": "PartialFillNotAllowed",
   "0x535a34f0": "FillAmountTooHigh",
   "0x19113a72": "FillAmountMismatch",
@@ -809,6 +811,7 @@ const ERROR_SIGNATURES = {
 
   // v2 only: modifyOrder(s) and setPartialFillAllowed.
   "0xa88ee577": "NoChange",
+  "0x457802f0": "OrderStateMismatch",
 
   // v2 only, from OpenZeppelin. Address.sendValue and SafeERC20 replace v1's
   // hand-rolled ETHTransferFailed, and the transient reentrancy guard has its
@@ -837,10 +840,13 @@ const ERROR_MESSAGES = {
   ZeroAddress: "Invalid token address",
   ZeroAmount: "Amount too small (check decimal places)",
   SameToken: "Offered and wanted tokens must be different",
-  BalanceMismatch: "Token transfer amount mismatch (fee-on-transfer / mid-transfer rebase / phantom tokens not supported on deposits or tokenB payments)",
+  NotAContract: "Token address is not a contract",
+  BalanceMismatch:
+    "Token transfer amount mismatch (fee-on-transfer / mid-transfer rebase / phantom tokens not supported on deposits or tokenB payments)",
   OrderNotFound: (args) => `Order #${args[0]} not found`,
   OrderNotActive: (args) => `Order #${args[0]} is no longer active`,
-  OrderStateMismatch: (args) => `Order #${args[0]} changed; refresh and try again`,
+  OrderStateMismatch: (args) =>
+    `Order #${args[0]} changed while you were editing it. Refresh and try again.`,
   NotMaker: "You are not the maker of this order",
   SelfFill: "You cannot fill your own order",
   ZeroETH: "ETH amount cannot be zero",
@@ -1130,12 +1136,18 @@ const VERSION_CAPS = {
     nativeEth: true,
     multiCreate: true,
     remainingAmounts: true,
-    // Both off until the v2 contracts and subgraph exist: there is no ABI to
-    // encode a gas estimate against, and polling an index that will never
-    // update only ever times out.
-    gasEstimate: false,
+    /**
+     * The connector encodes against the real v2 ABI, so a call can be priced.
+     * Until there is a deployment it declines to estimate against the zero
+     * placeholder, so the modal shows no figure rather than a made-up one.
+     */
+    gasEstimate: true,
+    /** Off until a v2 subgraph is deployed: polling a placeholder only times out. */
     subgraphPolling: false,
-    /** Writes go to the dummy connector. */
+    /**
+     * Not deployed. Writes still go through the real connector, which refuses
+     * to send to the zero placeholder outside mock mode — see requireDeployed().
+     */
     live: false,
   },
 };
@@ -1464,6 +1476,26 @@ function isNativeEth(addr) {
   return addr.toLowerCase() === NATIVE_ETH.toLowerCase();
 }
 
+/**
+ * The `msg.value` a v2 call must carry: the sum of its native-ETH legs.
+ *
+ * v2 totals every sentinel-denominated leg of a call into a single exact
+ * `msg.value` check and reverts with ETHAmountMismatch on any difference, over
+ * or under. So this counts exactly the NATIVE_ETH legs and nothing else —
+ * not WETH, which v2 settles as an ordinary ERC20.
+ *
+ * @param {Array<{token: string, amount: (bigint|string)}>} legs - Token and amount per leg
+ * @returns {bigint} Total of the legs denominated in native ETH
+ */
+function nativeEthTotal(legs) {
+  if (!Array.isArray(legs)) return 0n;
+  let total = 0n;
+  for (const { token, amount } of legs) {
+    if (isNativeEth(token)) total += BigInt(amount);
+  }
+  return total;
+}
+
 // ============================================================================
 // V2: Batching
 // ============================================================================
@@ -1580,7 +1612,9 @@ function getShiftRangeIds(sortedOrders, anchorId, targetId, firstSelected, userA
 //
 // A fill is expressed as `amountB` — the exact wanted token the taker pays,
 // which is also the exact `msg.value` when that token is native ETH — and the
-// tokenA received is derived from it, floored in the maker's favour.
+// tokenA received is derived from it, floored in the maker's favour. The UI
+// fills by payment (computeFillFromPayment); computeFillFromReceive serves a
+// taker who thinks in what they receive instead.
 // ============================================================================
 
 /**
@@ -1638,6 +1672,27 @@ function computeFillFromReceive(order, receiveAmountA) {
 
   const amountB = (want * availableB + availableA - 1n) / availableA;
   return { amountB, minAmountA: quoteFill(order, amountB) };
+}
+
+/**
+ * Resolves a payment into the pair of values a fill-by-payment is made of.
+ *
+ * Clamps to what is left, like computeFillFromReceive. An amountA of 0 means
+ * the payment cannot buy a single base unit, which the contract rejects with
+ * ZeroAmount, so callers treat it as no fill at all.
+ *
+ * @param {Object} order - Order with availableA/availableB in base units
+ * @param {string|bigint} payAmountB - Wanted token the taker pays
+ * @returns {{amountA: bigint, amountB: bigint}} The receive, sent as fillOrder's
+ *   minAmountA, and the exact payment, sent as its amountB
+ */
+function computeFillFromPayment(order, payAmountB) {
+  const availableB = BigInt(order.availableB);
+  let pay = BigInt(payAmountB);
+  if (pay < 0n) pay = 0n;
+  if (pay > availableB) pay = availableB;
+
+  return { amountA: quoteFill(order, pay), amountB: pay };
 }
 
 /**
@@ -1771,6 +1826,7 @@ if (typeof window !== "undefined") {
     // V2: native ETH
     NATIVE_ETH,
     isNativeEth,
+    nativeEthTotal,
 
     // V2: batching
     chunkArray,
@@ -1784,6 +1840,7 @@ if (typeof window !== "undefined") {
     // V2: partial fill math
     quoteFill,
     computeFillFromReceive,
+    computeFillFromPayment,
     allowsPartialFill,
     summarizeFillBatch,
   };
@@ -1879,6 +1936,7 @@ if (typeof module !== "undefined" && module.exports) {
 
     // V2: native ETH
     isNativeEth,
+    nativeEthTotal,
 
     // V2: batching
     chunkArray,
@@ -1892,6 +1950,7 @@ if (typeof module !== "undefined" && module.exports) {
     // V2: partial fill math
     quoteFill,
     computeFillFromReceive,
+    computeFillFromPayment,
     allowsPartialFill,
     summarizeFillBatch,
   };

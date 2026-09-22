@@ -2108,6 +2108,69 @@
     const mockAddress = MOCK_CONFIG.walletAddress;
     let connected = false;
 
+    // ------------------------------------------------------------------------
+    // Transactions
+    // ------------------------------------------------------------------------
+    //
+    // app.js sends through ethers' JsonRpcSigner, which does not trust the hash
+    // eth_sendTransaction returns: it polls eth_getTransactionByHash until the
+    // node reports the transaction, then tx.wait() reads the receipt. Both are
+    // run through ethers' formatters, which reject a partial object. Answering
+    // null — the old catch-all — left every send polling forever, so these are
+    // complete enough to parse, and echo back what was actually sent.
+
+    /** Sent transaction params by hash, so lookups can echo them. */
+    const sentTransactions = new Map();
+
+    const MOCK_BLOCK_HASH = "0x" + "ab".repeat(32);
+    const MOCK_BLOCK_NUMBER = "0x100";
+
+    /** eth_getTransactionByHash, mined in MOCK_BLOCK_NUMBER. */
+    const mockTransaction = (hash) => {
+      const sent = sentTransactions.get(hash) || {};
+      return {
+        hash,
+        blockHash: MOCK_BLOCK_HASH,
+        blockNumber: MOCK_BLOCK_NUMBER,
+        transactionIndex: "0x0",
+        from: sent.from || mockAddress,
+        to: sent.to || null,
+        gas: sent.gas || "0x30000",
+        gasPrice: "0x3b9aca00",
+        value: sent.value || "0x0",
+        nonce: "0x0",
+        input: sent.data || "0x",
+        type: "0x0",
+        chainId: "0x1",
+        // A well-formed legacy signature (v 37 is EIP-155 for chain 1) that
+        // ethers can parse. Nothing verifies it.
+        v: "0x25",
+        r: "0x" + "11".repeat(32),
+        s: "0x" + "22".repeat(32),
+      };
+    };
+
+    /** eth_getTransactionReceipt: always a success, and no logs. */
+    const mockReceipt = (hash) => {
+      const sent = sentTransactions.get(hash) || {};
+      return {
+        transactionHash: hash,
+        transactionIndex: "0x0",
+        blockHash: MOCK_BLOCK_HASH,
+        blockNumber: MOCK_BLOCK_NUMBER,
+        from: sent.from || mockAddress,
+        to: sent.to || null,
+        contractAddress: null,
+        cumulativeGasUsed: "0x30000",
+        gasUsed: "0x30000",
+        effectiveGasPrice: "0x3b9aca00",
+        logs: [],
+        logsBloom: "0x" + "00".repeat(256),
+        status: "0x1",
+        type: "0x0",
+      };
+    };
+
     const mockProvider = {
       isMetaMask: true,
       chainId: "0x1", // Ethereum mainnet — see note above
@@ -2140,9 +2203,19 @@
             // has been asked to produce.
             await new Promise((r) => setTimeout(r, 2000));
             const txHash = "0x" + Date.now().toString(16).padStart(64, "0");
-            console.log("[Mock Wallet] Transaction:", txHash);
+            sentTransactions.set(txHash, (params && params[0]) || {});
+            console.log("[Mock Wallet] Transaction:", txHash, params && params[0]);
             return txHash;
           }
+
+          case "eth_getTransactionByHash":
+            return mockTransaction(params[0]);
+
+          case "eth_getCode":
+            // Every address answers as a contract, the way every eth_call is
+            // answered as Swapboard or an ERC20. app.js checks for code before
+            // a v2 send so it can never broadcast to an empty address.
+            return "0x6080604052";
 
           case "eth_call":
             return handleCall(params);
@@ -2158,12 +2231,7 @@
             return "0x" + BigInt(1000000000000000000n).toString(16).padStart(64, "0");
 
           case "eth_getTransactionReceipt":
-            return {
-              status: "0x1",
-              blockNumber: "0x100",
-              transactionHash: params[0],
-              logs: [],
-            };
+            return mockReceipt(params[0]);
 
           case "eth_blockNumber":
             return "0x" + Math.floor(Date.now() / 12000).toString(16);

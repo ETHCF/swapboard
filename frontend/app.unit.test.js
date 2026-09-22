@@ -214,8 +214,8 @@ function jsonResponse(payload) {
  *
  * app.js reads `ethers` off the global (index.html loads it from a CDN), not via
  * require, so the moduleNameMapper in jest.config.js does not reach it. Contract
- * dispatch is by address: the Swapboard address returns the exchange contract,
- * anything else returns an ERC20.
+ * dispatch is by address: either version's Swapboard address returns the
+ * exchange contract, anything else returns an ERC20.
  *
  * @param {Object} [over] - Overrides merged onto the generated fakes
  * @returns {Object} handles for assertions: { provider, signer, swap, token, tx, wallet }
@@ -270,13 +270,15 @@ function installEthers(over = {}) {
       gasPrice: BigInt(20000000000),
       maxFeePerGas: BigInt(25000000000),
     }),
+    // Non-empty: requireDeployed() will not let v2 send to an address with no code.
+    getCode: jest.fn().mockResolvedValue("0x6080604052"),
     ...(over.provider || {}),
   };
 
   global.ethers = {
     BrowserProvider: jest.fn(() => provider),
     Contract: jest.fn((address) =>
-      String(address).toLowerCase() === SWAPBOARD_ADDRESS.toLowerCase() ? swap : token
+      SWAPBOARD_ADDRESSES.includes(String(address).toLowerCase()) ? swap : token
     ),
     formatEther: (v) => String(Number(v) / 1e18),
     formatUnits: (v, d = 18) => String(Number(v) / 10 ** Number(d)),
@@ -299,7 +301,18 @@ function installEthers(over = {}) {
 }
 
 const WALLET_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
 const SWAPBOARD_ADDRESS = "0x000000fF3D7A2d373615141d7489Ca66683DbecF";
+
+/**
+ * Every address the Swapboard fake answers at: v1's deployment and v2's zero
+ * placeholder. v2 may send to the placeholder only because the harness runs in
+ * mock mode (window.SWAPBOARD_MOCK); requireDeployed() is tested with it off.
+ */
+const SWAPBOARD_ADDRESSES = [
+  SWAPBOARD_ADDRESS.toLowerCase(),
+  "0x0000000000000000000000000000000000000000",
+];
 
 /** Connects the wallet against the installed ethers fakes. */
 async function connect(mod, handles) {
@@ -341,6 +354,27 @@ describe("module contract", () => {
       jest.useRealTimers();
     }
     expect(typeof app.bootstrap).toBe("function");
+  });
+
+  test("startAutoRefresh reloads orders and stats each tick, on one timer", async () => {
+    jest.useFakeTimers();
+    try {
+      const mod = loadApp();
+      routeFetch({ orders: [] });
+      mod.startAutoRefresh();
+      // Restarting replaces the interval rather than stacking a second one.
+      mod.startAutoRefresh();
+      expect(jest.getTimerCount()).toBe(1);
+
+      global.fetch.mockClear();
+      await jest.advanceTimersByTimeAsync(30000);
+      const bodies = global.fetch.mock.calls.map(([, init]) => String(init && init.body));
+      expect(bodies.some((b) => b.includes("orders("))).toBe(true);
+      expect(bodies.some((b) => b.includes("globalStats"))).toBe(true);
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
   });
 });
 
@@ -1379,9 +1413,8 @@ async function until(predicate, ticks = 50) {
 /**
  * Clicks the modal's confirm button and lets the handler settle.
  *
- * The v2 connector simulates confirmation with a real 700ms timer per
- * transaction (V2_SIM_DELAY_MS), and an allowance costs one more, so v2 paths
- * need an explicit settle window rather than a microtask drain.
+ * A v2 send awaits a deployment check, an allowance and the send itself one
+ * after another, so v2 paths get a short settle window on top of the drain.
  *
  * @param {{settleMs?: number}} [opts]
  */
@@ -1391,8 +1424,8 @@ async function confirmModal({ settleMs = 0 } = {}) {
   await flush();
 }
 
-/** Settle window covering an allowance plus up to two simulated v2 sends. */
-const V2_SETTLE = { settleMs: 2400 };
+/** Settle window covering a v2 path's chain of awaited contract calls. */
+const V2_SETTLE = { settleMs: 50 };
 
 /** Clicks the modal's cancel button. */
 function cancelModal() {
@@ -1446,50 +1479,84 @@ describe("showModal", () => {
   });
 });
 
-describe("v2 simulated transactions", () => {
-  test("fakeTxHash produces distinct 32-byte hashes", () => {
-    const v2 = loadApp({ search: "?v=2" });
-    const a = v2.fakeTxHash();
-    const b = v2.fakeTxHash();
-    expect(a).toMatch(/^0x[0-9a-f]{64}$/);
-    expect(a).not.toBe(b);
-  });
+describe("connector plumbing", () => {
+  const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+  const ZERO = "0x0000000000000000000000000000000000000000";
 
-  test("v2Send resolves a receipt shaped like ethers", async () => {
-    const v2 = loadApp({ search: "?v=2" });
-    jest.spyOn(console, "info").mockImplementation(() => {});
-    const tx = await v2.v2Send("fillOrder", { orderId: "1" }, "result");
-    expect(tx.hash).toMatch(/^0x[0-9a-f]{64}$/);
-    const receipt = await tx.wait();
-    expect(receipt).toMatchObject({ status: 1, logs: [] });
-    console.info.mockRestore();
-  }, 10000);
+  /** Boots v2 and connects, so the connector has a provider and contract. */
+  async function v2(over) {
+    const mod = loadApp({ search: "?v=2" });
+    const h = installEthers(over);
+    routeFetch({ orders: [] });
+    await connect(mod, h);
+    await flush();
+    return { mod, h };
+  }
 
-  test("logV2Call announces the simulated call", () => {
-    const v2 = loadApp({ search: "?v=2" });
-    const spy = jest.spyOn(console, "info").mockImplementation(() => {});
-    v2.logV2Call("createOrder", { a: 1 });
-    expect(spy).toHaveBeenCalledWith("[V2-DUMMY] createOrder", { a: 1 });
-    spy.mockRestore();
-  });
-
-  test("toCreateParams stringifies the amounts", () => {
-    const v2 = loadApp({ search: "?v=2" });
+  test("toCreateParams builds a bare CreateOrderParams struct", () => {
     expect(
-      v2.toCreateParams({
-        tokenA: "0xa",
-        amountA: 10n,
+      app.toCreateParams({
+        tokenA: NATIVE,
+        amountA: "10",
         tokenB: "0xb",
         amountB: 20n,
         partialFillAllowed: true,
+        tokenAInfo: { symbol: "ETH" },
+        amountAStr: "0.00000000000000001",
       })
     ).toEqual({
-      tokenA: "0xa",
-      amountA: "10",
+      tokenA: NATIVE,
+      amountA: 10n,
       tokenB: "0xb",
-      amountB: "20",
+      amountB: 20n,
       partialFillAllowed: true,
     });
+  });
+
+  test("toCreateParams never passes a missing flag through as undefined", () => {
+    const params = app.toCreateParams({ tokenA: "0xa", amountA: 1n, tokenB: "0xb", amountB: 2n });
+    expect(params.partialFillAllowed).toBe(false);
+  });
+
+  test("requireDeployed refuses the zero placeholder outside mock mode", async () => {
+    const { mod, h } = await v2();
+    delete window.SWAPBOARD_MOCK;
+    const err = await mod.requireDeployed().catch((e) => e);
+    expect(err.message).toBe("Swapboard v2 is not deployed yet");
+    // Carried as shortMessage so parseContractError shows it verbatim.
+    expect(err.shortMessage).toBe(err.message);
+    expect(h.provider.getCode).not.toHaveBeenCalled();
+  });
+
+  test("requireDeployed accepts the placeholder in mock mode once it holds code", async () => {
+    const { mod, h } = await v2();
+    await expect(mod.requireDeployed()).resolves.toBeUndefined();
+    expect(h.provider.getCode).toHaveBeenCalledWith(ZERO);
+  });
+
+  test("requireDeployed refuses an address with no code", async () => {
+    const { mod } = await v2({ provider: { getCode: jest.fn().mockResolvedValue("0x") } });
+    await expect(mod.requireDeployed()).rejects.toThrow(
+      `No Swapboard v2 contract found at ${ZERO}`
+    );
+  });
+
+  test("requireDeployed asks the chain once, after a success", async () => {
+    const { mod, h } = await v2();
+    await mod.requireDeployed();
+    await mod.requireDeployed();
+    expect(h.provider.getCode).toHaveBeenCalledTimes(1);
+  });
+
+  test("requireDeployed asks again after a failed lookup", async () => {
+    const getCode = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("rpc down"))
+      .mockResolvedValue("0x6080604052");
+    const { mod } = await v2({ provider: { getCode } });
+    await expect(mod.requireDeployed()).rejects.toThrow("rpc down");
+    await expect(mod.requireDeployed()).resolves.toBeUndefined();
+    expect(getCode).toHaveBeenCalledTimes(2);
   });
 
   test("v1Unsupported rejects batch calls that v1 has no method for", async () => {
@@ -1503,13 +1570,15 @@ describe("buildPartialFillControls", () => {
     return makeOrder({ partialFillAllowed: true });
   }
 
-  test("opens on the full remaining amount", () => {
+  test("opens on paying the full remaining amount", () => {
     const v2 = loadApp({ search: "?v=2" });
     const onChange = jest.fn();
     const el = v2.buildPartialFillControls(partialOrder(), onChange);
-    expect(el.querySelector("input").value).toBe("1");
-    expect(el.querySelector(".partial-fill-send").textContent).toMatch(/You send:/);
-    expect(onChange).toHaveBeenCalled();
+    // What the taker types is the wanted token: that is what fillOrder takes.
+    expect(el.querySelector("label").textContent).toBe("Pay (USDC):");
+    expect(el.querySelector("input").value).toBe("3,000");
+    expect(el.querySelector(".partial-fill-quote").textContent).toBe("You receive: 1 WETH");
+    expect(onChange).toHaveBeenLastCalledWith(10n ** 18n, 3000000000n);
   });
 
   test("offers 25/50/75/100 presets with 100 active", () => {
@@ -1529,17 +1598,32 @@ describe("buildPartialFillControls", () => {
     presets[1].click(); // 50%
     expect(presets[1].classList.contains("active")).toBe(true);
     expect(presets[3].classList.contains("active")).toBe(false);
-    expect(el.querySelector("input").value).toBe("0.5");
+    expect(el.querySelector("input").value).toBe("1,500");
+    expect(onChange).toHaveBeenLastCalledWith(5n * 10n ** 17n, 1500000000n);
   });
 
-  test("typing an amount recomputes without rewriting the box", () => {
+  test("typing an amount recomputes the receive without rewriting the box", () => {
     const v2 = loadApp({ search: "?v=2" });
     const el = v2.buildPartialFillControls(partialOrder(), jest.fn());
     const input = el.querySelector("input");
-    input.value = "0.25";
+    input.value = "750";
     input.dispatchEvent(new Event("input"));
-    expect(input.value).toBe("0.25");
+    expect(input.value).toBe("750");
     expect(input.classList.contains("input-error")).toBe(false);
+    expect(el.querySelector(".partial-fill-quote").textContent).toBe("You receive: 0.25 WETH");
+  });
+
+  test("a payment too small to buy one base unit is flagged", () => {
+    const v2 = loadApp({ search: "?v=2" });
+    // 1 wei of WETH for 3000 USDC: one micro-USDC floors to nothing.
+    const el = v2.buildPartialFillControls(
+      makeOrder({ partialFillAllowed: true, amountA: "1" }),
+      jest.fn()
+    );
+    const input = el.querySelector("input");
+    input.value = "0.000001";
+    input.dispatchEvent(new Event("input"));
+    expect(input.classList.contains("input-error")).toBe(true);
   });
 
   test("an unparseable amount marks the field in error", () => {
@@ -2408,6 +2492,22 @@ describe("v1 contract routing", () => {
     await app.handleCreateOrder();
     await confirmModal();
     expect(h.swap.createOrder).toHaveBeenCalled();
+  });
+
+  test("offering WETH wraps from ETH through createOrderWithEth", async () => {
+    const h = await connected();
+    const row = app.addCreateRow();
+    app.rowField(row, "tokenA").value = WETH;
+    app.rowField(row, "tokenB").value = USDC;
+    app.rowField(row, "amountA").value = "1";
+    app.rowField(row, "amountB").value = "2";
+    await app.handleCreateOrder();
+    await confirmModal();
+    // No tokenA argument: the offered amount is the msg.value.
+    expect(h.swap.createOrderWithEth).toHaveBeenCalledWith(USDC, expect.any(BigInt), {
+      value: 10n ** 18n,
+    });
+    expect(h.swap.createOrder).not.toHaveBeenCalled();
   });
 
   test("syncAfter is skipped in mock mode", async () => {
@@ -3591,13 +3691,17 @@ describe("v2 create and batch entry points", () => {
     expect(document.querySelector("#toast").textContent.length).toBeGreaterThan(0);
   }, 20000);
 
-  test("a mixed ETH and ERC20 batch warns about the extra transaction", async () => {
-    const { mod } = await v2();
+  test("a mixed ETH and ERC20 batch goes out as one createOrders", async () => {
+    const { mod, h } = await v2();
     fill(mod, mod.addCreateRow(), NATIVE, B);
     fill(mod, mod.addCreateRow(), A, B, "3", "4");
     await mod.handleCreateOrder();
-    expect(document.querySelector("#modal-body").textContent).toMatch(/settle through a separate/);
+    expect(document.querySelector("#modal-body").textContent).not.toMatch(/separate/);
     await confirmModal(V2_SETTLE);
+    expect(h.swap.createOrders).toHaveBeenCalledTimes(1);
+    // msg.value is the ETH leg alone; only the ERC20 leg needs an allowance.
+    expect(h.swap.createOrders).toHaveBeenCalledWith(expect.any(Array), { value: 10n ** 18n });
+    expect(h.token.approve).toHaveBeenCalledTimes(1);
   }, 20000);
 
   test("a validation throw is reported rather than leaving the button dead", async () => {
@@ -3610,19 +3714,31 @@ describe("v2 create and batch entry points", () => {
     expect(document.querySelector("#toast").className).toMatch(/error/);
   }, 20000);
 
-  test("batch fill of several orders uses tryFillOrders", async () => {
-    const { mod } = await v2();
+  test("batch fill of several orders pays each whole in one fillOrders", async () => {
+    const { mod, h } = await v2();
     routeFetch({ orders: [makeOrder({ orderId: "1" }), makeOrder({ orderId: "2" })] });
     await mod.loadOrders();
     mod.toggleOrderSelection(mod.findOrderById("1"), false);
     mod.toggleOrderSelection(mod.findOrderById("2"), false);
     await mod.fillSelectedOrders();
+    expect(document.querySelector("#modal-body").textContent).toMatch(/all-or-nothing/);
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/Filled 2 orders/);
+    // Selection order follows the table (newest first), which is not the point here.
+    // Each leg pays its whole remainder and is held to receiving all of it.
+    const whole = { amountB: 3000000000n, minAmountA: 10n ** 18n };
+    expect(h.swap.fillOrders).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        { orderId: "1", ...whole },
+        { orderId: "2", ...whole },
+      ]),
+      expect.any(Number)
+    );
+    expect(h.swap.fillOrders.mock.calls[0][0]).toHaveLength(2);
   }, 20000);
 
   test("batch fill paying in ETH skips the approval", async () => {
-    const { mod } = await v2();
+    const { mod, h } = await v2();
     const ethWanted = {
       tokenB: { address: NATIVE, symbol: "ETH", decimals: 18 },
     };
@@ -3641,10 +3757,15 @@ describe("v2 create and batch entry points", () => {
     );
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/Filled 2 orders/);
+    expect(h.token.approve).not.toHaveBeenCalled();
+    // The exact sum of both remaining payments, since v2 refunds nothing.
+    expect(h.swap.fillOrders).toHaveBeenCalledWith(expect.any(Array), expect.any(Number), {
+      value: 6000000000n,
+    });
   }, 20000);
 
   test("batch cancel of own orders uses cancelOrders", async () => {
-    const { mod } = await v2();
+    const { mod, h } = await v2();
     routeFetch({
       orders: [
         makeOrder({ orderId: "1", maker: WALLET_ADDRESS }),
@@ -3657,10 +3778,11 @@ describe("v2 create and batch entry points", () => {
     await mod.cancelSelectedOrders();
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/Cancelled 2 orders/i);
+    expect([...h.swap.cancelOrders.mock.calls[0][0]].sort()).toEqual(["1", "2"]);
   }, 20000);
 
   test("a batch spanning more than one transaction says so", async () => {
-    const { mod } = await v2();
+    const { mod, h } = await v2();
     // MAX_BATCH_FILL is 15, so 20 orders is two transactions.
     const many = Array.from({ length: 20 }, (_, i) => makeOrder({ orderId: String(i + 1) }));
     routeFetch({ orders: many });
@@ -3670,21 +3792,26 @@ describe("v2 create and batch entry points", () => {
     expect(document.querySelector("#modal-body").textContent).toMatch(
       /split into 2 transactions of up to 15/
     );
-    await confirmModal({ settleMs: 3200 });
+    await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/Filled 20 orders/);
+    expect(h.swap.fillOrders.mock.calls.map(([fills]) => fills.length)).toEqual([15, 5]);
   }, 30000);
 
   test("a failed batch reports the error", async () => {
-    const { mod } = await v2();
+    const { mod, h } = await v2();
     routeFetch({ orders: [makeOrder({ orderId: "1" })] });
     await mod.loadOrders();
     mod.toggleOrderSelection(mod.findOrderById("1"), false);
     await mod.fillSelectedOrders();
 
-    // Break the simulated send after the modal is already open.
-    global.fetch.mockRejectedValue(new Error("network gone"));
+    // An order taken by someone else between selection and landing.
+    h.swap.fillOrders.mockRejectedValue({
+      data: "0xd2c02610" + (1).toString(16).padStart(64, "0"),
+    });
     await confirmModal(V2_SETTLE);
-    expect(document.querySelector("#toast").textContent.length).toBeGreaterThan(0);
+    expect(document.querySelector("#toast").textContent).toBe(
+      "Fill failed: Order #1 is no longer active"
+    );
   }, 20000);
 
   test("native ETH needs no allowance", async () => {
@@ -4225,40 +4352,107 @@ describe("v2 single-order entry points", () => {
     if (console.error.mockRestore) console.error.mockRestore();
   });
 
-  test("an all-or-nothing fill goes through fillOrder", async () => {
-    const { mod } = await v2();
+  test("an all-or-nothing fill takes the whole remainder at its exact payment", async () => {
+    const { mod, h } = await v2();
     await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
-    await confirmModal({ settleMs: 2400 });
+    await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/filled/i);
+    // v2 treats WETH as an ordinary ERC20: approve exactly the payment, then
+    // fill by payment, holding the receive to what the modal quoted.
+    expect(h.token.approve).toHaveBeenCalledWith(expect.any(String), 3000000000n);
+    expect(h.swap.fillOrder).toHaveBeenCalledWith("1", 3000000000n, 10n ** 18n, expect.any(Number));
   }, 20000);
 
-  test("an ETH-wanted fill goes through fillOrderWithEth", async () => {
-    const { mod } = await v2();
+  test("a partial fill pays exactly the chosen amount", async () => {
+    const { mod, h } = await v2();
+    await mod.handleFillOrder(makeOrder({ partialFillAllowed: true }));
+    // Half of an order asking 3000 USDC for 1 WETH: pay 1500, receive 0.5.
+    const presets = document.querySelectorAll("#modal-body .partial-fill-presets button");
+    [...presets].find((b) => b.textContent === "50%").click();
+    expect(document.querySelector("#modal-body .partial-fill-quote").textContent).toBe(
+      "You receive: 0.5 WETH"
+    );
+    await confirmModal(V2_SETTLE);
+    expect(h.token.approve).toHaveBeenCalledWith(expect.any(String), 1500000000n);
+    // The 0.5 WETH shown is the minAmountA the fill is held to.
+    expect(h.swap.fillOrder).toHaveBeenCalledWith(
+      "1",
+      1500000000n,
+      5n * 10n ** 17n,
+      expect.any(Number)
+    );
+  }, 20000);
+
+  test("an ETH-wanted fill pays the quote as msg.value, with no approval", async () => {
+    const { mod, h } = await v2();
     await mod.handleFillOrder(
       makeOrder({
         partialFillAllowed: false,
         tokenB: { address: NATIVE, symbol: "ETH", decimals: 18 },
       })
     );
-    await confirmModal({ settleMs: 2400 });
+    await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/filled/i);
+    expect(h.token.approve).not.toHaveBeenCalled();
+    expect(h.swap.fillOrder).toHaveBeenCalledWith(
+      "1",
+      3000000000n,
+      10n ** 18n,
+      expect.any(Number),
+      { value: 3000000000n }
+    );
   }, 20000);
 
   test("cancelling a v2 order goes through cancelOrder", async () => {
-    const { mod } = await v2();
+    const { mod, h } = await v2();
     await mod.handleCancelOrder(makeOrder());
-    await confirmModal({ settleMs: 2400 });
+    await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/cancelled/i);
+    expect(h.swap.cancelOrder).toHaveBeenCalledWith("1");
   }, 20000);
 
-  test("v2 offers no gas estimate", async () => {
-    const { mod } = await v2();
+  test("v2 prices the fill it will send", async () => {
+    const { mod, h } = await v2();
+    await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
+    expect(h.swap.interface.encodeFunctionData).toHaveBeenCalledWith("fillOrder", [
+      "1",
+      3000000000n,
+      10n ** 18n,
+      expect.any(Number),
+    ]);
+    expect(document.querySelector("#modal-body .gas-estimate")).not.toBeNull();
+  }, 20000);
+
+  test("without a deployment a fill says so, approving and sending nothing", async () => {
+    const { mod, h } = await v2();
+    delete window.SWAPBOARD_MOCK;
     await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
     expect(document.querySelector("#modal-body .gas-estimate")).toBeNull();
+    await confirmModal(V2_SETTLE);
+    expect(document.querySelector("#toast").textContent).toBe(
+      "Fill failed: Swapboard v2 is not deployed yet"
+    );
+    expect(h.token.approve).not.toHaveBeenCalled();
+    expect(h.swap.fillOrder).not.toHaveBeenCalled();
   }, 20000);
 
-  test("two ETH-offering orders batch through createOrdersWithEth", async () => {
-    const { mod } = await v2();
+  test("a reprice between quote and fill is reported, not absorbed", async () => {
+    const { mod, h } = await v2();
+    const word = (n) => n.toString(16).padStart(64, "0");
+    // The maker halved the payout before the fill landed: the chain now quotes
+    // 0.25 WETH against the 1 WETH minimum the fill was sent with.
+    h.swap.fillOrder.mockRejectedValue({
+      data: "0x19113a72" + word(1n) + word(25n * 10n ** 16n) + word(10n ** 18n),
+    });
+    await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
+    await confirmModal(V2_SETTLE);
+    expect(document.querySelector("#toast").textContent).toBe(
+      "Fill failed: Order #1 repriced while you were confirming. Refresh and try again."
+    );
+  }, 20000);
+
+  test("two ETH-offering orders batch into one createOrders carrying their total", async () => {
+    const { mod, h } = await v2();
     const r1 = mod.addCreateRow();
     const r2 = mod.addCreateRow();
     for (const [row, amt] of [
@@ -4271,8 +4465,12 @@ describe("v2 single-order entry points", () => {
       mod.rowField(row, "amountB").value = "5";
     }
     await mod.handleCreateOrder();
-    await confirmModal({ settleMs: 2400 });
+    await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/Created 2 orders|created/i);
+    expect(h.swap.createOrders).toHaveBeenCalledWith(expect.any(Array), {
+      value: 3n * 10n ** 18n,
+    });
+    expect(h.swap.createOrders.mock.calls[0][0].map((p) => p.tokenA)).toEqual([NATIVE, NATIVE]);
   }, 20000);
 });
 
@@ -4281,15 +4479,7 @@ describe("v1 unsupported batch surface", () => {
     // CAPS.batch keeps these unreachable in the UI; reaching one means a gate
     // was missed, and the connector must fail loudly rather than silently
     // sending one transaction where the user asked for many.
-    for (const method of [
-      "createOrders",
-      "createOrdersWithEth",
-      "fillOrders",
-      "tryFillOrders",
-      "tryFillOrdersWithEth",
-      "cancelOrders",
-      "cancelOrdersUnwrap",
-    ]) {
+    for (const method of ["createOrders", "fillOrders", "cancelOrders"]) {
       await expect(app.v1Unsupported(method)).rejects.toThrow(
         new RegExp(`${method} is a v2 entry point`)
       );
@@ -4300,6 +4490,18 @@ describe("v1 unsupported batch surface", () => {
 describe("connector adapters", () => {
   const A = "0x1111111111111111111111111111111111111111";
   const B = "0x2222222222222222222222222222222222222222";
+  const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+  const WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+  const ZERO = "0x0000000000000000000000000000000000000000";
+
+  /** An indexed order offering `tokenA` for `tokenB`. */
+  function pair(tokenA, tokenB, over = {}) {
+    return makeOrder({
+      tokenA: { address: tokenA, symbol: "AAA", decimals: 18 },
+      tokenB: { address: tokenB, symbol: "BBB", decimals: 18 },
+      ...over,
+    });
+  }
 
   describe("V1", () => {
     /** Connects v1 so the module-level `contract` and `signer` are live. */
@@ -4320,25 +4522,40 @@ describe("connector adapters", () => {
     test("createOrderWithEth passes the offered amount as msg.value", async () => {
       const h = await live();
       await app.V1.createOrderWithEth(B, 2n, false, 5n);
-      expect(h.swap.createOrderWithEth).toHaveBeenCalled();
+      expect(h.swap.createOrderWithEth).toHaveBeenCalledWith(B, 2n, { value: 5n });
     });
 
-    test("fillOrder ignores the v2-only fill amount", async () => {
+    test("fillCall pays for a WETH-wanted order in ETH via fillOrderWithEth", async () => {
+      await live();
+      expect(app.V1.fillCall(pair(A, WETH), 1n, 7n, 99)).toEqual({
+        method: "fillOrderWithEth",
+        args: ["1", 99],
+        value: 7n,
+      });
+    });
+
+    test("fillCall pays the taker of a WETH-offered order in ETH via fillOrderUnwrap", async () => {
+      await live();
+      expect(app.V1.fillCall(pair(WETH, B), 1n, 7n, 99)).toEqual({
+        method: "fillOrderUnwrap",
+        args: ["1", 99],
+      });
+    });
+
+    test("fillCall ignores the v2-only amounts on a plain fill", async () => {
+      await live();
+      expect(app.V1.fillCall(pair(A, B), 1n, 7n, 99)).toEqual({
+        method: "fillOrder",
+        args: ["1", 99],
+      });
+    });
+
+    test("send attaches msg.value only when the call carries one", async () => {
       const h = await live();
-      await app.V1.fillOrder("1", 99);
+      await app.V1.send({ method: "fillOrderWithEth", args: ["1", 99], value: 7n });
+      await app.V1.send({ method: "fillOrder", args: ["1", 99] });
+      expect(h.swap.fillOrderWithEth).toHaveBeenCalledWith("1", 99, { value: 7n });
       expect(h.swap.fillOrder).toHaveBeenCalledWith("1", 99);
-    });
-
-    test("fillOrderWithEth sends the payment as value", async () => {
-      const h = await live();
-      await app.V1.fillOrderWithEth("1", 99, 7n);
-      expect(h.swap.fillOrderWithEth).toHaveBeenCalled();
-    });
-
-    test("fillOrderUnwrap pays the taker in ETH", async () => {
-      const h = await live();
-      await app.V1.fillOrderUnwrap("1", 99);
-      expect(h.swap.fillOrderUnwrap).toHaveBeenCalled();
     });
 
     test("cancelOrder and cancelOrderUnwrap forward to the contract", async () => {
@@ -4349,17 +4566,12 @@ describe("connector adapters", () => {
       expect(h.swap.cancelOrderUnwrap).toHaveBeenCalledWith("2");
     });
 
-    test.each([
-      "createOrders",
-      "createOrdersWithEth",
-      "fillOrders",
-      "tryFillOrders",
-      "tryFillOrdersWithEth",
-      "cancelOrders",
-      "cancelOrdersUnwrap",
-    ])("%s rejects rather than silently doing something smaller", async (method) => {
-      await expect(app.V1[method]()).rejects.toThrow(new RegExp(`${method} is a v2 entry point`));
-    });
+    test.each(["createOrders", "fillOrders", "cancelOrders"])(
+      "%s rejects rather than silently doing something smaller",
+      async (method) => {
+        await expect(app.V1[method]()).rejects.toThrow(new RegExp(`${method} is a v2 entry point`));
+      }
+    );
 
     test("ensureAllowance approves only when the allowance falls short", async () => {
       const h = await live();
@@ -4407,85 +4619,154 @@ describe("connector adapters", () => {
 
   describe("V2", () => {
     let v2;
-    beforeEach(() => {
+    let h;
+
+    beforeEach(async () => {
       v2 = loadApp({ search: "?v=2" });
-      jest.spyOn(console, "info").mockImplementation(() => {});
-    });
-    afterEach(() => {
-      if (console.info.mockRestore) console.info.mockRestore();
-    });
-
-    /** Every V2 method resolves a simulated ethers-shaped transaction. */
-    async function expectSimulatedTx(promise) {
-      const tx = await promise;
-      expect(tx.hash).toMatch(/^0x[0-9a-f]{64}$/);
-      expect(typeof tx.wait).toBe("function");
-      return tx;
-    }
-
-    test("createOrder is simulated", async () => {
-      await expectSimulatedTx(v2.V2.createOrder(A, 1n, B, 2n, true));
+      h = installEthers();
+      routeFetch({ orders: [] });
+      await connect(v2, h);
+      await flush();
     });
 
-    test("createOrderWithEth is simulated", async () => {
-      await expectSimulatedTx(v2.V2.createOrderWithEth(B, 2n, true, 5n));
+    test("createOrder sends a CreateOrderParams struct, with no value for an ERC20", async () => {
+      await v2.V2.createOrder(A, 1n, B, 2n, true);
+      expect(h.swap.createOrder).toHaveBeenCalledWith({
+        tokenA: A,
+        amountA: 1n,
+        tokenB: B,
+        amountB: 2n,
+        partialFillAllowed: true,
+      });
     });
 
-    test("createOrders encodes each param struct", async () => {
-      await expectSimulatedTx(
-        v2.V2.createOrders([
+    test("createOrder offering native ETH escrows exactly amountA as msg.value", async () => {
+      await v2.V2.createOrder(NATIVE, 5n, B, 2n, false);
+      expect(h.swap.createOrder).toHaveBeenCalledWith(
+        { tokenA: NATIVE, amountA: 5n, tokenB: B, amountB: 2n, partialFillAllowed: false },
+        { value: 5n }
+      );
+    });
+
+    test("createOrders mixes ETH and ERC20 orders, the ETH total as msg.value", async () => {
+      await v2.V2.createOrders([
+        {
+          tokenA: A,
+          amountA: 1n,
+          tokenB: B,
+          amountB: 2n,
+          partialFillAllowed: true,
+          amountAStr: "1",
+        },
+        { tokenA: NATIVE, amountA: 3n, tokenB: B, amountB: 4n, partialFillAllowed: false },
+        { tokenA: NATIVE, amountA: 5n, tokenB: A, amountB: 6n, partialFillAllowed: true },
+      ]);
+      expect(h.swap.createOrders).toHaveBeenCalledWith(
+        [
           { tokenA: A, amountA: 1n, tokenB: B, amountB: 2n, partialFillAllowed: true },
-        ])
+          { tokenA: NATIVE, amountA: 3n, tokenB: B, amountB: 4n, partialFillAllowed: false },
+          { tokenA: NATIVE, amountA: 5n, tokenB: A, amountB: 6n, partialFillAllowed: true },
+        ],
+        { value: 8n }
       );
     });
 
-    test("createOrdersWithEth carries the batch total as value", async () => {
-      await expectSimulatedTx(
-        v2.V2.createOrdersWithEth(
-          [{ tokenA: A, amountA: 1n, tokenB: B, amountB: 2n, partialFillAllowed: true }],
-          1n
-        )
+    test("fillCall pays exactly amountB and holds the receive to the quote", () => {
+      expect(v2.V2.fillCall(pair(A, B), 3n, 4n, 99)).toEqual({
+        method: "fillOrder",
+        args: ["1", 4n, 3n, 99],
+        value: 0n,
+      });
+    });
+
+    test("fillCall pays for an ETH-wanted order with the payment as its exact msg.value", () => {
+      expect(v2.V2.fillCall(pair(A, NATIVE), 3n, 4n, 99).value).toBe(4n);
+    });
+
+    test("fillCall treats WETH as an ordinary ERC20 on either side", () => {
+      for (const order of [pair(WETH, B), pair(A, WETH)]) {
+        expect(v2.V2.fillCall(order, 3n, 4n, 99)).toMatchObject({
+          method: "fillOrder",
+          value: 0n,
+        });
+      }
+    });
+
+    test("send forwards a described fill", async () => {
+      await v2.V2.send(v2.V2.fillCall(pair(A, NATIVE), 3n, 4n, 99));
+      expect(h.swap.fillOrder).toHaveBeenCalledWith("1", 4n, 3n, 99, { value: 4n });
+    });
+
+    test("fillOrders takes each order whole at its exact remaining payment", async () => {
+      await v2.V2.fillOrders(
+        [
+          pair(A, NATIVE, { orderId: "1", availableA: "10", availableB: "20" }),
+          pair(A, NATIVE, { orderId: "2", availableA: "30", availableB: "40" }),
+        ],
+        99
+      );
+      expect(h.swap.fillOrders).toHaveBeenCalledWith(
+        [
+          { orderId: "1", amountB: 20n, minAmountA: 10n },
+          { orderId: "2", amountB: 40n, minAmountA: 30n },
+        ],
+        99,
+        { value: 60n }
       );
     });
 
-    test("fillOrder is simulated", async () => {
-      await expectSimulatedTx(v2.V2.fillOrder("1", 99, 0n));
+    test("fillOrders sends no value when the wanted token is an ERC20", async () => {
+      await v2.V2.fillOrders([pair(A, B)], 99);
+      expect(h.swap.fillOrders).toHaveBeenCalledWith(
+        [{ orderId: "1", amountB: 3000000000n, minAmountA: 10n ** 18n }],
+        99
+      );
     });
 
-    test("fillOrderWithEth is simulated", async () => {
-      await expectSimulatedTx(v2.V2.fillOrderWithEth("1", 99, 5n));
+    test("cancelOrder and cancelOrders forward the ids", async () => {
+      await v2.V2.cancelOrder("1");
+      await v2.V2.cancelOrders(["1", "2"]);
+      expect(h.swap.cancelOrder).toHaveBeenCalledWith("1");
+      expect(h.swap.cancelOrders).toHaveBeenCalledWith(["1", "2"]);
     });
 
-    test("fillOrderUnwrap is simulated", async () => {
-      await expectSimulatedTx(v2.V2.fillOrderUnwrap("1", 99, 0n));
-    });
-
-    test("cancelOrder and cancelOrderUnwrap are simulated", async () => {
-      await expectSimulatedTx(v2.V2.cancelOrder("1"));
-      await expectSimulatedTx(v2.V2.cancelOrderUnwrap("2"));
-    });
-
-    test("the batch fill entry points are simulated", async () => {
-      await expectSimulatedTx(v2.V2.fillOrders(["1", "2"], 99, [0n, 0n]));
-      await expectSimulatedTx(v2.V2.tryFillOrders(["1", "2"], 99, [0n, 0n]));
-      await expectSimulatedTx(v2.V2.tryFillOrdersWithEth(["1", "2"], 99, [0n, 0n], 5n));
-    });
-
-    test("the batch cancel entry points are simulated", async () => {
-      await expectSimulatedTx(v2.V2.cancelOrders(["1", "2"]));
-      await expectSimulatedTx(v2.V2.cancelOrdersUnwrap(["1", "2"]));
+    test("nothing is sent without a deployment", async () => {
+      delete window.SWAPBOARD_MOCK;
+      await expect(v2.V2.cancelOrder("1")).rejects.toThrow("Swapboard v2 is not deployed yet");
+      expect(h.swap.cancelOrder).not.toHaveBeenCalled();
     });
 
     test("ensureAllowance approves an ERC20 but not native ETH", async () => {
-      await expect(
-        v2.V2.ensureAllowance("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", 1n)
-      ).resolves.toBe(false);
+      await expect(v2.V2.ensureAllowance(NATIVE, 1n)).resolves.toBe(false);
+      expect(h.token.approve).not.toHaveBeenCalled();
       await expect(v2.V2.ensureAllowance(A, 1n)).resolves.toBe(true);
-    }, 10000);
+      expect(h.token.approve).toHaveBeenCalledWith(ZERO, 1n);
+    });
 
-    test("v2 offers no gas estimate and nothing to sync", async () => {
-      await expect(v2.V2.estimateFor("fillOrder", [])).resolves.toBeNull();
+    test("ensureAllowance approves nothing without a deployment", async () => {
+      delete window.SWAPBOARD_MOCK;
+      await expect(v2.V2.ensureAllowance(A, 1n)).rejects.toThrow(/not deployed yet/);
+      expect(h.token.approve).not.toHaveBeenCalled();
+    });
+
+    test("estimateFor prices a call once deployed", async () => {
+      const est = await v2.V2.estimateFor("cancelOrder", ["1"]);
+      expect(h.swap.interface.encodeFunctionData).toHaveBeenCalledWith("cancelOrder", ["1"]);
+      expect(est).toMatchObject({ gas: "21000" });
+    });
+
+    test("estimateFor reports nothing rather than pricing a transfer to an empty address", async () => {
+      delete window.SWAPBOARD_MOCK;
+      h.provider.estimateGas.mockClear();
+      await expect(v2.V2.estimateFor("cancelOrder", ["1"])).resolves.toBeNull();
+      expect(h.provider.estimateGas).not.toHaveBeenCalled();
+    });
+
+    test("syncAfter has no v2 subgraph to poll", async () => {
+      delete window.SWAPBOARD_MOCK;
+      global.fetch.mockClear();
       await expect(v2.V2.syncAfter("1", false)).resolves.toBeUndefined();
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 });

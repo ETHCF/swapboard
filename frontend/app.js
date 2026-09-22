@@ -59,11 +59,12 @@
     // V2 helpers
     NATIVE_ETH,
     isNativeEth,
+    nativeEthTotal,
     chunkArray,
     resolveSelectionMode,
     canSelectOrder,
     getShiftRangeIds,
-    computeFillFromReceive,
+    computeFillFromPayment,
     allowsPartialFill,
     summarizeFillBatch,
   } = Lib;
@@ -166,7 +167,7 @@
     },
     2: {
       title: "Welcome to SWAPBOARD v2",
-      note: "V2: partial fills, batch fill/cancel/create, and native ETH. Preview — contracts are not deployed, so transactions are simulated.",
+      note: "V2: partial fills, batch fill/cancel/create, and native ETH. Preview — contracts are not deployed yet; add ?mock=true to try it against simulated data.",
       hint: "Swapboard v2 — preview, contracts not yet deployed",
     },
   };
@@ -289,7 +290,7 @@
     }
   }
 
-  const CONTRACT_ABI = [
+  const CONTRACT_ABI_V1 = [
     "function createOrder(address tokenA, uint256 amountA, address tokenB, uint256 amountB) external returns (uint256 orderId)",
     "function createOrderWithEth(address tokenB, uint256 amountB) external payable returns (uint256 orderId)",
     "function fillOrder(uint256 orderId, uint256 deadline) external",
@@ -302,15 +303,14 @@
     "function canFill(uint256 orderId) external view returns (bool)",
     "function getNextOrderId() external view returns (uint256)",
     "function getWeth() external view returns (address)",
-    "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool indexed partialFillAllowed)",
-    "event OrderFilled(uint256 indexed orderId, address indexed taker, uint128 amountA, uint128 amountB)",
+    "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB)",
+    "event OrderFilled(uint256 indexed orderId, address indexed taker)",
     "event OrderCanceled(uint256 indexed orderId)",
-    "event OrderModified(uint256 indexed orderId, uint128 availableA, uint128 availableB)",
-    "event OrderPartialFillUpdated(uint256 indexed orderId, bool indexed partialFillAllowed)",
     "error ZeroAddress()",
     "error ZeroAmount()",
     "error ZeroETH()",
     "error SameToken()",
+    "error NotAContract(address token)",
     "error NotWETH(address expected, address actual)",
     "error ETHAmountMismatch(uint256 required, uint256 sent)",
     "error ETHTransferFailed(address recipient)",
@@ -319,6 +319,76 @@
     "error OrderNotActive(uint256 orderId)",
     "error NotMaker(uint256 orderId, address caller, address maker)",
   ];
+
+  /**
+   * Swapboard v2, transcribed from contracts/src/interfaces/ISwapboard.sol plus
+   * the OpenZeppelin errors the implementation can revert with. Every event and
+   * error, and every function fragment, matches the compiled ABI
+   * (subgraph/v2/abis/Swapboard.json).
+   *
+   * The EIP-2612 / Permit2 overloads of createOrder(s), fillOrder(s) and
+   * modifyOrder(s) are left out on purpose: the UI does not sign permits, and
+   * listing them would make `contract.createOrder` and friends ambiguous to
+   * ethers, which resolves an overloaded name by argument count.
+   *
+   * Amounts are uint128, and create/fill-batch arguments are structs: an encoder
+   * built from v1's shapes would produce calldata v2 rejects outright.
+   */
+  const CONTRACT_ABI_V2 = [
+    "function createOrder(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed) order) external payable returns (uint256)",
+    "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders) external payable returns (uint256[])",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline) external payable",
+    "function cancelOrder(uint256 orderId) external",
+    "function cancelOrders(uint256[] orderIds) external",
+    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder) external payable",
+    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder)[] mods) external payable",
+    "function setPartialFillAllowed(uint256 orderId, bool partialFillAllowed) external",
+    "function getEth() external pure returns (address)",
+    "function getNextOrderId() external view returns (uint256)",
+    "function getOrder(uint256 orderId) external view returns (tuple(address maker, bool active, bool partialFillAllowed, address tokenA, address tokenB, uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB))",
+    "function getOrders(uint256[] orderIds) external view returns (tuple(address maker, bool active, bool partialFillAllowed, address tokenA, address tokenB, uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB)[])",
+    "function canFill(uint256 orderId) external view returns (bool)",
+    "function version() external view returns (string)",
+    "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool indexed partialFillAllowed)",
+    "event OrderFilled(uint256 indexed orderId, address indexed taker, uint128 amountA, uint128 amountB)",
+    "event OrderCanceled(uint256 indexed orderId)",
+    "event OrderModified(uint256 indexed orderId, uint128 availableA, uint128 availableB)",
+    "event OrderPartialFillUpdated(uint256 indexed orderId, bool indexed partialFillAllowed)",
+    "error ZeroAddress()",
+    "error ZeroAmount()",
+    "error NoChange()",
+    "error SameToken()",
+    "error BalanceMismatch(uint256 expected, uint256 received)",
+    "error OrderNotFound(uint256 orderId)",
+    "error OrderNotActive(uint256 orderId)",
+    "error NotMaker(uint256 orderId, address caller, address maker)",
+    "error SelfFill()",
+    "error ETHAmountMismatch(uint256 required, uint256 sent)",
+    "error DeadlineExpired()",
+    "error PartialFillNotAllowed(uint256 orderId)",
+    "error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining)",
+    "error FillAmountMismatch(uint256 orderId, uint128 quoted, uint128 minimum)",
+    "error OrderStateMismatch(uint256 orderId)",
+    "error DuplicateOrderId(uint256 orderId)",
+    "error PermitOnNative()",
+    "error InvalidPermit()",
+    "error UnusedPermit()",
+    "error DuplicatePermitToken(address token)",
+    "error InvalidPermit2()",
+    "error UnusedPermit2()",
+    "error TooManyPermit2()",
+    "error FailedCall()",
+    "error InsufficientBalance(uint256 balance, uint256 needed)",
+    "error SafeERC20FailedOperation(address token)",
+    "error ReentrancyGuardReentrantCall()",
+  ];
+
+  /**
+   * ABI of the active version's contract. Picked once, like the deployment it
+   * encodes against: the two versions share no mutating function signature.
+   */
+  const CONTRACT_ABI = ACTIVE_VERSION === 1 ? CONTRACT_ABI_V1 : CONTRACT_ABI_V2;
 
   const ERC20_ABI = [
     "function name() view returns (string)",
@@ -2475,276 +2545,294 @@ ${orderFields}
   }
 
   // ============================================================================
-  // V2 CONNECTOR — DUMMY IMPLEMENTATION
+  // Connectors
   // ============================================================================
   //
-  // !!! NONE OF THIS TALKS TO A CHAIN, AND IT NO LONGER MATCHES THE ABI. !!!
+  // One adapter per protocol version, both exposing the same surface, so the
+  // call sites above and below never branch on version — they call
+  // SB.<method> and the adapter decides what that means on its contract:
   //
-  // These stubs were written against the v2 interface proposed in PR #4
-  // (ETHCF/swapboard, branch `z0r0z:partial`). That is not the interface that
-  // shipped. contracts/src/interfaces/ISwapboard.sol — and the ABI at
-  // subgraph/v2/abis/Swapboard.json, which is byte-identical to the compiled
-  // artifact — declares six mutating functions:
+  //   createOrder / createOrders    open orders
+  //   fillCall + send               fill one order; fillCall describes the call
+  //                                 so the same description can be estimated
+  //   fillOrders                    take several orders whole
+  //   cancelOrder / cancelOrders    close orders and refund escrow
+  //   ensureAllowance / estimateFor / syncAfter
   //
-  //   struct CreateOrderParams { address tokenA; uint128 amountA;
-  //                              address tokenB; uint128 amountB;
-  //                              bool partialFillAllowed; }
-  //   struct FillOrderParams   { uint256 orderId; uint128 amountB;
-  //                              uint128 minAmountA; }
-  //
-  //   createOrder(CreateOrderParams)                          payable -> uint256
-  //   createOrders(CreateOrderParams[])                       payable -> uint256[]
-  //   fillOrder(orderId, amountB, minAmountA, deadline)       payable
-  //   fillOrders(FillOrderParams[], deadline)                 payable
-  //   cancelOrder(orderId) / cancelOrders(orderId[])
-  //
-  // Every difference below is load-bearing, so none of these stubs can simply
-  // be pointed at `contract.<method>(...)`:
-  //
-  //   * There are no `*WithEth` entry points. Native ETH rides the
-  //     0xEeee…eEeE sentinel through the ordinary payable calls, with an
-  //     EXACT msg.value — the contract refunds nothing and reverts with
-  //     ETHAmountMismatch on a mismatch.
-  //   * There are no `*Unwrap` variants. Those were v1 WETH concepts; to v2,
-  //     WETH is an ordinary ERC20.
-  //   * There is no `tryFillOrders`. `fillOrders` reverts the whole batch, so
-  //     fillSelectedOrders()'s "skip what can no longer fill" promise is not
-  //     backed by anything and has to change.
-  //   * A fill is keyed on `amountB` — the exact wanted token the taker pays —
-  //     plus the quoted `minAmountA`, not on a tokenB amount with 0 meaning
-  //     "the rest". lib.js quoteFill() computes the quote the contract will.
-  //   * createOrder takes a struct, and amounts are uint128.
-  //
-  // Replacing this layer is the next step; the subgraph read path and the mock
-  // are already on the real v2 shapes. Until then every method here logs the
-  // arguments it would submit, waits a beat, and resolves as if it succeeded,
-  // so order rows do NOT change state after a simulated fill or cancel —
-  // loadOrders() re-reads unchanged data.
-  //
-  // Two things stay off rather than being faked:
-  //   * gas estimates in the confirmation modal — these need a real ABI to
-  //     encode against, and an invented number is worse than none.
-  //   * waitForOrderUpdate() subgraph polling after a transaction — with inert
-  //     stubs it would only ever time out.
+  // v1 additionally has createOrderWithEth and cancelOrderUnwrap. The call
+  // sites reach those only for WETH-denominated sides, which on v2 never occur:
+  // v2 escrows native ETH under the NATIVE_ETH sentinel on its ordinary payable
+  // calls and treats WETH as a plain ERC20 (isWeth() is always false there).
   // ============================================================================
 
-  /** Simulated per-transaction confirmation delay, in milliseconds. */
-  const V2_SIM_DELAY_MS = 700;
+  /** The placeholder a version's contractAddress holds until it ships. */
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-  let v2TxCounter = 0;
+  /** Set once the chain has been seen to hold code at CONTRACT_ADDRESS. */
+  let deploymentVerified = false;
 
   /**
-   * Logs a stubbed contract call with its decoded arguments.
+   * An Error whose text parseContractError shows verbatim. It surfaces a short
+   * `shortMessage` as-is, the way it does for ethers' own errors.
+   * @param {string} message - User-facing text
+   * @returns {Error}
+   */
+  function connectorError(message) {
+    const err = new Error(message);
+    err.shortMessage = message;
+    return err;
+  }
+
+  /**
+   * Refuses to send to a contract that is not there.
+   *
+   * ethers does not look before it sends, and a call to an address with no
+   * code succeeds as a plain transfer — so a payable v2 call against the zero
+   * placeholder would burn the ETH it carries rather than revert. The address
+   * must not be the placeholder, and the chain must hold code at it, which also
+   * catches a deployment written into lib.js for the wrong network. Only a
+   * positive answer is cached, so a flaky RPC is asked again next time.
+   *
+   * Mock mode answers every call itself and never broadcasts, so the
+   * placeholder is expected there.
+   *
+   * @returns {Promise<void>} Rejects when there is no contract to call
+   */
+  async function requireDeployed() {
+    if (deploymentVerified) return;
+    if (CONTRACT_ADDRESS === ZERO_ADDRESS && !window.SWAPBOARD_MOCK) {
+      throw connectorError(`Swapboard ${CAPS.label} is not deployed yet`);
+    }
+    const code = await provider.getCode(CONTRACT_ADDRESS);
+    if (!code || code === "0x") {
+      throw connectorError(`No Swapboard ${CAPS.label} contract found at ${CONTRACT_ADDRESS}`);
+    }
+    deploymentVerified = true;
+  }
+
+  /**
+   * Invokes a contract method, attaching msg.value only when ETH rides along:
+   * ethers rejects a value override on a non-payable function.
    * @param {string} method - Contract method name
-   * @param {Object} args - Arguments that would be encoded
+   * @param {Array} args - Positional arguments
+   * @param {bigint} [value] - msg.value; 0 or absent means none
+   * @returns {Promise<Object>} ethers TransactionResponse
    */
-  function logV2Call(method, args) {
-    console.info("[V2-DUMMY] " + method, args);
+  function invokeContract(method, args, value) {
+    return value ? contract[method](...args, { value }) : contract[method](...args);
   }
 
   /**
-   * Produces a deterministic-looking fake transaction hash.
-   * @returns {string} 0x-prefixed 64-character hex string
+   * Sends a v2 call once the deployment has been confirmed.
+   * @param {string} method - Contract method name
+   * @param {Array} args - Positional arguments
+   * @param {bigint} [value] - Exact msg.value (see nativeEthTotal)
+   * @returns {Promise<Object>} ethers TransactionResponse
    */
-  function fakeTxHash() {
-    v2TxCounter += 1;
-    return "0x" + v2TxCounter.toString(16).padStart(64, "0");
+  async function v2Send(method, args, value) {
+    await requireDeployed();
+    return invokeContract(method, args, value);
   }
 
   /**
-   * Resolves a stubbed transaction after a simulated confirmation delay.
-   * Shaped like an ethers TransactionResponse so call sites read normally.
-   * @param {string} method - Contract method name (for logging)
-   * @param {Object} args - Arguments that would be encoded
-   * @param {*} [result] - Value to attach to the receipt
-   * @returns {Promise<{hash: string, wait: function(): Promise<Object>}>}
+   * Shapes a sell-form row as a v2 CreateOrderParams struct. Built explicitly
+   * rather than passing the row through: the row also carries display fields,
+   * and the amounts must reach the encoder as integers.
+   * @param {Object} p - Row params from collectCreateParams
+   * @returns {{tokenA: string, amountA: bigint, tokenB: string, amountB: bigint, partialFillAllowed: boolean}}
    */
-  async function v2Send(method, args, result) {
-    logV2Call(method, args);
-    const hash = fakeTxHash();
-    return {
-      hash,
-      result,
-      wait: async () => {
-        await new Promise((resolve) => setTimeout(resolve, V2_SIM_DELAY_MS));
-        logV2Call(method + " -> confirmed", { hash, result });
-        return { hash, status: 1, logs: [], result };
-      },
-    };
-  }
-
-  /** Encodes a CreateOrderParams struct for logging. */
   function toCreateParams(p) {
     return {
       tokenA: p.tokenA,
-      amountA: p.amountA.toString(),
+      amountA: BigInt(p.amountA),
       tokenB: p.tokenB,
-      amountB: p.amountB.toString(),
-      partialFillAllowed: p.partialFillAllowed,
+      amountB: BigInt(p.amountB),
+      partialFillAllowed: p.partialFillAllowed === true,
     };
   }
 
+  /**
+   * Approves the Swapboard contract for `total` of `tokenAddress` when the
+   * existing allowance falls short.
+   * @param {string} tokenAddress - ERC20 address
+   * @param {bigint} total - Amount the transaction will move
+   * @returns {Promise<boolean>} True if an approval transaction was sent
+   */
+  async function ensureAllowance(tokenAddress, total) {
+    const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
+    const allowance = await tokenContract.allowance(userAddress, CONTRACT_ADDRESS);
+    if (allowance >= BigInt(total)) return false;
+
+    showToast("Approve tokens in wallet...", "info", true);
+    const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, total);
+    showToast("Waiting for approval tx...", "info", true);
+    await approveTx.wait();
+    showToast("Approval confirmed");
+    return true;
+  }
+
+  /**
+   * Estimates the gas cost of a call before showing the confirmation modal.
+   * Returns null on any failure — a missing estimate is not worth blocking a
+   * transaction over.
+   *
+   * @param {string} method - Contract method name
+   * @param {Array} args - Arguments to encode
+   * @param {bigint} [value] - msg.value for payable calls
+   * @returns {Promise<Object|null>} {gas, eth, usd} or null
+   */
+  async function estimateCall(method, args, value) {
+    if (!provider || !contract) return null;
+    try {
+      const txParams = {
+        from: userAddress,
+        to: CONTRACT_ADDRESS,
+        data: contract.interface.encodeFunctionData(method, args),
+      };
+      if (value !== undefined && value !== null) txParams.value = BigInt(value);
+      return await estimateGasCost(txParams);
+    } catch (e) {
+      console.error("Gas estimation failed:", e);
+      return null;
+    }
+  }
+
+  /**
+   * Waits for the subgraph to catch up with a transaction before reloading,
+   * so the table does not flash the pre-transaction state.
+   * @param {string} orderId - Order that changed
+   * @param {boolean} expectedActive - Active flag to wait for
+   */
+  async function syncAfter(orderId, expectedActive) {
+    // Mock orders are generated, not indexed — their state never changes, so
+    // polling would only burn the full timeout before giving up. Neither is
+    // there anything to wait on for a version with no subgraph deployed.
+    if (window.SWAPBOARD_MOCK || !CAPS.subgraphPolling) return;
+    await waitForOrderUpdate(orderId, expectedActive);
+  }
+
+  // ============================================================================
+  // V2 CONNECTOR
+  // ============================================================================
+  //
+  // Swapboard v2 per contracts/src/interfaces/ISwapboard.sol. What shapes the
+  // adapter:
+  //
+  //   * Native ETH rides the ordinary payable calls with an EXACT msg.value,
+  //     summed over every sentinel leg of the call (nativeEthTotal). The
+  //     contract refunds nothing; over or under reverts ETHAmountMismatch.
+  //   * createOrders nets ETH and ERC20 orders in one call, so a mixed batch is
+  //     one transaction, not one per settlement type.
+  //   * A fill is keyed on `amountB` — the payment — through fillOrder, so the
+  //     taker's spend is exact: an ERC20 is pulled for exactly that much
+  //     whatever allowance stands, and ETH is the exact msg.value. The tokenA
+  //     out is floored on chain and must reach `minAmountA`, the receive the
+  //     modal quoted (lib.js computeFillFromPayment() mirrors _quoteFill), so a
+  //     maker repricing between quote and fill reverts it rather than shorting
+  //     it. Paying the whole remainder receives exactly availableA.
+  //   * fillOrders and cancelOrders are all-or-nothing: one bad leg reverts the
+  //     whole call. There is no skip-and-continue variant.
+  // ============================================================================
+
   const V2 = {
-    /** @see ISwapboard.createOrder — offered token is an ERC20 */
+    /** @see ISwapboard.createOrder — tokenA may be the native-ETH sentinel */
     createOrder(tokenA, amountA, tokenB, amountB, partialFill) {
-      return v2Send("createOrder", {
+      const params = toCreateParams({
         tokenA,
-        amountA: amountA.toString(),
+        amountA,
         tokenB,
-        amountB: amountB.toString(),
-        partialFill,
+        amountB,
+        partialFillAllowed: partialFill,
       });
+      return v2Send("createOrder", [params], nativeEthTotal([{ token: tokenA, amount: amountA }]));
     },
 
-    /**
-     * @see ISwapboard.createOrderWithEth
-     * Offers native ETH: the offered amount rides in msg.value, so tokenA is
-     * implicit and never passed.
-     */
-    createOrderWithEth(tokenB, amountB, partialFill, value) {
-      return v2Send("createOrderWithEth", {
-        tokenB,
-        amountB: amountB.toString(),
-        partialFill,
-        value: value.toString(),
-      });
-    },
-
-    /** @see ISwapboard.createOrders — every offered token is an ERC20 */
+    /** @see ISwapboard.createOrders — ETH and ERC20 orders may be mixed */
     createOrders(params) {
-      return v2Send("createOrders", { params: params.map(toCreateParams) });
+      const legs = params.map((p) => ({ token: p.tokenA, amount: p.amountA }));
+      return v2Send("createOrders", [params.map(toCreateParams)], nativeEthTotal(legs));
     },
 
     /**
-     * @see ISwapboard.createOrdersWithEth
-     * Every order in the batch offers native ETH; msg.value is their total.
+     * Describes a fill paying exactly `amountB` of the wanted token, which
+     * reverts unless it pays out at least the quoted `amountA`.
+     * @see ISwapboard.fillOrder
+     * @param {Object} order - Order being filled
+     * @param {bigint} amountA - Quoted receive, sent as minAmountA
+     * @param {bigint} amountB - Exact payment
+     * @param {number} deadline - Unix timestamp the fill must land by
+     * @returns {{method: string, args: Array, value: bigint}}
      */
-    createOrdersWithEth(params, value) {
-      return v2Send("createOrdersWithEth", {
-        params: params.map(toCreateParams),
-        value: value.toString(),
-      });
+    fillCall(order, amountA, amountB, deadline) {
+      return {
+        method: "fillOrder",
+        args: [order.orderId, amountB, amountA, deadline],
+        value: nativeEthTotal([{ token: order.tokenB.address, amount: amountB }]),
+      };
     },
 
-    /** @see ISwapboard.fillOrder — fillAmountB of 0 means "fill the remainder" */
-    fillOrder(orderId, deadline, fillAmountB) {
-      return v2Send("fillOrder", {
-        orderId,
-        deadline,
-        fillAmountB: fillAmountB.toString(),
-      });
+    /** Sends a call described by fillCall. */
+    send({ method, args, value }) {
+      return v2Send(method, args, value);
     },
 
     /**
-     * @see ISwapboard.fillOrderWithEth
-     * Pays with native ETH. msg.value *is* the fill amount, so there is no
-     * separate fillAmountB argument.
+     * Takes every order in `orders` whole.
+     *
+     * Paying the full remainder is the one fill whose outcome is known without
+     * asking the chain: _quoteFill pays out exactly availableA for exactly
+     * availableB, with no rounding — so that is the minAmountA each leg is
+     * held to.
+     *
+     * @see ISwapboard.fillOrders
+     * @param {Object[]} orders - Orders to take, as indexed
+     * @param {number} deadline - Unix timestamp the batch must land by
      */
-    fillOrderWithEth(orderId, deadline, value) {
-      return v2Send("fillOrderWithEth", { orderId, deadline, value: value.toString() });
+    fillOrders(orders, deadline) {
+      const fills = orders.map((o) => ({
+        orderId: o.orderId,
+        amountB: BigInt(o.availableB),
+        minAmountA: BigInt(o.availableA),
+      }));
+      const legs = orders.map((o) => ({ token: o.tokenB.address, amount: o.availableB }));
+      return v2Send("fillOrders", [fills, deadline], nativeEthTotal(legs));
     },
 
-    /** @see ISwapboard.fillOrderUnwrap — taker receives native ETH */
-    fillOrderUnwrap(orderId, deadline, fillAmountB) {
-      return v2Send("fillOrderUnwrap", {
-        orderId,
-        deadline,
-        fillAmountB: fillAmountB.toString(),
-      });
-    },
-
-    /** @see ISwapboard.cancelOrder */
+    /** @see ISwapboard.cancelOrder — native ETH escrow is refunded as ETH */
     cancelOrder(orderId) {
-      return v2Send("cancelOrder", { orderId });
-    },
-
-    /** @see ISwapboard.cancelOrderUnwrap — maker receives native ETH */
-    cancelOrderUnwrap(orderId) {
-      return v2Send("cancelOrderUnwrap", { orderId });
-    },
-
-    /** @see ISwapboard.fillOrders */
-    fillOrders(orderIds, deadline, fillAmountsB) {
-      return v2Send("fillOrders", {
-        orderIds,
-        deadline,
-        fillAmountsB: fillAmountsB.map(String),
-      });
-    },
-
-    /**
-     * @see ISwapboard.tryFillOrders
-     * Skips orders that are no longer fillable instead of reverting the batch.
-     * The stub reports every order as filled.
-     */
-    tryFillOrders(orderIds, deadline, fillAmountsB) {
-      const filled = orderIds.map(() => true);
-      return v2Send(
-        "tryFillOrders",
-        { orderIds, deadline, fillAmountsB: fillAmountsB.map(String) },
-        filled
-      );
-    },
-
-    /**
-     * @see ISwapboard.tryFillOrdersWithEth
-     * Batch equivalent of fillOrderWithEth: msg.value covers the whole batch,
-     * and the contract refunds whatever the skipped orders did not consume.
-     */
-    tryFillOrdersWithEth(orderIds, deadline, fillAmountsB, value) {
-      const filled = orderIds.map(() => true);
-      return v2Send(
-        "tryFillOrdersWithEth",
-        {
-          orderIds,
-          deadline,
-          fillAmountsB: fillAmountsB.map(String),
-          value: value.toString(),
-        },
-        filled
-      );
+      return v2Send("cancelOrder", [orderId]);
     },
 
     /** @see ISwapboard.cancelOrders */
     cancelOrders(orderIds) {
-      return v2Send("cancelOrders", { orderIds });
-    },
-
-    /** @see ISwapboard.cancelOrdersUnwrap */
-    cancelOrdersUnwrap(orderIds) {
-      return v2Send("cancelOrdersUnwrap", { orderIds });
+      return v2Send("cancelOrders", [orderIds]);
     },
 
     /**
-     * Ensures the Swapboard contract can move `total` of `tokenAddress`.
-     * Batched: one approval covers every order in the batch using that token.
-     * @param {string} tokenAddress - ERC20 address (native ETH needs no approval)
-     * @param {bigint} total - Total amount the batch will move
-     * @returns {Promise<boolean>} True if an approval transaction was sent
+     * Native ETH moves as msg.value and has no allowance to set. Anything else
+     * checks the deployment first: an approval naming a spender that does not
+     * exist is a wasted transaction, and some tokens revert on the zero one.
      */
     async ensureAllowance(tokenAddress, total) {
       if (isNativeEth(tokenAddress)) return false;
-      logV2Call("ERC20.allowance", { token: tokenAddress, owner: userAddress });
-      const tx = await v2Send("ERC20.approve", {
-        token: tokenAddress,
-        spender: CONTRACT_ADDRESS,
-        amount: total.toString(),
-      });
-      await tx.wait();
-      return true;
+      await requireDeployed();
+      return ensureAllowance(tokenAddress, total);
     },
 
     /**
-     * No gas estimate in v2: there is no deployed ABI to encode against, and
-     * an invented number is worse than none.
-     * @returns {Promise<null>}
+     * Like v1's, except that with no deployment to simulate against it
+     * reports no estimate rather than one for a transfer to an empty address.
      */
-    async estimateFor() {
-      return null;
+    async estimateFor(method, args, value) {
+      try {
+        await requireDeployed();
+      } catch {
+        return null;
+      }
+      return estimateCall(method, args, value);
     },
 
-    /** No subgraph indexes v2 yet, so there is nothing to poll for. */
-    async syncAfter() {},
+    syncAfter,
   };
 
   // ============================================================================
@@ -2754,18 +2842,16 @@ ${orderFields}
   // Swapboard v1 at CONTRACT_ADDRESS is deployed, immutable, and holds
   // real funds. Every method here submits a real transaction.
   //
-  // The surface deliberately matches the V2 connector above so the call sites
-  // above this layer never branch on version — they call SB.<method> and the
-  // adapter decides what that means. Where v2 takes an argument v1 has no
-  // concept of (fillAmountB, partialFill), the v1 method accepts and ignores
-  // it; the UI never produces a meaningful value for it anyway, because
-  // CAPS.partialFill gates those controls off.
+  // Where v2 takes an argument v1 has no concept of (a fill's amounts,
+  // partialFill), the v1 method accepts and ignores it; the UI never produces
+  // a meaningful value for it anyway, because CAPS.partialFill gates those
+  // controls off.
   //
-  // The batch entry points (fillOrders / cancelOrders / createOrders and the
-  // tryFill variants) do not exist on v1 at all. They are present here only to
-  // throw a clear error: CAPS.batch keeps the selection UI hidden in v1, so
-  // reaching one of these means a gate was missed, and failing loudly beats
-  // silently sending one transaction where the user asked for twenty.
+  // The batch entry points (fillOrders / cancelOrders / createOrders) do not
+  // exist on v1 at all. They are present here only to throw a clear error:
+  // CAPS.batch keeps the selection UI hidden in v1, so reaching one of these
+  // means a gate was missed, and failing loudly beats silently sending one
+  // transaction where the user asked for twenty.
   // ============================================================================
 
   /** Rejects a v2-only batch call that leaked past a capability gate. */
@@ -2791,22 +2877,37 @@ ${orderFields}
     },
 
     createOrders: () => v1Unsupported("createOrders"),
-    createOrdersWithEth: () => v1Unsupported("createOrdersWithEth"),
 
-    /** @see Swapboard.fillOrder — v1 orders are all-or-nothing */
-    fillOrder(orderId, deadline) {
-      return contract.fillOrder(orderId, deadline);
+    /**
+     * Describes a fill. v1 orders are all-or-nothing, so neither amount is an
+     * argument; the payment matters only as msg.value when paying in ETH.
+     *
+     * Routing follows how each side has to settle:
+     *   - wanted token is WETH  -> fillOrderWithEth, so the taker can pay in
+     *                              ETH rather than wrapping first
+     *   - offered token is WETH -> fillOrderUnwrap, so the taker is paid in
+     *                              ETH rather than WETH
+     *   - otherwise             -> fillOrder, after an approval
+     *
+     * @returns {{method: string, args: Array, value?: bigint}}
+     */
+    fillCall(order, amountA, amountB, deadline) {
+      const { orderId } = order;
+      if (isNativeEth(order.tokenB.address) || isWeth(order.tokenB.address)) {
+        return { method: "fillOrderWithEth", args: [orderId, deadline], value: amountB };
+      }
+      if (isWeth(order.tokenA.address)) {
+        return { method: "fillOrderUnwrap", args: [orderId, deadline] };
+      }
+      return { method: "fillOrder", args: [orderId, deadline] };
     },
 
-    /** @see Swapboard.fillOrderWithEth — msg.value is the full wanted amount */
-    fillOrderWithEth(orderId, deadline, value) {
-      return contract.fillOrderWithEth(orderId, deadline, { value });
+    /** Sends a call described by fillCall. */
+    send({ method, args, value }) {
+      return invokeContract(method, args, value);
     },
 
-    /** @see Swapboard.fillOrderUnwrap — taker receives native ETH */
-    fillOrderUnwrap(orderId, deadline) {
-      return contract.fillOrderUnwrap(orderId, deadline);
-    },
+    fillOrders: () => v1Unsupported("fillOrders"),
 
     /** @see Swapboard.cancelOrder */
     cancelOrder(orderId) {
@@ -2818,70 +2919,11 @@ ${orderFields}
       return contract.cancelOrderUnwrap(orderId);
     },
 
-    fillOrders: () => v1Unsupported("fillOrders"),
-    tryFillOrders: () => v1Unsupported("tryFillOrders"),
-    tryFillOrdersWithEth: () => v1Unsupported("tryFillOrdersWithEth"),
     cancelOrders: () => v1Unsupported("cancelOrders"),
-    cancelOrdersUnwrap: () => v1Unsupported("cancelOrdersUnwrap"),
 
-    /**
-     * Approves the Swapboard contract for `total` of `tokenAddress` when the
-     * existing allowance falls short.
-     * @param {string} tokenAddress - ERC20 address
-     * @param {bigint} total - Amount the transaction will move
-     * @returns {Promise<boolean>} True if an approval transaction was sent
-     */
-    async ensureAllowance(tokenAddress, total) {
-      const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
-      const allowance = await tokenContract.allowance(userAddress, CONTRACT_ADDRESS);
-      if (allowance >= BigInt(total)) return false;
-
-      showToast("Approve tokens in wallet...", "info", true);
-      const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, total);
-      showToast("Waiting for approval tx...", "info", true);
-      await approveTx.wait();
-      showToast("Approval confirmed");
-      return true;
-    },
-
-    /**
-     * Estimates the gas cost of a call before showing the confirmation modal.
-     * Returns null on any failure — a missing estimate is not worth blocking a
-     * transaction over.
-     *
-     * @param {string} method - Contract method name
-     * @param {Array} args - Arguments to encode
-     * @param {bigint} [value] - msg.value for payable calls
-     * @returns {Promise<Object|null>} {gas, eth, usd} or null
-     */
-    async estimateFor(method, args, value) {
-      if (!provider || !contract) return null;
-      try {
-        const txParams = {
-          from: userAddress,
-          to: CONTRACT_ADDRESS,
-          data: contract.interface.encodeFunctionData(method, args),
-        };
-        if (value !== undefined && value !== null) txParams.value = BigInt(value);
-        return await estimateGasCost(txParams);
-      } catch (e) {
-        console.error("Gas estimation failed:", e);
-        return null;
-      }
-    },
-
-    /**
-     * Waits for the subgraph to catch up with a transaction before reloading,
-     * so the table does not flash the pre-transaction state.
-     * @param {string} orderId - Order that changed
-     * @param {boolean} expectedActive - Active flag to wait for
-     */
-    async syncAfter(orderId, expectedActive) {
-      // Mock orders are generated, not indexed — their state never changes, so
-      // polling would only burn the full timeout before giving up.
-      if (window.SWAPBOARD_MOCK) return;
-      await waitForOrderUpdate(orderId, expectedActive);
-    },
+    ensureAllowance,
+    estimateFor: estimateCall,
+    syncAfter,
   };
 
   /**
@@ -2902,29 +2944,31 @@ ${orderFields}
   /**
    * Builds the partial-fill controls for the fill confirmation.
    *
-   * The user types how much of the offered token they want to receive; the
-   * exact amount they pay is derived from it. Presets are percentages of what
-   * is *left* on the order, so they stay meaningful on a partly filled order.
+   * The user types how much of the wanted token they will pay. v2 fills by
+   * payment (fillOrder), so that figure is exactly what leaves their wallet,
+   * and what they receive is derived from it, floored as the contract floors
+   * it. That receive is also the minimum the fill will accept on chain. Presets are percentages of what is *left* on the order, so they
+   * stay meaningful on a partly filled order.
    *
    * @param {Object} order - Order being filled
-   * @param {function(bigint, bigint): void} onChange - Called with the quoted
-   *   tokenA (minAmountA) and the exact tokenB payment (amountB)
+   * @param {function(bigint, bigint): void} onChange - Called with the new
+   *   (tokenA received, tokenB paid)
    * @returns {HTMLElement}
    */
   function buildPartialFillControls(order, onChange) {
-    const remainingA = BigInt(order.availableA);
+    const remainingB = BigInt(order.availableB);
     const wrap = document.createElement("div");
     wrap.className = "partial-fill-controls";
 
     const label = document.createElement("label");
-    label.textContent = "Receive (" + order.tokenA.symbol + "):";
+    label.textContent = "Pay (" + order.tokenB.symbol + "):";
     wrap.appendChild(label);
 
     const inputRow = document.createElement("div");
     inputRow.className = "partial-fill-input-row";
     const input = document.createElement("input");
     input.type = "text";
-    input.value = formatAmount(remainingA, order.tokenA.decimals);
+    input.value = formatAmount(remainingB, order.tokenB.decimals);
     inputRow.appendChild(input);
     wrap.appendChild(inputRow);
 
@@ -2932,30 +2976,29 @@ ${orderFields}
     presets.className = "partial-fill-presets";
     wrap.appendChild(presets);
 
-    const send = document.createElement("div");
-    send.className = "partial-fill-send";
-    wrap.appendChild(send);
+    const quote = document.createElement("div");
+    quote.className = "partial-fill-quote";
+    wrap.appendChild(quote);
 
     /**
-     * Recomputes the payment for a desired receive amount and reports it.
-     * @param {bigint} receive - Desired amount of the offered token
+     * Recomputes what a payment receives and reports both.
+     * @param {bigint} pay - Wanted token the taker pays
      * @param {boolean} writeBack - Whether to rewrite the input box
      */
-    function update(receive, writeBack) {
-      const { amountB, minAmountA } = computeFillFromReceive(order, receive);
+    function update(pay, writeBack) {
+      const { amountA, amountB } = computeFillFromPayment(order, pay);
 
-      input.classList.toggle("input-error", amountB === 0n);
+      // A payment too small to buy one base unit is a fill the contract
+      // rejects (ZeroAmount), so it is flagged rather than offered.
+      input.classList.toggle("input-error", amountA === 0n);
       if (writeBack) {
-        input.value = formatAmount(minAmountA, order.tokenA.decimals);
+        input.value = formatAmount(amountB, order.tokenB.decimals);
       }
 
-      send.textContent =
-        "You send: " + formatAmount(amountB, order.tokenB.decimals) + " " + order.tokenB.symbol;
+      quote.textContent =
+        "You receive: " + formatAmount(amountA, order.tokenA.decimals) + " " + order.tokenA.symbol;
 
-      // Both halves are reported: v2 submits the exact tokenB payment *and*
-      // the tokenA it quotes as `minAmountA`. The quote can sit a base unit
-      // above what was typed, since the payment is rounded up to cover it.
-      onChange(minAmountA, amountB);
+      onChange(amountA, amountB);
     }
 
     for (const percent of [25, 50, 75, 100]) {
@@ -2966,7 +3009,7 @@ ${orderFields}
       btn.addEventListener("click", () => {
         for (const other of presets.children) other.classList.remove("active");
         btn.classList.add("active");
-        update((remainingA * BigInt(percent)) / 100n, true);
+        update((remainingB * BigInt(percent)) / 100n, true);
       });
       presets.appendChild(btn);
     }
@@ -2974,30 +3017,22 @@ ${orderFields}
 
     input.addEventListener("input", () => {
       for (const other of presets.children) other.classList.remove("active");
-      const { amount } = tryParseAmount(input.value, order.tokenA.decimals);
+      const { amount } = tryParseAmount(input.value, order.tokenB.decimals);
       update(amount === null ? 0n : amount, false);
     });
 
-    update(remainingA, false);
+    update(remainingB, false);
     return wrap;
   }
 
   /**
    * Fills a single order, optionally in part.
    *
-   * Routing follows how each side has to settle:
-   *   - wanted token is native ETH -> fillOrderWithEth (payable, no approval)
-   *   - wanted token is WETH       -> fillOrderWithEth, so the taker can pay
-   *                                   in ETH rather than wrapping first
-   *   - offered token is WETH      -> fillOrderUnwrap, so the taker is paid
-   *                                   in ETH rather than WETH
-   *   - otherwise                  -> approve + fillOrder
-   *
-   * An order offering *native* ETH needs no special call: the contract already
-   * escrows ETH and pays it straight out, so plain fillOrder is correct.
-   *
-   * A fillAmountB equal to the full remainder is submitted as 0, which the
-   * contract reads as "fill the entire remaining order".
+   * Which contract call that is belongs to the connector (SB.fillCall): v1
+   * routes WETH sides through its wrap/unwrap entry points, v2 fills by
+   * payment through fillOrder. What stays here is the one thing both
+   * agree on — paying in ETH (native, or v1's WETH) rides in msg.value and
+   * needs no approval.
    *
    * @param {Object} order - Order to fill
    */
@@ -3008,7 +3043,6 @@ ${orderFields}
     }
 
     const payWithEth = isNativeEth(order.tokenB.address) || isWeth(order.tokenB.address);
-    const unwrapToEth = isWeth(order.tokenA.address);
     const remainingA = BigInt(order.availableA);
     const remainingB = BigInt(order.availableB);
 
@@ -3039,12 +3073,8 @@ ${orderFields}
     let gasEstimate = null;
     if (CAPS.gasEstimate) {
       showToast("Estimating gas...");
-      gasEstimate = payWithEth
-        ? await SB.estimateFor("fillOrderWithEth", [order.orderId, estimateDeadline], remainingB)
-        : await SB.estimateFor(unwrapToEth ? "fillOrderUnwrap" : "fillOrder", [
-            order.orderId,
-            estimateDeadline,
-          ]);
+      const { method, args, value } = SB.fillCall(order, remainingA, remainingB, estimateDeadline);
+      gasEstimate = await SB.estimateFor(method, args, value);
     }
 
     showModal(
@@ -3052,31 +3082,26 @@ ${orderFields}
       body,
       async () => {
         try {
-          if (fillAmountB <= 0n) {
+          if (fillAmountA <= 0n || fillAmountB <= 0n) {
             showToast("Enter an amount to fill", "error");
             return;
           }
 
           const deadline = Math.floor(Date.now() / 1000) + 300;
-          // Submitted as-is: v2 keys a fill on the exact tokenB paid and takes
-          // the quoted tokenA as a floor, so neither value can be rounded off
-          // or replaced with a "fill the rest" sentinel.
-          const fillArg = fillAmountB;
 
-          let tx;
-          if (payWithEth) {
-            // Paying in ETH: the amount rides in msg.value, so nothing to approve.
-            showToast("Confirm fill in wallet...", "info", true);
-            tx = await SB.fillOrderWithEth(order.orderId, deadline, fillAmountB);
-          } else {
+          // Paying in ETH: the amount rides in msg.value, so nothing to approve.
+          if (!payWithEth) {
             showToast("Checking allowance...", "info", true);
             await SB.ensureAllowance(order.tokenB.address, fillAmountB);
-
-            showToast("Confirm fill in wallet...", "info", true);
-            tx = unwrapToEth
-              ? await SB.fillOrderUnwrap(order.orderId, deadline, fillArg)
-              : await SB.fillOrder(order.orderId, deadline, fillArg);
           }
+
+          // Submitted as-is: v2 fills by payment, so fillAmountB is exactly what
+          // the taker spends — pulled exactly for an ERC20 whatever allowance
+          // stands, and the exact msg.value for ETH. fillAmountA, the receive
+          // quoted above, is the least the chain may pay out: a maker repricing
+          // between quote and fill reverts the fill instead of shorting it.
+          showToast("Confirm fill in wallet...", "info", true);
+          const tx = await SB.send(SB.fillCall(order, fillAmountA, fillAmountB, deadline));
 
           showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
@@ -3243,9 +3268,9 @@ ${orderFields}
    * Fills every selected order.
    *
    * Selection rules guarantee a single token pair, so one approval covers the
-   * whole batch and the totals in the confirmation are meaningful. Orders are
-   * filled to their full remaining amount (fillAmountB of 0); partial fill is
-   * intentionally not offered for batches.
+   * whole batch and the totals in the confirmation are meaningful. Each order is
+   * taken whole, at its full remainder; partial fill is intentionally not
+   * offered for batches.
    */
   async function fillSelectedOrders() {
     const orders = getSelectedOrders();
@@ -3297,16 +3322,18 @@ ${orderFields}
     if (payWithEth) {
       const note = document.createElement("div");
       note.className = "batch-summary-note";
-      note.textContent =
-        "Paid in ETH, so no token approval is needed. Anything the skipped orders don't use is refunded.";
+      note.textContent = "Paid in ETH, so no token approval is needed.";
       body.appendChild(note);
     }
 
-    const skipNote = document.createElement("div");
-    skipNote.className = "batch-summary-note";
-    skipNote.textContent =
-      "Orders that are no longer fillable when the transaction lands are skipped; the rest still fill.";
-    body.appendChild(skipNote);
+    // fillOrders has no skip-and-continue mode: one leg the order can no longer
+    // take as selected reverts the whole call.
+    const atomicNote = document.createElement("div");
+    atomicNote.className = "batch-summary-note";
+    atomicNote.textContent =
+      "Each transaction is all-or-nothing: if any order in it has been filled, cancelled or " +
+      "changed by the time it lands, that transaction reverts and nothing in it is spent.";
+    body.appendChild(atomicNote);
 
     appendBatchTxNote(body, orders.length, CONFIG.MAX_BATCH_FILL);
 
@@ -3320,19 +3347,9 @@ ${orderFields}
         const deadline = Math.floor(Date.now() / 1000) + 300;
         const chunks = chunkArray(orders, CONFIG.MAX_BATCH_FILL);
 
-        const filled = await runBatchTransactions(chunks, "Filling", (chunk) => {
-          const ids = chunk.map((o) => o.orderId);
-          // fillAmountB of 0 means "fill the entire remaining amount", which
-          // is also what finishes off already partially filled orders.
-          const amounts = chunk.map(() => 0n);
-
-          if (!payWithEth) return SB.tryFillOrders(ids, deadline, amounts);
-
-          // Paying in ETH: msg.value covers this chunk, and the contract
-          // refunds whatever any skipped orders leave unspent.
-          const chunkValue = chunk.reduce((sum, o) => sum + BigInt(o.availableB), 0n);
-          return SB.tryFillOrdersWithEth(ids, deadline, amounts, chunkValue);
-        });
+        const filled = await runBatchTransactions(chunks, "Filling", (chunk) =>
+          SB.fillOrders(chunk, deadline)
+        );
 
         clearSelection(false);
         showToast(`Filled ${filled} orders! Syncing...`, "success", true);
@@ -3350,8 +3367,8 @@ ${orderFields}
    * Cancels every selected order.
    *
    * Own orders may span different pairs, so totals are grouped per offered
-   * token. Orders offering WETH are routed to cancelOrdersUnwrap so the maker
-   * gets native ETH back, matching the single-order behaviour.
+   * token. Batching is v2-only, and v2 has no unwrap: an order escrowing native
+   * ETH refunds ETH and one escrowing WETH refunds WETH, all in one call.
    */
   async function cancelSelectedOrders() {
     const orders = getSelectedOrders();
@@ -3397,23 +3414,10 @@ ${orderFields}
 
     showModal(`Cancel ${orders.length} Orders`, body, async () => {
       try {
-        // Split by settlement type first so each transaction is homogeneous,
-        // then by batch size.
-        // Only WETH needs unwrapping; a native-ETH order already escrows ETH.
-        const needsUnwrap = (o) => isWeth(o.tokenA.address);
-        const unwrap = orders.filter(needsUnwrap);
-        const plain = orders.filter((o) => !needsUnwrap(o));
-
-        let cancelled = 0;
-        cancelled += await runBatchTransactions(
-          chunkArray(plain, CONFIG.MAX_BATCH_CANCEL),
+        const cancelled = await runBatchTransactions(
+          chunkArray(orders, CONFIG.MAX_BATCH_CANCEL),
           "Cancelling",
           (chunk) => SB.cancelOrders(chunk.map((o) => o.orderId))
-        );
-        cancelled += await runBatchTransactions(
-          chunkArray(unwrap, CONFIG.MAX_BATCH_CANCEL),
-          "Cancelling",
-          (chunk) => SB.cancelOrdersUnwrap(chunk.map((o) => o.orderId))
         );
 
         clearSelection(false);
@@ -3948,12 +3952,14 @@ ${orderFields}
     });
     body.appendChild(list);
 
-    // Orders offering ETH go out through the payable entry point, so they are
-    // submitted separately from the ERC20 ones. What counts as "offering ETH"
-    // is version-dependent: v2 means the native-ETH sentinel, v1 means WETH.
+    // Orders offering ETH escrow it through msg.value instead of an approval.
+    // What counts as "offering ETH" is version-dependent: v2 means the
+    // native-ETH sentinel, v1 means WETH. v2 takes those on its ordinary entry
+    // points, mixed in with ERC20 orders in the same batch; v1 reaches ETH only
+    // through createOrderWithEth, so there they go out as separate calls.
     const offersEth = (p) => offersEthDirectly(p.tokenA, ACTIVE_VERSION, isWeth);
-    const ethParams = params.filter(offersEth);
-    const erc20Params = params.filter((p) => !offersEth(p));
+    const ethParams = CAPS.nativeEth ? [] : params.filter(offersEth);
+    const erc20Params = CAPS.nativeEth ? params : params.filter((p) => !offersEth(p));
 
     // Without batch entry points every order is its own transaction.
     const createChunkSize = CAPS.batch ? CONFIG.MAX_BATCH_CREATE : 1;
@@ -4011,22 +4017,16 @@ ${orderFields}
                 : SB.createOrders(chunk)
           );
 
-          // Offering ETH means the amount rides in msg.value, so these go
-          // through the payable variant with no tokenA argument.
-          await runBatchTransactions(
-            chunkArray(ethParams, createChunkSize),
-            "Creating",
-            (chunk) => {
-              const value = chunk.reduce((sum, p) => sum + p.amountA, 0n);
-              return chunk.length === 1
-                ? SB.createOrderWithEth(
-                    chunk[0].tokenB,
-                    chunk[0].amountB,
-                    chunk[0].partialFillAllowed,
-                    value
-                  )
-                : SB.createOrdersWithEth(chunk, value);
-            }
+          // v1 only (empty on v2): offering WETH means the amount rides in
+          // msg.value through the payable variant, with no tokenA argument.
+          // Without batching every chunk here is a single order.
+          await runBatchTransactions(chunkArray(ethParams, createChunkSize), "Creating", (chunk) =>
+            SB.createOrderWithEth(
+              chunk[0].tokenB,
+              chunk[0].amountB,
+              chunk[0].partialFillAllowed,
+              chunk[0].amountA
+            )
           );
 
           showToast("Orders created! Updating...", "success", true);
@@ -4230,7 +4230,7 @@ ${orderFields}
         loadStats();
       });
 
-      contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB, partialFillAllowed) => {
+      contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
         loadOrders();
         loadStats();
       });
@@ -5086,7 +5086,7 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
               loadStats();
             });
 
-            contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB, partialFillAllowed) => {
+            contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
               loadOrders();
               loadStats();
             });
@@ -5174,9 +5174,10 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
       createCopyButton,
       createTokenSelector,
       disconnectWallet,
+      ensureAllowance,
+      estimateCall,
       estimateGasCost,
       exportMyOrders,
-      fakeTxHash,
       fetchTokenInfo,
       fetchUniswapTokenList,
       fillOrderModalAmount,
@@ -5211,7 +5212,6 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
       loadStats,
       loadTokenFilters,
       loadUserApprovals,
-      logV2Call,
       openOrderModal,
       orderColumnCount,
       preferredQuoteSide,
@@ -5226,6 +5226,7 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
       renderSkeletonRows,
       renderTokenInfoLine,
       requestNotificationPermission,
+      requireDeployed,
       resetCreateForm,
       resolveBuildInfo,
       resolveEns,
@@ -5251,6 +5252,7 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
       startAutoRefresh,
       switchToExpectedNetwork,
       switchWallet,
+      syncAfter,
       toCreateParams,
       toggleNotifications,
       toggleOrderSelection,
