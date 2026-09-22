@@ -120,18 +120,30 @@ function makeOrder(over = {}) {
       decimals: 18,
     },
     tokenB = { address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6 },
+    amountA = "1000000000000000000",
+    amountB = "3000000000",
+    // Remaining defaults to the whole order, so a test that sets only amountA
+    // gets an untouched order rather than one that is mysteriously part-filled.
+    availableA = amountA,
+    availableB = amountB,
+    active = true,
+    taker = null,
+    // Derived the way normalizeOrder derives it, so a fixture cannot describe a
+    // state the subgraph would never produce.
+    status = active ? "OPEN" : taker ? "FILLED" : "CANCELED",
     ...rest
   } = over;
   return {
     orderId,
     maker,
-    amountA: "1000000000000000000",
-    amountB: "3000000000",
-    originalAmountA: "1000000000000000000",
-    originalAmountB: "3000000000",
-    partialFill: false,
-    active: true,
-    taker: null,
+    amountA,
+    amountB,
+    availableA,
+    availableB,
+    partialFillAllowed: false,
+    status,
+    active,
+    taker,
     createdAt: "1700000000",
     filledAt: null,
     tokenA,
@@ -1346,6 +1358,25 @@ async function flush(times = 4) {
 }
 
 /**
+ * Waits for a condition rather than for a fixed number of ticks.
+ *
+ * Some handlers kick off a reload whose length depends on state — a second
+ * page load skips the price fetch when the prices are already cached, for
+ * instance — so counting ticks makes the test pass or fail on ordering rather
+ * than on behaviour.
+ *
+ * @param {function(): boolean} predicate - Condition to wait for
+ * @param {number} [ticks] - Maximum ticks to wait before giving up
+ */
+async function until(predicate, ticks = 50) {
+  for (let i = 0; i < ticks; i++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("Condition was never met: " + predicate.toString());
+}
+
+/**
  * Clicks the modal's confirm button and lets the handler settle.
  *
  * The v2 connector simulates confirmation with a real 700ms timer per
@@ -1450,14 +1481,14 @@ describe("v2 simulated transactions", () => {
         amountA: 10n,
         tokenB: "0xb",
         amountB: 20n,
-        partialFill: true,
+        partialFillAllowed: true,
       })
     ).toEqual({
       tokenA: "0xa",
       amountA: "10",
       tokenB: "0xb",
       amountB: "20",
-      partialFill: true,
+      partialFillAllowed: true,
     });
   });
 
@@ -1469,7 +1500,7 @@ describe("v2 simulated transactions", () => {
 describe("buildPartialFillControls", () => {
   /** A v2 order that opted into partial fills. */
   function partialOrder() {
-    return makeOrder({ partialFill: true });
+    return makeOrder({ partialFillAllowed: true });
   }
 
   test("opens on the full remaining amount", () => {
@@ -1544,7 +1575,7 @@ describe("handleFillOrder", () => {
     await connect(v2, h2);
     jest.spyOn(console, "info").mockImplementation(() => {});
 
-    await v2.handleFillOrder(makeOrder({ partialFill: true }));
+    await v2.handleFillOrder(makeOrder({ partialFillAllowed: true }));
     await confirmModal();
     await new Promise((r) => setTimeout(r, 50));
     console.info.mockRestore();
@@ -1560,7 +1591,7 @@ describe("handleFillOrder", () => {
     jest.spyOn(console, "info").mockImplementation(() => {});
 
     // Drive the confirm path with an order whose amounts make fillAmountB zero.
-    const zero = makeOrder({ amountB: "0", partialFill: false });
+    const zero = makeOrder({ amountB: "0", partialFillAllowed: false });
     await v2.handleFillOrder(zero);
     await confirmModal();
     expect(document.querySelector("#toast").textContent).toMatch(/Enter an amount|Fill/i);
@@ -4059,10 +4090,17 @@ describe("remaining wiring", () => {
     routeFetch({ orders: page });
     await mod.loadOrders();
 
+    // Each click triggers a reload, and waiting for the page indicator rather
+    // than for a tick count keeps this from turning on whether the second load
+    // skipped the price fetch.
     document.querySelector("#next-page").click();
-    await flush();
+    await until(() => document.querySelector("#page-info").textContent === "Page 2");
+    // Paging forward is what makes going back possible, and a still-disabled
+    // button would swallow the click below without failing anything.
+    expect(document.querySelector("#prev-page").disabled).toBe(false);
+
     document.querySelector("#prev-page").click();
-    await flush();
+    await until(() => document.querySelector("#page-info").textContent === "Page 1");
     expect(global.fetch).toHaveBeenCalled();
   });
 
@@ -4189,7 +4227,7 @@ describe("v2 single-order entry points", () => {
 
   test("an all-or-nothing fill goes through fillOrder", async () => {
     const { mod } = await v2();
-    await mod.handleFillOrder(makeOrder({ partialFill: false }));
+    await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
     await confirmModal({ settleMs: 2400 });
     expect(document.querySelector("#toast").textContent).toMatch(/filled/i);
   }, 20000);
@@ -4197,7 +4235,10 @@ describe("v2 single-order entry points", () => {
   test("an ETH-wanted fill goes through fillOrderWithEth", async () => {
     const { mod } = await v2();
     await mod.handleFillOrder(
-      makeOrder({ partialFill: false, tokenB: { address: NATIVE, symbol: "ETH", decimals: 18 } })
+      makeOrder({
+        partialFillAllowed: false,
+        tokenB: { address: NATIVE, symbol: "ETH", decimals: 18 },
+      })
     );
     await confirmModal({ settleMs: 2400 });
     expect(document.querySelector("#toast").textContent).toMatch(/filled/i);
@@ -4212,7 +4253,7 @@ describe("v2 single-order entry points", () => {
 
   test("v2 offers no gas estimate", async () => {
     const { mod } = await v2();
-    await mod.handleFillOrder(makeOrder({ partialFill: false }));
+    await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
     expect(document.querySelector("#modal-body .gas-estimate")).toBeNull();
   }, 20000);
 
@@ -4392,14 +4433,16 @@ describe("connector adapters", () => {
 
     test("createOrders encodes each param struct", async () => {
       await expectSimulatedTx(
-        v2.V2.createOrders([{ tokenA: A, amountA: 1n, tokenB: B, amountB: 2n, partialFill: true }])
+        v2.V2.createOrders([
+          { tokenA: A, amountA: 1n, tokenB: B, amountB: 2n, partialFillAllowed: true },
+        ])
       );
     });
 
     test("createOrdersWithEth carries the batch total as value", async () => {
       await expectSimulatedTx(
         v2.V2.createOrdersWithEth(
-          [{ tokenA: A, amountA: 1n, tokenB: B, amountB: 2n, partialFill: true }],
+          [{ tokenA: A, amountA: 1n, tokenB: B, amountB: 2n, partialFillAllowed: true }],
           1n
         )
       );
@@ -4787,9 +4830,16 @@ describe("coverage of remaining branches", () => {
     mod.watchOrder(open);
     mod.watchOrder(other);
 
+    // Status is what the subgraph reports now, not something inferred from
+    // active + taker, so the changed orders have to carry it.
     mod.checkWatchedOrders([
-      { ...open, active: false, taker: "0xbbbb000000000000000000000000000000000001" },
-      { ...other, active: false, taker: null },
+      {
+        ...open,
+        active: false,
+        status: "FILLED",
+        taker: "0xbbbb000000000000000000000000000000000001",
+      },
+      { ...other, active: false, status: "CANCELED", taker: null },
     ]);
 
     const watched = mod.getWatchedOrders();
