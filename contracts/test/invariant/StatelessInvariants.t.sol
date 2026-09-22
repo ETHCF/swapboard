@@ -109,7 +109,6 @@ contract SwapboardStatelessInvariantTest is Test {
         uint128 remainingB = amountB - uint128(amountBIn);
         if (remainingA == 0 || remainingB == 0) {
             assertEq(order.maker, address(0));
-            assertFalse(order.active);
             return;
         }
 
@@ -149,7 +148,6 @@ contract SwapboardStatelessInvariantTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, address(0));
-        assertFalse(order.active);
         assertEq(order.availableA, 0);
         assertEq(order.availableB, 0);
     }
@@ -194,7 +192,6 @@ contract SwapboardStatelessInvariantTest is Test {
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, address(0));
-        assertFalse(order.active);
         assertEq(order.amountA, 0);
         assertEq(order.amountB, 0);
         assertEq(order.availableA, 0);
@@ -235,7 +232,7 @@ contract SwapboardStatelessInvariantTest is Test {
         vm.stopPrank();
 
         ISwapboard.Order memory afterFirst = _board.getOrder(orderId);
-        vm.assume(afterFirst.active && afterFirst.availableA > 0 && afterFirst.availableB > 0);
+        vm.assume(afterFirst.maker != address(0) && afterFirst.availableA > 0 && afterFirst.availableB > 0);
 
         uint256 filledA1 = uint256(afterFirst.amountA) - uint256(afterFirst.availableA);
         uint256 filledB1 = uint256(afterFirst.amountB) - uint256(afterFirst.availableB);
@@ -252,7 +249,6 @@ contract SwapboardStatelessInvariantTest is Test {
 
         ISwapboard.Order memory afterSecond = _board.getOrder(orderId);
         if (afterSecond.maker == address(0)) {
-            assertFalse(afterSecond.active);
             return;
         }
 
@@ -447,7 +443,7 @@ contract SwapboardStatelessInvariantTest is Test {
         assertFalse(_board.canFill(orderId));
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
-        assertFalse(order.active);
+        assertEq(order.maker, address(0));
     }
 
     /// @notice Property: nextOrderId monotonically increases

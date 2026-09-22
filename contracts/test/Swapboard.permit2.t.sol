@@ -50,7 +50,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_plainOrder(), permit);
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
         assertEq(_tokenA.allowance(_maker, address(_board)), 0);
     }
@@ -63,7 +63,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder(_plainOrder(), _skipPermit2());
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A);
     }
 
@@ -88,7 +88,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         vm.prank(_maker);
         uint256 orderId = _board.createOrder{value: _AMOUNT_A}(_ethOffered(), _skipPermit2());
 
-        assertTrue(_board.getOrder(orderId).active);
+        assertNotEq(_board.getOrder(orderId).maker, address(0));
         assertEq(address(_board).balance, _AMOUNT_A);
     }
 

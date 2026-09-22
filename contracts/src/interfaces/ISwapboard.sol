@@ -16,8 +16,9 @@ interface ISwapboard is ISemver {
     /// @dev `uint128` amounts are sufficient for practical order sizes (e.g. ~3.4e20 wei ≈
     ///      340B tokens at 18 decimals).
     ///      Fill progress is `(amountA - availableA) / amountA` (and likewise for B).
+    ///      `maker == address(0)` means the order never existed or is gone (full fills and cancels
+    ///      `delete` storage); a stored order is always fillable.
     /// @param maker Address that created the order and deposited tokenA
-    /// @param active Whether the order can still be filled or cancelled
     /// @param partialFillAllowed Whether the order may be filled in multiple parts
     /// @param tokenA Address of the token being sold (held in escrow)
     /// @param tokenB Address of the token maker wants to receive
@@ -27,7 +28,6 @@ interface ISwapboard is ISemver {
     /// @param availableB Remaining tokenB still required to complete the order
     struct Order {
         address maker;
-        bool active;
         bool partialFillAllowed;
         address tokenA;
         address tokenB;
@@ -97,7 +97,9 @@ interface ISwapboard is ISemver {
 
     /// @notice EIP-2612 permit for a single known token (create/fill/modify)
     /// @dev `v == 0` skips the permit (use when the caller already has allowance). Spender is
-    ///      always this Swapboard. Native ETH with `v != 0` reverts `PermitOnNative`.
+    ///      always this Swapboard. Native ETH with `v != 0` reverts `PermitOnNative`. The `permit`
+    ///      call is also skipped when the current allowance already covers `value`, so a signature
+    ///      whose nonce was already consumed (anyone may submit it first) does not block the pull.
     /// @param value Allowance value signed by the owner
     /// @param deadline Unix timestamp after which the permit is invalid
     /// @param v Signature v (27/28); 0 means skip
@@ -112,9 +114,10 @@ interface ISwapboard is ISemver {
     }
 
     /// @notice EIP-2612 permit for one ERC20 in a batch (createOrders/fillOrders/modifyOrders)
-    /// @dev Every entry is applied (`v == 0` reverts `InvalidPermit`). Duplicate `token` values
-    ///      revert `DuplicatePermitToken`. An unused entry reverts `UnusedPermit`. Empty array means
-    ///      no permits.
+    /// @dev Every entry is applied (`v == 0` reverts `InvalidPermit`), except that the `permit`
+    ///      call is skipped when the current allowance already covers `value`. Duplicate `token`
+    ///      values revert `DuplicatePermitToken`. An unused entry reverts `UnusedPermit`. Empty
+    ///      array means no permits.
     /// @param token ERC20 to permit (not the ETH sentinel)
     /// @param v Signature v (27/28)
     /// @param value Allowance value signed by the owner
@@ -236,12 +239,6 @@ interface ISwapboard is ISemver {
     /// @notice Thrown when attempting to interact with a non-existent order
     /// @param orderId The order ID that was not found
     error OrderNotFound(uint256 orderId);
-
-    /// @notice Thrown when attempting to operate on an inactive order that still exists
-    /// @dev Full fills and cancels `delete` storage, so those paths revert with `OrderNotFound`
-    ///      instead. `OrderNotActive` remains for any residual inactive-but-present shell.
-    /// @param orderId The order ID that is not active
-    error OrderNotActive(uint256 orderId);
 
     /// @notice Thrown when someone other than the maker tries to cancel an order
     /// @param orderId The order ID
@@ -436,7 +433,7 @@ interface ISwapboard is ISemver {
     /// @notice Fills multiple orders in one call by exact tokenB sent
     /// @dev The same `orderId` may appear more than once when the order allows partial fills and
     ///      still has remaining liquidity; otherwise later legs revert (`FillAmountTooHigh` /
-    ///      `OrderNotActive` / `PartialFillNotAllowed`). ERC20 tokenB payments are aggregated per
+    ///      `OrderNotFound` / `PartialFillNotAllowed`). ERC20 tokenB payments are aggregated per
     ///      unique `(maker, token)` and pulled directly to each maker; ETH tokenB is summed into
     ///      one `msg.value` check. tokenA payouts to the taker are aggregated.
     /// @param fills Fill arguments in execution order
@@ -600,9 +597,9 @@ interface ISwapboard is ISemver {
     ) external view returns (Order[] memory);
 
     /// @notice Checks whether an order can be filled
-    /// @dev Returns false for non-existent orders (they have active=false by default)
+    /// @dev Returns false for orders that never existed and for filled/cancelled ones (deleted)
     /// @param orderId The unique identifier of the order to check
-    /// @return Whether the order exists and is active
+    /// @return Whether the order exists
     function canFill(
         uint256 orderId
     ) external view returns (bool);
