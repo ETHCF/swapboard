@@ -2413,7 +2413,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer
     ///         rebase / phantom transfers
-    /// @dev `Token.safeTransferFrom` no-ops when `amount == 0`. Native token is rejected by callers.
+    /// @dev `Token.safeTransferFrom` no-ops when `amount == 0` and reverts `TransferFromOnNative` for the ETH sentinel.
     /// @param token ERC20 token to pull from the caller
     /// @param amount Expected amount received
     function _pullExactToken(
