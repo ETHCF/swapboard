@@ -55,14 +55,14 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      - Every ERC20 payment is verified against the recipient's balance delta, so an address that
 ///        does not retain the token (a vault that forwards/stakes/burns it in a transfer hook, or a
 ///        hooked token) reverts `BalanceMismatch`. A maker's orders are then unfillable, and a taker
-///        cannot receive that tokenA. Recipients must simply hold the token.
+///        cannot receive that tokenA unless they name a recipient that holds it.
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
 ///        can run `receive`/`fallback`; always after state updates (CEI)
-///      - ETH always goes to `msg.sender`; no path takes a recipient override. An address that
-///        reverts on receiving ETH (or self-destructs) locks itself out of native-ETH orders: as a
-///        maker it can never `cancelOrder` an ETH-tokenA order, so that escrow stays here forever,
-///        and its ETH-tokenB orders are unfillable; as a taker it cannot fill ETH-tokenA orders.
-///        Self-inflicted and unprofitable for third parties, but it can waste counterparty gas
+///      - Fill, cancel, and modify take an optional `recipient`. `address(0)` pays `msg.sender`.
+///        Any other address receives the caller's ETH and tokens (tokenA on fill, tokenA refunds
+///        on cancel and modify). TokenB still goes to the maker, so a maker that rejects ETH
+///        still cannot be paid ETH tokenB. A caller that rejects ETH, or cannot hold the ERC20,
+///        can name an address that can.
 ///      - Floor rounding on `fillOrder` may leave tokenA dust in escrow; refunding that dust is
 ///        not worth the gas. It can later benefit a user who rounds favorably on another fill
 ///        where that dust token is tokenB
@@ -252,9 +252,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @inheritdoc ISwapboard
     /// @dev ERC20 tokenB is pulled directly to the maker via `_transferExactFrom`, and ERC20
-    ///      tokenA is sent to the taker via `_transferExactTo`. Both reject fee-on-transfer /
-    ///      mid-transfer rebase / phantom via `BalanceMismatch`. ETH uses `msg.value` then
-    ///      `sendValue`.
+    ///      tokenA is sent via `_transferExactTo` to `recipient` (`address(0)` pays the taker).
+    ///      Both reject fee-on-transfer / mid-transfer rebase / phantom via `BalanceMismatch`.
+    ///      ETH uses `msg.value` then `sendValue`.
     ///      tokenB in is the exact `amountB` the taker specified. tokenA out uses floor division
     ///      so the taker never over-receives relative to the escrow ratio. Residual tokenA dust
     ///      is not refunded.
@@ -262,9 +262,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId,
         uint128 amountB,
         uint128 minAmountA,
-        uint256 deadline
+        uint256 deadline,
+        address recipient
     ) external payable nonReentrant {
-        _fillOrder(orderId, amountB, minAmountA, deadline);
+        _fillOrder(orderId, amountB, minAmountA, deadline, recipient);
     }
 
     /// @inheritdoc ISwapboard
@@ -273,9 +274,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountB,
         uint128 minAmountA,
         uint256 deadline,
-        Permit calldata permit
+        Permit calldata permit,
+        address recipient
     ) external payable nonReentrant {
-        _permitAndSettleFill(_beginFill(orderId, amountB, minAmountA, deadline), permit);
+        _permitAndSettleFill(_beginFill(orderId, amountB, minAmountA, deadline), permit, recipient);
     }
 
     /// @inheritdoc ISwapboard
@@ -284,61 +286,67 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint128 amountB,
         uint128 minAmountA,
         uint256 deadline,
-        Permit2Permit calldata permit
+        Permit2Permit calldata permit,
+        address recipient
     ) external payable nonReentrant {
-        _permit2AndSettleFill(_beginFill(orderId, amountB, minAmountA, deadline), permit);
-    }
-
-    /// @inheritdoc ISwapboard
-    function fillOrders(
-        FillOrderParams[] calldata fills,
-        uint256 deadline
-    ) external payable nonReentrant {
-        _fillOrders(fills, deadline);
+        _permit2AndSettleFill(_beginFill(orderId, amountB, minAmountA, deadline), permit, recipient);
     }
 
     /// @inheritdoc ISwapboard
     function fillOrders(
         FillOrderParams[] calldata fills,
         uint256 deadline,
-        TokenPermit[] calldata permits
+        address recipient
     ) external payable nonReentrant {
-        if (permits.length == 0) {
-            _fillOrders(fills, deadline);
-
-            return;
-        }
-
-        _fillOrdersWithPermits(fills, deadline, permits);
+        _fillOrders(fills, deadline, recipient);
     }
 
     /// @inheritdoc ISwapboard
     function fillOrders(
         FillOrderParams[] calldata fills,
         uint256 deadline,
-        TokenPermit2[] calldata permits
+        TokenPermit[] calldata permits,
+        address recipient
     ) external payable nonReentrant {
         if (permits.length == 0) {
-            _fillOrders(fills, deadline);
+            _fillOrders(fills, deadline, recipient);
 
             return;
         }
 
-        _fillOrdersPermit2(fills, deadline, permits);
+        _fillOrdersWithPermits(fills, deadline, permits, recipient);
+    }
+
+    /// @inheritdoc ISwapboard
+    function fillOrders(
+        FillOrderParams[] calldata fills,
+        uint256 deadline,
+        TokenPermit2[] calldata permits,
+        address recipient
+    ) external payable nonReentrant {
+        if (permits.length == 0) {
+            _fillOrders(fills, deadline, recipient);
+
+            return;
+        }
+
+        _fillOrdersPermit2(fills, deadline, permits, recipient);
     }
 
     /// @inheritdoc ISwapboard
     function cancelOrder(
-        uint256 orderId
+        uint256 orderId,
+        address recipient
     ) external nonReentrant {
-        _cancelOrder(orderId);
+        _cancelOrder(orderId, recipient);
     }
 
     /// @inheritdoc ISwapboard
     function cancelOrders(
-        uint256[] calldata orderIds
+        uint256[] calldata orderIds,
+        address recipient
     ) external nonReentrant {
-        _cancelOrders(orderIds);
+        _cancelOrders(orderIds, recipient);
     }
 
     /// @notice Modifies an existing order's remaining liquidity
@@ -347,15 +355,18 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ///      remaining amounts; totals are reset to those remainings. TokenA escrow is refunded or
     ///      topped-up for the availableA delta. `ZeroAmount` blocks remaining 0 — cancel instead.
     ///      `NoChange` when both remainings already match on-chain. Batch path: `modifyOrders`.
+    ///      `recipient == address(0)` pays the maker for refunds.
     /// @param orderId The unique identifier of the order to modify
     /// @param previousAmounts Expected current amounts from the caller's snapshot (race protection)
     /// @param updatedOrder Desired remaining amounts
+    /// @param recipient Address that receives a tokenA refund (`address(0)` pays the maker)
     function modifyOrder(
         uint256 orderId,
         OrderAmounts calldata previousAmounts,
-        ModifyOrderParams calldata updatedOrder
+        ModifyOrderParams calldata updatedOrder,
+        address recipient
     ) external payable nonReentrant {
-        _modifyOrder(orderId, previousAmounts, updatedOrder);
+        _modifyOrder(orderId, previousAmounts, updatedOrder, recipient);
     }
 
     /// @inheritdoc ISwapboard
@@ -363,7 +374,8 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId,
         OrderAmounts calldata previousAmounts,
         ModifyOrderParams calldata updatedOrder,
-        Permit calldata permit
+        Permit calldata permit,
+        address recipient
     ) external payable nonReentrant {
         ModifyLeg memory leg = _applyOneModifyEffect(orderId, previousAmounts, updatedOrder);
         // Non-skip permit with no top-up would burn the nonce without a pull.
@@ -374,7 +386,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             revert UnusedPermit();
         }
         _permit(leg.tokenA, permit);
-        _settleModifyLeg(leg);
+        _settleModifyLeg(leg, recipient);
     }
 
     /// @inheritdoc ISwapboard
@@ -382,45 +394,49 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         uint256 orderId,
         OrderAmounts calldata previousAmounts,
         ModifyOrderParams calldata updatedOrder,
-        Permit2Permit calldata permit
+        Permit2Permit calldata permit,
+        address recipient
     ) external payable nonReentrant {
         ModifyLeg memory leg = _applyOneModifyEffect(orderId, previousAmounts, updatedOrder);
-        _settleModifyLegPermit2(leg, permit);
-    }
-
-    /// @inheritdoc ISwapboard
-    function modifyOrders(
-        ModifyOrdersParams[] calldata mods
-    ) external payable nonReentrant {
-        _modifyOrders(mods);
+        _settleModifyLegPermit2(leg, permit, recipient);
     }
 
     /// @inheritdoc ISwapboard
     function modifyOrders(
         ModifyOrdersParams[] calldata mods,
-        TokenPermit[] calldata permits
+        address recipient
     ) external payable nonReentrant {
-        if (permits.length == 0) {
-            _modifyOrders(mods);
-
-            return;
-        }
-
-        _modifyOrdersWithPermits(mods, permits);
+        _modifyOrders(mods, recipient);
     }
 
     /// @inheritdoc ISwapboard
     function modifyOrders(
         ModifyOrdersParams[] calldata mods,
-        TokenPermit2[] calldata permits
+        TokenPermit[] calldata permits,
+        address recipient
     ) external payable nonReentrant {
         if (permits.length == 0) {
-            _modifyOrders(mods);
+            _modifyOrders(mods, recipient);
 
             return;
         }
 
-        _modifyOrdersPermit2(mods, permits);
+        _modifyOrdersWithPermits(mods, permits, recipient);
+    }
+
+    /// @inheritdoc ISwapboard
+    function modifyOrders(
+        ModifyOrdersParams[] calldata mods,
+        TokenPermit2[] calldata permits,
+        address recipient
+    ) external payable nonReentrant {
+        if (permits.length == 0) {
+            _modifyOrders(mods, recipient);
+
+            return;
+        }
+
+        _modifyOrdersPermit2(mods, permits, recipient);
     }
 
     /// @inheritdoc ISwapboard
@@ -988,34 +1004,40 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param amountB Exact tokenB to send
     /// @param minAmountA Minimum tokenA the taker will accept
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _fillOrder(
         uint256 orderId,
         uint128 amountB,
         uint128 minAmountA,
-        uint256 deadline
+        uint256 deadline,
+        address recipient
     ) private {
-        _settleFillQuote(_beginFill(orderId, amountB, minAmountA, deadline));
+        _settleFillQuote(_beginFill(orderId, amountB, minAmountA, deadline), recipient);
     }
 
     /// @notice Fills orders after committing legs and settling tokenB/tokenA transfers
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _fillOrders(
         FillOrderParams[] calldata fills,
-        uint256 deadline
+        uint256 deadline,
+        address recipient
     ) private {
         _requireFillBatch(deadline, fills.length);
-        _settleFills(_applyFillEffects(fills));
+        _settleFills(_applyFillEffects(fills), recipient);
     }
 
     /// @notice Fills orders after EIP-2612 permits for every pulled ERC20 tokenB
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     /// @param permits EIP-2612 signatures keyed by tokenB
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _fillOrdersWithPermits(
         FillOrderParams[] calldata fills,
         uint256 deadline,
-        TokenPermit[] calldata permits
+        TokenPermit[] calldata permits,
+        address recipient
     ) private {
         _validateTokenPermitBatch(permits);
         uint256 length = fills.length;
@@ -1026,7 +1048,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             orderIds[i] = fills[i].orderId;
         }
         _requireAndApplyFillPermits(orderIds, permits);
-        _fillOrders(fills, deadline);
+        _fillOrders(fills, deadline, recipient);
     }
 
     /// @notice Requires every EIP-2612 permit matches a pulled ERC20 tokenB, then applies them
@@ -1175,50 +1197,68 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @notice Permits tokenB then pays maker tokenB and taker tokenA
     /// @param quote Settled fill quote
     /// @param permit EIP-2612 payload for `quote.tokenB` (`v == 0` skips)
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _permitAndSettleFill(
         FillQuote memory quote,
-        Permit calldata permit
+        Permit calldata permit,
+        address recipient
     ) private {
         _permit(quote.tokenB, permit);
-        _settleFillQuote(quote);
+        _settleFillQuote(quote, recipient);
     }
 
     /// @notice Pulls tokenB via Permit2 (or classic skip) then pays taker tokenA
     /// @param quote Settled fill quote
     /// @param permit Permit2 payload for `quote.tokenB` (empty signature skips)
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _permit2AndSettleFill(
         FillQuote memory quote,
-        Permit2Permit calldata permit
+        Permit2Permit calldata permit,
+        address recipient
     ) private {
         _payFillTokenBPermit2(quote, permit);
-        _payTakerTokenA(quote);
+        _payTakerTokenA(quote, recipient);
     }
 
     /// @notice Pays maker tokenB and taker tokenA for a single settled fill quote
     /// @dev ERC20 tokenB goes taker → maker directly; ETH tokenB uses msg.value then sendValue.
     /// @param quote Settled fill quote
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _settleFillQuote(
-        FillQuote memory quote
+        FillQuote memory quote,
+        address recipient
     ) private {
         _payFillTokenB(quote);
-        _payTakerTokenA(quote);
+        _payTakerTokenA(quote, recipient);
+    }
+
+    /// @dev `address(0)` pays `msg.sender`. Does not redirect tokenB owed to the maker.
+    /// @param recipient Requested payout, or zero to pay the caller
+    /// @return Account that receives the caller's ETH and tokens
+    function _payee(
+        address recipient
+    ) private view returns (address) {
+        return recipient == address(0) ? msg.sender : recipient;
     }
 
     /// @notice Pays the taker tokenA for a settled single-fill quote
-    /// @dev ERC20 tokenA must increase the taker's balance by exactly `amountA` (`BalanceMismatch`).
+    /// @dev ERC20 tokenA must increase the payee's balance by exactly `amountA` (`BalanceMismatch`).
     ///      Native ETH is sent with `sendValue` and is not balance-checked.
     /// @param quote Settled fill quote
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _payTakerTokenA(
-        FillQuote memory quote
+        FillQuote memory quote,
+        address recipient
     ) private {
+        address payee = _payee(recipient);
         Token tokenA = Token.wrap(quote.tokenA);
         if (tokenA.isNative()) {
-            tokenA.safeTransfer(msg.sender, quote.amountA);
+            tokenA.safeTransfer(payee, quote.amountA);
 
             return;
         }
 
-        _transferExactTo(tokenA, msg.sender, quote.amountA);
+        _transferExactTo(tokenA, payee, quote.amountA);
     }
 
     /// @notice Collects tokenB for a single fill (classic allowance / msg.value)
@@ -1298,23 +1338,27 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     /// @param permits Permit2 signatures keyed by tokenB
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _fillOrdersPermit2(
         FillOrderParams[] calldata fills,
         uint256 deadline,
-        TokenPermit2[] calldata permits
+        TokenPermit2[] calldata permits,
+        address recipient
     ) private {
         uint256 length = fills.length;
         _requireFillBatch(deadline, length);
         _validateTokenPermit2Batch(permits);
-        _settleFillsPermit2(_applyFillEffects(fills), permits);
+        _settleFillsPermit2(_applyFillEffects(fills), permits, recipient);
     }
 
     /// @notice Pays makers/taker for settled fill legs (ERC20 tokenB direct to makers)
     /// @param legs Settled fill legs
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _settleFills(
-        FillLeg[] memory legs
+        FillLeg[] memory legs,
+        address recipient
     ) private {
-        _settleFillsPermit2(legs, _emptyTokenPermit2());
+        _settleFillsPermit2(legs, _emptyTokenPermit2(), recipient);
     }
 
     /// @notice Pays makers/taker using Permit2 for ERC20 tokenB totals pulled to this contract
@@ -1322,13 +1366,15 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     ///      then distributed. Tokens without an entry use classic direct-to-maker pulls.
     /// @param legs Settled fill legs
     /// @param permits Permit2 signatures keyed by tokenB
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _settleFillsPermit2(
         FillLeg[] memory legs,
-        TokenPermit2[] memory permits
+        TokenPermit2[] memory permits,
+        address recipient
     ) private {
         _requireFillMsgValue(legs);
         _payMakersFromLegsPermit2(legs, permits);
-        _payTakerFromLegs(legs);
+        _payTakerFromLegs(legs, recipient);
     }
 
     /// @notice Requires `msg.value` equals total native tokenB across fill legs
@@ -1571,8 +1617,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Pays the taker aggregated tokenA from fill legs
     /// @param legs Settled fill legs
+    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
     function _payTakerFromLegs(
-        FillLeg[] memory legs
+        FillLeg[] memory legs,
+        address recipient
     ) private {
         uint256 length = legs.length;
         AggregatedAmounts memory payouts;
@@ -1600,7 +1648,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             }
         }
 
-        _sendAggregated(payouts, msg.sender);
+        _sendAggregated(payouts, _payee(recipient));
     }
 
     /// @notice Sends aggregated ERC20 and optional ETH to one recipient
@@ -1649,33 +1697,39 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param orderId Order to modify
     /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
     /// @param updatedOrder Desired remaining amounts
+    /// @param recipient Address that receives a tokenA refund (`address(0)` pays the maker)
     function _modifyOrder(
         uint256 orderId,
         OrderAmounts calldata previousAmounts,
-        ModifyOrderParams calldata updatedOrder
+        ModifyOrderParams calldata updatedOrder,
+        address recipient
     ) private {
-        _settleModifyLeg(_applyOneModifyEffect(orderId, previousAmounts, updatedOrder));
+        _settleModifyLeg(_applyOneModifyEffect(orderId, previousAmounts, updatedOrder), recipient);
     }
 
     /// @notice Modifies orders after validating duplicates and aggregating escrow deltas
     /// @param mods Modify arguments in execution order
+    /// @param recipient Address that receives a net tokenA refund (`address(0)` pays the maker)
     function _modifyOrders(
-        ModifyOrdersParams[] calldata mods
+        ModifyOrdersParams[] calldata mods,
+        address recipient
     ) private {
         if (mods.length == 0) {
             revert ZeroAmount();
         }
 
         _validateModifyOrders(mods);
-        _settleModifyLegs(_applyModifyEffects(mods));
+        _settleModifyLegs(_applyModifyEffects(mods), recipient);
     }
 
     /// @notice Modifies orders after EIP-2612 permits for every net ERC20 top-up
     /// @param mods Modify arguments in execution order
     /// @param permits EIP-2612 signatures keyed by tokenA
+    /// @param recipient Address that receives a net tokenA refund (`address(0)` pays the maker)
     function _modifyOrdersWithPermits(
         ModifyOrdersParams[] calldata mods,
-        TokenPermit[] calldata permits
+        TokenPermit[] calldata permits,
+        address recipient
     ) private {
         _validateTokenPermitBatch(permits);
         uint256 length = mods.length;
@@ -1688,7 +1742,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _requirePermitsUsed(permits, tokens, count);
         _applyValidatedPermits(permits);
 
-        _settleModifyLegs(_applyModifyEffects(mods));
+        _settleModifyLegs(_applyModifyEffects(mods), recipient);
     }
 
     /// @notice Applies every modify effect into settlement legs
@@ -1881,12 +1935,14 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Settles one modify leg's escrow top-up or refund
     /// @param leg Escrow delta for a single order
+    /// @param recipient Address that receives a tokenA refund (`address(0)` pays the maker)
     function _settleModifyLeg(
-        ModifyLeg memory leg
+        ModifyLeg memory leg,
+        address recipient
     ) private {
         Token token = Token.wrap(leg.tokenA);
         if (token.isNative()) {
-            _settleModifyLegNative(token, leg.topUp, leg.refund);
+            _settleModifyLegNative(token, leg.topUp, leg.refund, recipient);
 
             return;
         }
@@ -1895,23 +1951,25 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         if (leg.topUp != 0) {
             _pullExactToken(token, leg.topUp);
         } else if (leg.refund != 0) {
-            _transferExactTo(token, msg.sender, leg.refund);
+            _transferExactTo(token, _payee(recipient), leg.refund);
         }
     }
 
     /// @notice Settles one modify leg using Permit2 for an ERC20 top-up when provided
     /// @param leg Escrow delta for a single order
     /// @param permit Permit2 payload for tokenA (empty signature skips)
+    /// @param recipient Address that receives a tokenA refund (`address(0)` pays the maker)
     function _settleModifyLegPermit2(
         ModifyLeg memory leg,
-        Permit2Permit calldata permit
+        Permit2Permit calldata permit,
+        address recipient
     ) private {
         Token token = Token.wrap(leg.tokenA);
         if (token.isNative()) {
             if (permit.signature.length != 0) {
                 revert PermitOnNative();
             }
-            _settleModifyLegNative(token, leg.topUp, leg.refund);
+            _settleModifyLegNative(token, leg.topUp, leg.refund, recipient);
 
             return;
         }
@@ -1935,7 +1993,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (permit.signature.length != 0) {
                 revert UnusedPermit2();
             }
-            _transferExactTo(token, msg.sender, leg.refund);
+            _transferExactTo(token, _payee(recipient), leg.refund);
         }
     }
 
@@ -1943,23 +2001,27 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @param token Native ETH sentinel
     /// @param topUp Required `msg.value`
     /// @param refund ETH to return to the maker (if any)
+    /// @param recipient Address that receives the ETH refund (`address(0)` pays the maker)
     function _settleModifyLegNative(
         Token token,
         uint256 topUp,
-        uint256 refund
+        uint256 refund,
+        address recipient
     ) private {
         _requireMsgValue(topUp);
         if (refund != 0) {
-            token.safeTransfer(msg.sender, refund);
+            token.safeTransfer(_payee(recipient), refund);
         }
     }
 
     /// @notice Modifies orders pulling net ERC20 top-ups via Permit2 where provided
     /// @param mods Modify arguments in execution order
     /// @param permits Permit2 signatures keyed by tokenA
+    /// @param recipient Address that receives a net tokenA refund (`address(0)` pays the maker)
     function _modifyOrdersPermit2(
         ModifyOrdersParams[] calldata mods,
-        TokenPermit2[] calldata permits
+        TokenPermit2[] calldata permits,
+        address recipient
     ) private {
         if (mods.length == 0) {
             revert ZeroAmount();
@@ -1967,20 +2029,22 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
         _validateTokenPermit2Batch(permits);
         _validateModifyOrders(mods);
-        _settleModifyLegsPermit2(_applyModifyEffects(mods), permits);
+        _settleModifyLegsPermit2(_applyModifyEffects(mods), permits, recipient);
     }
 
     /// @notice Settles modify legs with Permit2 for net ERC20 top-ups where provided
     /// @param legs Settled modify legs
     /// @param permits Permit2 signatures keyed by tokenA
+    /// @param recipient Address that receives a net tokenA refund (`address(0)` pays the maker)
     function _settleModifyLegsPermit2(
         ModifyLeg[] memory legs,
-        TokenPermit2[] memory permits
+        TokenPermit2[] memory permits,
+        address recipient
     ) private {
         AggregatedModifyDeltas memory deltas = _aggregateModifyLegs(legs);
         uint256 ethRefund = _requireModifyMsgValue(deltas);
-        _pullModifyTopUpsPermit2(deltas, permits);
-        _refundModifyEth(ethRefund);
+        _pullModifyTopUpsPermit2(deltas, permits, recipient);
+        _refundModifyEth(ethRefund, recipient);
     }
 
     /// @notice Nets ETH modify top-up against refund into a single direction
@@ -2018,20 +2082,24 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Refunds net ETH after a modify settle, if any
     /// @param ethRefund Net ETH to return to the maker
+    /// @param recipient Address that receives the ETH refund (`address(0)` pays the maker)
     function _refundModifyEth(
-        uint256 ethRefund
+        uint256 ethRefund,
+        address recipient
     ) private {
         if (ethRefund != 0) {
-            NATIVE_TOKEN.safeTransfer(msg.sender, ethRefund);
+            NATIVE_TOKEN.safeTransfer(_payee(recipient), ethRefund);
         }
     }
 
     /// @notice Pulls net ERC20 modify top-ups via Permit2 where provided
     /// @param deltas Aggregated modify deltas
     /// @param permits Permit2 signatures keyed by tokenA
+    /// @param recipient Address that receives a net ERC20 refund (`address(0)` pays the maker)
     function _pullModifyTopUpsPermit2(
         AggregatedModifyDeltas memory deltas,
-        TokenPermit2[] memory permits
+        TokenPermit2[] memory permits,
+        address recipient
     ) private {
         uint256 permitLength = permits.length;
         uint256 usedBits = 0;
@@ -2061,7 +2129,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                 unchecked {
                     netRefund = refund - topUp;
                 }
-                _transferExactTo(token, msg.sender, netRefund);
+                _transferExactTo(token, _payee(recipient), netRefund);
             }
         }
 
@@ -2072,10 +2140,12 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     /// @dev Per unique tokenA (and ETH), only the net delta is pulled or sent — equal opposing
     ///      flows cancel and produce no transfer. `msg.value` must equal the net ETH top-up.
     /// @param legs Settled modify legs
+    /// @param recipient Address that receives a net tokenA refund (`address(0)` pays the maker)
     function _settleModifyLegs(
-        ModifyLeg[] memory legs
+        ModifyLeg[] memory legs,
+        address recipient
     ) private {
-        _settleModifyLegsPermit2(legs, _emptyTokenPermit2());
+        _settleModifyLegsPermit2(legs, _emptyTokenPermit2(), recipient);
     }
 
     /// @notice Aggregates modify-leg top-ups and refunds per unique ERC20 (ETH returned separately)
@@ -2120,8 +2190,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Cancels one order and refunds remaining tokenA to the maker
     /// @param orderId Order to cancel
+    /// @param recipient Address that receives tokenA (`address(0)` pays the maker)
     function _cancelOrder(
-        uint256 orderId
+        uint256 orderId,
+        address recipient
     ) private {
         Order storage order = _requireActiveOrder(orderId);
         _requireMaker(orderId, order.maker);
@@ -2132,20 +2204,23 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         delete _orders[orderId];
         emit OrderCanceled({orderId: orderId});
 
+        address payee = _payee(recipient);
         Token token = Token.wrap(tokenA);
         if (token.isNative()) {
-            token.safeTransfer(msg.sender, amountA);
+            token.safeTransfer(payee, amountA);
 
             return;
         }
 
-        _transferExactTo(token, msg.sender, amountA);
+        _transferExactTo(token, payee, amountA);
     }
 
     /// @notice Cancels orders after aggregating ERC20 and ETH refunds to the maker
     /// @param orderIds Order identifiers to cancel
+    /// @param recipient Address that receives tokenA (`address(0)` pays the maker)
     function _cancelOrders(
-        uint256[] calldata orderIds
+        uint256[] calldata orderIds,
+        address recipient
     ) private {
         uint256 length = orderIds.length;
         if (length == 0) {
@@ -2179,7 +2254,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             emit OrderCanceled({orderId: orderId});
         }
 
-        _sendAggregated(refunds, msg.sender);
+        _sendAggregated(refunds, _payee(recipient));
     }
 
     /// @notice Applies an EIP-2612 permit for `token` from `msg.sender` to this contract

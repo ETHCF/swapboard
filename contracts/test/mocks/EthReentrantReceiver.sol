@@ -55,17 +55,17 @@ contract EthReentrantReceiver {
         _attacking = true;
 
         if (_attack == Attack.Fill) {
-            try _BOARD.fillOrder(_orderId, 1, 1, 0) {} catch {}
+            try _BOARD.fillOrder(_orderId, 1, 1, 0, address(0)) {} catch {}
         } else if (_attack == Attack.FillOrders) {
             ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
             fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountB: 1, minAmountA: 1});
-            try _BOARD.fillOrders(fills, 0) {} catch {}
+            try _BOARD.fillOrders(fills, 0, address(0)) {} catch {}
         } else if (_attack == Attack.Cancel) {
-            try _BOARD.cancelOrder(_orderId) {} catch {}
+            try _BOARD.cancelOrder(_orderId, address(0)) {} catch {}
         } else if (_attack == Attack.CancelOrders) {
             uint256[] memory ids = new uint256[](1);
             ids[0] = _orderId;
-            try _BOARD.cancelOrders(ids) {} catch {}
+            try _BOARD.cancelOrders(ids, address(0)) {} catch {}
         } else if (_attack == Attack.Create) {
             try _BOARD.createOrder{value: 0}(
                 ISwapboard.CreateOrderParams({
@@ -82,7 +82,7 @@ contract EthReentrantReceiver {
                 availableB: order.availableB
             });
             ISwapboard.ModifyOrderParams memory updated = ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1});
-            try _BOARD.modifyOrder(_orderId, previous, updated) {} catch {}
+            try _BOARD.modifyOrder(_orderId, previous, updated, address(0)) {} catch {}
         } else if (_attack == Attack.ModifyOrders) {
             ISwapboard.Order memory order = _BOARD.getOrder(_orderId);
             ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](1);
@@ -96,7 +96,7 @@ contract EthReentrantReceiver {
                 }),
                 updatedOrder: ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1})
             });
-            try _BOARD.modifyOrders(mods) {} catch {}
+            try _BOARD.modifyOrders(mods, address(0)) {} catch {}
         }
 
         _attacking = false;

@@ -188,7 +188,7 @@ contract SwapboardStatelessInvariantTest is Test {
         uint128 remainingA = _board.getOrder(orderId).availableA;
 
         vm.prank(_maker);
-        _board.cancelOrder(orderId);
+        _board.cancelOrder(orderId, address(0));
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, address(0));
@@ -406,7 +406,7 @@ contract SwapboardStatelessInvariantTest is Test {
         );
 
         vm.prank(_maker);
-        _board.cancelOrder(orderId);
+        _board.cancelOrder(orderId, address(0));
 
         uint256 balanceFinal = _tokenA.balanceOf(_maker);
         assertEq(balanceFinal, balanceInitial);

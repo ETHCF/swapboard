@@ -106,18 +106,18 @@ contract ReentrantAttacker is MockERC20 {
 
         if (keccak256(bytes(_attackType)) == keccak256(bytes("fill"))) {
             // Try to fill the same order again
-            try _BOARD.fillOrder(_orderId, 1, 1, 0) {} catch {}
+            try _BOARD.fillOrder(_orderId, 1, 1, 0, address(0)) {} catch {}
         } else if (keccak256(bytes(_attackType)) == keccak256(bytes("fillOrders"))) {
             ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
             fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountB: 1, minAmountA: 1});
-            try _BOARD.fillOrders(fills, 0) {} catch {}
+            try _BOARD.fillOrders(fills, 0, address(0)) {} catch {}
         } else if (keccak256(bytes(_attackType)) == keccak256(bytes("cancel"))) {
             // Try to cancel the same order again
-            try _BOARD.cancelOrder(_orderId) {} catch {}
+            try _BOARD.cancelOrder(_orderId, address(0)) {} catch {}
         } else if (keccak256(bytes(_attackType)) == keccak256(bytes("cancelOrders"))) {
             uint256[] memory ids = new uint256[](1);
             ids[0] = _orderId;
-            try _BOARD.cancelOrders(ids) {} catch {}
+            try _BOARD.cancelOrders(ids, address(0)) {} catch {}
         } else if (keccak256(bytes(_attackType)) == keccak256(bytes("createOrders"))) {
             ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](1);
             orders[0] = ISwapboard.CreateOrderParams({
@@ -137,7 +137,7 @@ contract ReentrantAttacker is MockERC20 {
                 }),
                 updatedOrder: ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1})
             });
-            try _BOARD.modifyOrders(mods) {} catch {}
+            try _BOARD.modifyOrders(mods, address(0)) {} catch {}
         }
 
         _attacking = false;
