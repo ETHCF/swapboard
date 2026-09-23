@@ -251,6 +251,21 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         assertEq(_tokenB.allowance(_taker, address(_board)), 0);
     }
 
+    /// @notice fillOrder with permit pays tokenA to a non-zero `recipient`
+    function test_fillOrder_permit_recipient_receivesTokenA() public {
+        uint256 orderId = _createPairOrder();
+        ISwapboard.Permit memory permit = _signPermit(_permitB, _taker, _TAKER_PK, _AMOUNT_B);
+        address payout = makeAddr("payout");
+
+        vm.prank(_taker);
+        _board.fillOrder(orderId, _AMOUNT_B, _AMOUNT_A, 0, permit, payout);
+
+        assertEq(_tokenA.balanceOf(payout), _AMOUNT_A);
+        assertEq(_tokenA.balanceOf(_taker), 0);
+        assertEq(_tokenB.balanceOf(_maker), _AMOUNT_B);
+        assertEq(_tokenB.allowance(_taker, address(_board)), 0);
+    }
+
     /// @notice Maker cannot self-fill via fillOrder with EIP-2612 permit (beginFill before permit)
     function test_fillOrder_permit_selfFill_revert_nonceUnchanged() public {
         uint256 orderId = _createPairOrder();
@@ -485,7 +500,13 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
 
         ISwapboard.Permit memory topUpPermit = _signPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A);
         vm.prank(_maker);
-        _board.modifyOrder(orderId, _amounts(snapshot), ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B}), topUpPermit, address(0));
+        _board.modifyOrder(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B}),
+            topUpPermit,
+            address(0)
+        );
 
         assertEq(_board.getOrder(orderId).availableA, _AMOUNT_A * 2);
         assertEq(_tokenA.balanceOf(address(_board)), uint256(_AMOUNT_A) * 2);
@@ -500,7 +521,13 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
 
         vm.prank(_maker);
         vm.expectRevert(ISwapboard.PermitOnNative.selector);
-        _board.modifyOrder{value: 1 ether}(orderId, _amounts(snapshot), ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A + 1 ether, availableB: _AMOUNT_B}), _nonzeroDummyPermit(), address(0));
+        _board.modifyOrder{value: 1 ether}(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A + 1 ether, availableB: _AMOUNT_B}),
+            _nonzeroDummyPermit(),
+            address(0)
+        );
     }
 
     /// @notice modifyOrder with v == 0 allows native tokenA top-up (no permit call)
@@ -511,7 +538,13 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
 
         vm.prank(_maker);
-        _board.modifyOrder{value: 1 ether}(orderId, _amounts(snapshot), ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A + 1 ether, availableB: _AMOUNT_B}), _skipPermit(), address(0));
+        _board.modifyOrder{value: 1 ether}(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A + 1 ether, availableB: _AMOUNT_B}),
+            _skipPermit(),
+            address(0)
+        );
 
         assertEq(_board.getOrder(orderId).availableA, _AMOUNT_A + 1 ether);
         assertEq(address(_board).balance, uint256(_AMOUNT_A) + 1 ether);
@@ -593,7 +626,13 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         ISwapboard.Permit memory refundPermit = _signPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A);
         vm.prank(_maker);
         vm.expectRevert(ISwapboard.UnusedPermit.selector);
-        _board.modifyOrder(orderId, _amounts(snapshot), ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}), refundPermit, address(0));
+        _board.modifyOrder(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            refundPermit,
+            address(0)
+        );
 
         assertEq(_permitA.nonces(_maker), 1);
     }
@@ -732,10 +771,40 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
         uint256 makerBefore = _tokenA.balanceOf(_maker);
 
         vm.prank(_maker);
-        _board.modifyOrder(orderId, _amounts(snapshot), ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}), _skipPermit(), address(0));
+        _board.modifyOrder(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            _skipPermit(),
+            address(0)
+        );
 
         assertEq(_board.getOrder(orderId).availableA, _AMOUNT_A / 2);
         assertEq(_tokenA.balanceOf(_maker), makerBefore + _AMOUNT_A / 2);
+        assertEq(_permitA.nonces(_maker), 1);
+    }
+
+    /// @notice Refund-only modifyOrder with permit pays tokenA refund to `recipient`
+    function test_modifyOrder_permit_refundOnly_recipient() public {
+        ISwapboard.Permit memory createPermit = _signPermit(_permitA, _maker, _MAKER_PK, _AMOUNT_A);
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(_plainOrder(), createPermit);
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        address payout = makeAddr("payout");
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+
+        vm.prank(_maker);
+        _board.modifyOrder(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            _skipPermit(),
+            payout
+        );
+
+        assertEq(_board.getOrder(orderId).availableA, _AMOUNT_A / 2);
+        assertEq(_tokenA.balanceOf(payout), _AMOUNT_A / 2);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore);
         assertEq(_permitA.nonces(_maker), 1);
     }
 
@@ -770,7 +839,13 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
 
         vm.prank(_maker);
         vm.expectRevert(ISwapboard.PermitOnNative.selector);
-        _board.modifyOrder(orderId, _amounts(snapshot), ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}), _nonzeroDummyPermit(), address(0));
+        _board.modifyOrder(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            _nonzeroDummyPermit(),
+            address(0)
+        );
     }
 
     /// @notice Empty permit array still modifies when allowance is already set
@@ -834,7 +909,9 @@ contract SwapboardPermitTest is SwapboardTwoPartyTest {
     function test_modifyOrders_permit_revert_emptyMods() public {
         vm.prank(_maker);
         vm.expectRevert(ISwapboard.ZeroAmount.selector);
-        _board.modifyOrders(new ISwapboard.ModifyOrdersParams[](0), _single(_dummyTokenPermit(address(_tokenA))), address(0));
+        _board.modifyOrders(
+            new ISwapboard.ModifyOrdersParams[](0), _single(_dummyTokenPermit(address(_tokenA))), address(0)
+        );
     }
 
     /// @notice Expired permit reverts from the token

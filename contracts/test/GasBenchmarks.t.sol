@@ -1062,7 +1062,13 @@ contract GasBenchmarks is Test {
 
         vm.prank(_maker);
         uint256 gasBefore = gasleft();
-        _board.modifyOrder(orderId, _previousAmounts(snapshot), ISwapboard.ModifyOrderParams({availableA: ORDER_A * 2, availableB: ORDER_B * 2}), permit, address(0));
+        _board.modifyOrder(
+            orderId,
+            _previousAmounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: ORDER_A * 2, availableB: ORDER_B * 2}),
+            permit,
+            address(0)
+        );
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("modifyOrder Permit2 topUp gas:", gasUsed);

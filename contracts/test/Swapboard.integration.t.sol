@@ -669,12 +669,17 @@ contract SwapboardIntegrationTest is Test {
         _weth.approve(address(_board), 10 ether);
         uint256 orderId = _board.createOrder(_order(address(_weth), 10 ether, address(_usdc), 30_000e6));
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
-        _board.modifyOrder(orderId, ISwapboard.OrderAmounts({
+        _board.modifyOrder(
+            orderId,
+            ISwapboard.OrderAmounts({
                 amountA: snapshot.amountA,
                 amountB: snapshot.amountB,
                 availableA: snapshot.availableA,
                 availableB: snapshot.availableB
-            }), ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6}), address(0));
+            }),
+            ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6}),
+            address(0)
+        );
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(_alice), aliceWethBefore - 4 ether);
