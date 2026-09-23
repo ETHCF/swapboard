@@ -7,8 +7,8 @@ import {MockERC20} from "../../mocks/MockERC20.sol";
 
 /// @title PositiveRebaseToken
 /// @notice Token whose balances can increase after deposit (like AMPL expansion)
-/// @dev `transfer` / `transferFrom` are exact at the current multiplier. A later `rebase`
-///      above 100% leaves surplus in escrow that fills do not pay out.
+/// @dev A later `rebase` above 100% changes balances. Converting a nominal amount to shares
+///      and back can truncate by 1 wei, so an exact-receive payout reverts.
 contract PositiveRebaseToken is MockERC20 {
     error InsufficientShares();
     error InsufficientAllowance();

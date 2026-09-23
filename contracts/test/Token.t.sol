@@ -190,8 +190,10 @@ contract TokenTest is Test {
         uint256 selfBefore = address(this).balance;
         uint256 bobBefore = _bob.balance;
 
+        // External call: `safeTransferFrom` is an internal free function, so a direct
+        // call reverts in this frame and `expectRevert` does not see it.
         vm.expectRevert(TransferFromOnNative.selector);
-        NATIVE_TOKEN.safeTransferFrom(address(this), _bob, 1 ether);
+        this.externalSafeTransferFrom(address(this), _bob, 1 ether);
 
         assertEq(address(this).balance, selfBefore);
         assertEq(_bob.balance, bobBefore);
@@ -199,7 +201,16 @@ contract TokenTest is Test {
 
     function test_safeTransferFrom_native_zeroAmount_reverts() public {
         vm.expectRevert(TransferFromOnNative.selector);
-        NATIVE_TOKEN.safeTransferFrom(address(this), _bob, 0);
+        this.externalSafeTransferFrom(address(this), _bob, 0);
+    }
+
+    /// @dev External wrapper so `vm.expectRevert` observes `TransferFromOnNative`
+    function externalSafeTransferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external {
+        NATIVE_TOKEN.safeTransferFrom(from, to, amount);
     }
 
     function testFuzz_safeTransferFrom_erc20(

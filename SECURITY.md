@@ -74,7 +74,7 @@ The following are documented design decisions, not vulnerabilities:
 
 1. **Front-running**: Inherent to on-chain orderbooks. Orders can be front-run by MEV bots. Users should consider using private mempools for large orders.
 
-2. **Rebasing tokens**: Inbound mid-transfer rebases are rejected via `BalanceMismatch`. Post-deposit rebases (while tokenA sits in escrow) are not: a negative rebase can leave the contract under-collateralized so fill and cancel fail; a positive rebase can strand surplus that fills do not pay out. Users should not use rebasing tokens. See `contracts/test/security-research/`.
+2. **Rebasing tokens**: Inbound mid-transfer rebases are rejected via `BalanceMismatch`. Post-deposit rebases (while tokenA sits in escrow) are not: a negative rebase can leave the contract under-collateralized so fill and cancel fail; a positive rebase can strand surplus, and share rounding on the later payout can revert fill and cancel (`BalanceMismatch`), locking the expanded escrow. Users should not use rebasing tokens. See `contracts/test/security-research/`.
 
 3. **No self-fill**: The maker cannot fill their own order (`SelfFill`). Typical ERC20 `transferFrom(self, self)` does not increase the recipient, so an exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board then back to the maker. Banning it keeps every fill payment a single pull to a distinct counterparty. Multi-maker Permit2 still hops through the board to split one pull across makers.
 

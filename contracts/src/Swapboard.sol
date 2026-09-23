@@ -43,7 +43,7 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      - Front-running is possible on `fillOrder` / `fillOrders` (inherent to on-chain orderbooks)
 ///      - Inbound mid-transfer rebase is rejected via `BalanceMismatch`. Post-deposit rebase of
 ///        escrowed tokenA is not: a negative rebase can lock fill/cancel; a positive rebase can
-///        strand surplus
+///        strand surplus, and share rounding on the later payout can revert fill and cancel too
 ///      - The board does not check that token addresses have code. An EOA or empty address used
 ///        as a token can make create, fill, or cancel fail. Makers and takers must verify token
 ///        contracts before create and fill. A malicious token can also cause fund loss
