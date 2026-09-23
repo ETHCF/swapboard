@@ -1232,6 +1232,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         _payTakerTokenA(quote, recipient);
     }
 
+    /// @notice Resolves the payout account for caller-owned ETH and tokens
     /// @dev `address(0)` pays `msg.sender`. Does not redirect tokenB owed to the maker.
     /// @param recipient Requested payout, or zero to pay the caller
     /// @return Account that receives the caller's ETH and tokens
