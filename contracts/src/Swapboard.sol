@@ -44,9 +44,9 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      - Inbound mid-transfer rebase is rejected via `BalanceMismatch`. Post-deposit rebase of
 ///        escrowed tokenA is not: a negative rebase can lock fill/cancel; a positive rebase can
 ///        strand surplus
-///      - The board does not check that token addresses have code. Makers (and takers) must
-///        verify token contracts before create/fill; a non-contract or malicious token can make
-///        create/fill/cancel fail or cause fund loss
+///      - The board does not check that token addresses have code. An EOA or empty address used
+///        as a token can make create, fill, or cancel fail. Makers and takers must verify token
+///        contracts before create and fill. A malicious token can also cause fund loss
 ///      - Malicious tokens can cause fund loss - users must verify token contracts. Escrowed
 ///        tokenA of a given address is commingled: that token is the real custodian. Admin
 ///        seize/burn or a lying `transfer` can take all escrow of that token. Makers of the same
@@ -184,8 +184,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @inheritdoc ISwapboard
     /// @dev Token addresses are identity-based. Aliased or rebranded tokens at different
-    ///      addresses are treated as distinct tokens. The board does not check `code.length`;
-    ///      makers must verify token addresses and implementations before creating orders.
+    ///      addresses are treated as distinct tokens. The board does not check `code.length`. An EOA
+    ///      or empty address used as a token can make create, fill, or cancel fail. Makers must
+    ///      verify token addresses and implementations before creating orders.
     function createOrder(
         CreateOrderParams calldata order
     ) external payable nonReentrant returns (uint256) {

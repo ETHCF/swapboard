@@ -60,7 +60,7 @@ The contract operates under these assumptions:
 
 1. **Token contracts are benign**: The contract trusts that ERC20 tokens behave correctly. Malicious tokens (e.g., tokens with transfer hooks, blacklists, or admin functions) can cause unexpected behavior or fund loss.
 
-2. **Users verify tokens**: The board does **not** check that token addresses have code. Makers are responsible for verifying tokenA and tokenB contract addresses and implementations before creating orders; takers must verify before filling. A non-contract or malicious token can make create/fill/cancel fail or cause fund loss.
+2. **Users verify tokens**: The board does **not** check that token addresses have code. An EOA or empty address used as a token can make create, fill, or cancel fail. Makers must verify tokenA and tokenB before creating orders; takers must verify before filling. A malicious token can also cause fund loss.
 
 3. **Block timestamps are accurate**: Order creation time relies on block timestamps, which miners can manipulate within ~15 seconds.
 
