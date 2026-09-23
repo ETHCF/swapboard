@@ -435,7 +435,8 @@ interface ISwapboard is ISemver {
     ///      still has remaining liquidity; otherwise later legs revert (`FillAmountTooHigh` /
     ///      `OrderNotFound` / `PartialFillNotAllowed`). ERC20 tokenB payments are aggregated per
     ///      unique `(maker, token)` and pulled directly to each maker; ETH tokenB is summed into
-    ///      one `msg.value` check. tokenA payouts to the taker are aggregated.
+    ///      one `msg.value` check. ERC20 tokenA payouts to the taker are aggregated and must increase
+    ///      the taker's balance by exactly that total (`BalanceMismatch`).
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     function fillOrders(
