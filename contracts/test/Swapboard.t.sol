@@ -2494,6 +2494,69 @@ contract SwapboardTest is Test {
         assertEq(upgradeableB.balanceOf(address(_board)), 0);
     }
 
+    /// @notice Outbound-only FOT tokenA reverts BalanceMismatch and leaves escrow in place
+    function test_fillOrder_outboundFotTokenA_revert_balanceMismatch() public {
+        OutboundFotToken fotA = new OutboundFotToken();
+
+        vm.startPrank(_maker);
+        fotA.mint(_maker, AMOUNT_A);
+        fotA.approve(address(_board), AMOUNT_A);
+        uint256 orderId = _board.createOrder(_order(address(fotA), AMOUNT_A, address(_tokenB), AMOUNT_B));
+        vm.stopPrank();
+
+        ISwapboard.Order memory orderBefore = _board.getOrder(orderId);
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), AMOUNT_B);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, AMOUNT_A, _fotNet(AMOUNT_A)));
+        _fillOrderQuoted(orderBefore, orderId, AMOUNT_A);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(orderId));
+        assertEq(_board.getOrder(orderId).availableA, AMOUNT_A);
+        assertEq(fotA.balanceOf(_taker), 0);
+        assertEq(fotA.balanceOf(address(_board)), AMOUNT_A);
+        assertEq(_tokenB.balanceOf(_maker), AMOUNT_B * 10);
+        assertEq(_tokenB.balanceOf(address(_board)), 0);
+    }
+
+    /// @notice Aggregated outbound-only FOT tokenA on fillOrders reverts BalanceMismatch
+    function test_fillOrders_outboundFotTokenA_revert_balanceMismatch() public {
+        OutboundFotToken fotA = new OutboundFotToken();
+
+        vm.startPrank(_maker);
+        fotA.mint(_maker, AMOUNT_A * 2);
+        fotA.approve(address(_board), AMOUNT_A * 2);
+        ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](2);
+        orders[0] = _order(address(fotA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        orders[1] = _order(address(fotA), AMOUNT_A, address(_tokenB), AMOUNT_B);
+        uint256[] memory ids = _board.createOrders(orders);
+        vm.stopPrank();
+
+        ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
+        fills[0] = FillTestLib.fillParams(_board.getOrder(ids[0]), ids[0], AMOUNT_A);
+        fills[1] = FillTestLib.fillParams(_board.getOrder(ids[1]), ids[1], AMOUNT_A);
+
+        uint256 expectedAOut = uint256(AMOUNT_A) * 2;
+
+        vm.startPrank(_taker);
+        _tokenB.approve(address(_board), uint256(AMOUNT_B) * 2);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISwapboard.BalanceMismatch.selector, expectedAOut, _fotNet(expectedAOut))
+        );
+        _board.fillOrders(fills, 0);
+        vm.stopPrank();
+
+        assertTrue(_board.canFill(ids[0]));
+        assertTrue(_board.canFill(ids[1]));
+        assertEq(_board.getOrder(ids[0]).availableA, AMOUNT_A);
+        assertEq(_board.getOrder(ids[1]).availableA, AMOUNT_A);
+        assertEq(fotA.balanceOf(_taker), 0);
+        assertEq(fotA.balanceOf(address(_board)), expectedAOut);
+        assertEq(_tokenB.balanceOf(_maker), AMOUNT_B * 10);
+        assertEq(_tokenB.balanceOf(address(_board)), 0);
+    }
+
     /// @notice Tests outbound-only FOT tokenB: transferFrom is exact, so the maker receives full amountB
     function test_fillOrder_outboundFotTokenB_makerReceivesFull() public {
         OutboundFotToken fotB = new OutboundFotToken();

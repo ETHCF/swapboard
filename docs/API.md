@@ -734,11 +734,11 @@ async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
 
 - All amounts are in base units (wei-style). Multiply by 10^decimals.
 - Orders can be front-run. Consider using Flashbots for fills.
-- Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits and on ERC20 tokenB payments to the maker (`BalanceMismatch`), including multi-maker Permit2 board→maker distribution.
-- Post-deposit rebases (while tokenA sits in escrow) are not checked: a negative rebase can lock fill/cancel; a positive rebase can strand surplus. See `contracts/test/security-research/`.
+- Inbound fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on tokenA deposits, on ERC20 tokenA paid to the taker, on ERC20 tokenA refunded to the maker, and on ERC20 tokenB payments to the maker (`BalanceMismatch`), including multi-maker Permit2 board→maker distribution. ETH payouts use `sendValue` and are not balance-checked.
+- Post-deposit rebases (while tokenA sits in escrow) are not checked: a negative rebase can lock fill/cancel; a positive rebase can strand surplus, and share rounding on the later payout can revert fill and cancel (`BalanceMismatch`). See `contracts/test/security-research/`.
 - Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying `transfer` can take all escrow of that token. Makers of the same scam token share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected.
-- Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains possible after escrow release.
-- Makers must be able to hold tokenB. Every ERC20 payment to a maker is checked against the maker's balance delta, so a maker that forwards, stakes, or burns tokenB in a transfer hook reverts `BalanceMismatch` and its orders cannot be filled on any path (classic pull, Permit2 direct pull, multi-maker board hop).
+- Token addresses are not checked for code. An EOA or empty address used as a token can make create, fill, or cancel fail. Makers must verify tokenA and tokenB before creating, and takers before filling.
+- Recipients must be able to hold the ERC20 they are paid. A maker that forwards, stakes, or burns tokenB in a transfer hook reverts `BalanceMismatch` and its orders cannot be filled. A taker that does not retain tokenA reverts the same way and the fill does not complete.
 - Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
 - The maker cannot fill their own order (`SelfFill`). A self-`transferFrom` of tokenB typically does not increase the recipient, so the exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board and back. Banning it keeps every fill payment a single pull to a distinct maker. (Multi-maker Permit2 still hops through the board to split one pull across makers.)
 - No expiry. Orders remain active until filled or canceled.

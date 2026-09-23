@@ -19,9 +19,11 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      - `fillOrder` sends exact tokenB (`amountB`) and receives floored tokenA, bounded by
 ///        `minAmountA`
 ///      - Fee-on-transfer / mid-transfer rebase / phantom transfers are rejected on inbound
-///        tokenA deposits (`_pullExactToken`) and on ERC20 tokenB payments to the maker
-///        (`_transferExactFrom`, `_transferExactTo` / `BalanceMismatch`), including multi-maker
-///        Permit2 board→maker distribution. ETH tokenB uses `msg.value` then `sendValue`.
+///        tokenA deposits (`_pullExactToken`), on ERC20 tokenA paid to the taker and refunded to
+///        the maker (`_transferExactTo` / `BalanceMismatch`), and on ERC20 tokenB payments to the
+///        maker (`_transferExactFrom`, `_transferExactTo`), including multi-maker Permit2
+///        board→maker distribution. ETH uses `msg.value` then `sendValue` and is not balance-checked
+///        on the recipient, because a contract may forward the ETH it just received.
 ///      - The maker cannot fill their own order (`SelfFill`). A self-`transferFrom` of tokenB
 ///        does not increase the recipient, so supporting self-fill needed a board hop just to
 ///        satisfy the exact-receive check. Forbidding it keeps every fill payment a one-hop
@@ -41,22 +43,19 @@ import {Token, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS} from "./token/Token.sol";
 ///      - Front-running is possible on `fillOrder` / `fillOrders` (inherent to on-chain orderbooks)
 ///      - Inbound mid-transfer rebase is rejected via `BalanceMismatch`. Post-deposit rebase of
 ///        escrowed tokenA is not: a negative rebase can lock fill/cancel; a positive rebase can
-///        strand surplus
-///      - The board does not check that token addresses have code. Makers (and takers) must
-///        verify token contracts before create/fill; a non-contract or malicious token can make
-///        create/fill/cancel fail or cause fund loss
+///        strand surplus, and share rounding on the later payout can revert fill and cancel too
+///      - The board does not check that token addresses have code. An EOA or empty address used
+///        as a token can make create, fill, or cancel fail. Makers and takers must verify token
+///        contracts before create and fill. A malicious token can also cause fund loss
 ///      - Malicious tokens can cause fund loss - users must verify token contracts. Escrowed
 ///        tokenA of a given address is commingled: that token is the real custodian. Admin
 ///        seize/burn or a lying `transfer` can take all escrow of that token. Makers of the same
 ///        scam token share one pool; after a rebase they race whatever balance remains. Other
 ///        tokens in escrow are not affected
-///      - Outbound fee-on-transfer / mid-transfer rebase on tokenA payout to the taker remains
-///        possible after escrow release
-///      - Every ERC20 tokenB payment is verified against the recipient's balance delta, so a maker
-///        whose address does not retain tokenB (a vault that forwards/stakes/burns it in a transfer
-///        hook, or a hooked token) reverts `BalanceMismatch` and its orders are unfillable on every
-///        path (classic pull, Permit2 direct pull, multi-maker board hop). Makers must receive
-///        tokenB at an address that simply holds it
+///      - Every ERC20 payment is verified against the recipient's balance delta, so an address that
+///        does not retain the token (a vault that forwards/stakes/burns it in a transfer hook, or a
+///        hooked token) reverts `BalanceMismatch`. A maker's orders are then unfillable, and a taker
+///        cannot receive that tokenA. Recipients must simply hold the token.
 ///      - ETH is sent with `Address.sendValue` (forwards all gas) so contract recipients
 ///        can run `receive`/`fallback`; always after state updates (CEI)
 ///      - ETH always goes to `msg.sender`; no path takes a recipient override. An address that
@@ -185,8 +184,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @inheritdoc ISwapboard
     /// @dev Token addresses are identity-based. Aliased or rebranded tokens at different
-    ///      addresses are treated as distinct tokens. The board does not check `code.length`;
-    ///      makers must verify token addresses and implementations before creating orders.
+    ///      addresses are treated as distinct tokens. The board does not check `code.length`. An EOA
+    ///      or empty address used as a token can make create, fill, or cancel fail. Makers must
+    ///      verify token addresses and implementations before creating orders.
     function createOrder(
         CreateOrderParams calldata order
     ) external payable nonReentrant returns (uint256) {
@@ -251,10 +251,10 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @inheritdoc ISwapboard
-    /// @dev ERC20 tokenB is pulled directly to the maker via `_transferExactFrom` (rejects
-    ///      fee-on-transfer / mid-transfer rebase / phantom via `BalanceMismatch`). ETH tokenB
-    ///      uses `msg.value` then `sendValue`. Residual risk is fee-on-transfer / mid-transfer
-    ///      rebase only on the outbound tokenA `transfer` to the taker.
+    /// @dev ERC20 tokenB is pulled directly to the maker via `_transferExactFrom`, and ERC20
+    ///      tokenA is sent to the taker via `_transferExactTo`. Both reject fee-on-transfer /
+    ///      mid-transfer rebase / phantom via `BalanceMismatch`. ETH uses `msg.value` then
+    ///      `sendValue`.
     ///      tokenB in is the exact `amountB` the taker specified. tokenA out uses floor division
     ///      so the taker never over-receives relative to the escrow ratio. Residual tokenA dust
     ///      is not refunded.
@@ -1205,11 +1205,20 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Pays the taker tokenA for a settled single-fill quote
+    /// @dev ERC20 tokenA must increase the taker's balance by exactly `amountA` (`BalanceMismatch`).
+    ///      Native ETH is sent with `sendValue` and is not balance-checked.
     /// @param quote Settled fill quote
     function _payTakerTokenA(
         FillQuote memory quote
     ) private {
-        Token.wrap(quote.tokenA).safeTransfer(msg.sender, quote.amountA);
+        Token tokenA = Token.wrap(quote.tokenA);
+        if (tokenA.isNative()) {
+            tokenA.safeTransfer(msg.sender, quote.amountA);
+
+            return;
+        }
+
+        _transferExactTo(tokenA, msg.sender, quote.amountA);
     }
 
     /// @notice Collects tokenB for a single fill (classic allowance / msg.value)
@@ -1595,7 +1604,9 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
     }
 
     /// @notice Sends aggregated ERC20 and optional ETH to one recipient
-    /// @dev `Token.safeTransfer` no-ops on amount 0 (some ERC20s revert on zero-value transfers).
+    /// @dev ERC20 transfers must increase `recipient` by exactly the aggregated amount
+    ///      (`BalanceMismatch`). ETH uses `sendValue` and is not balance-checked.
+    ///      `Token.safeTransfer` no-ops on amount 0 (some ERC20s revert on zero-value transfers).
     /// @param aggregated Distinct ERC20 amounts plus optional ETH
     /// @param recipient Token/ETH recipient
     function _sendAggregated(
@@ -1607,7 +1618,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         }
 
         for (uint256 i = 0; i < aggregated.count; ++i) {
-            Token.wrap(aggregated.tokens[i]).safeTransfer(recipient, aggregated.amounts[i]);
+            _transferExactTo(Token.wrap(aggregated.tokens[i]), recipient, aggregated.amounts[i]);
         }
     }
 
@@ -1884,7 +1895,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         if (leg.topUp != 0) {
             _pullExactToken(token, leg.topUp);
         } else if (leg.refund != 0) {
-            token.safeTransfer(msg.sender, leg.refund);
+            _transferExactTo(token, msg.sender, leg.refund);
         }
     }
 
@@ -1924,7 +1935,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
             if (permit.signature.length != 0) {
                 revert UnusedPermit2();
             }
-            token.safeTransfer(msg.sender, leg.refund);
+            _transferExactTo(token, msg.sender, leg.refund);
         }
     }
 
@@ -2046,9 +2057,11 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
                     );
                 }
             } else if (refund > topUp) {
+                uint256 netRefund;
                 unchecked {
-                    token.safeTransfer(msg.sender, refund - topUp);
+                    netRefund = refund - topUp;
                 }
+                _transferExactTo(token, msg.sender, netRefund);
             }
         }
 
@@ -2119,7 +2132,14 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         delete _orders[orderId];
         emit OrderCanceled({orderId: orderId});
 
-        Token.wrap(tokenA).safeTransfer(msg.sender, amountA);
+        Token token = Token.wrap(tokenA);
+        if (token.isNative()) {
+            token.safeTransfer(msg.sender, amountA);
+
+            return;
+        }
+
+        _transferExactTo(token, msg.sender, amountA);
     }
 
     /// @notice Cancels orders after aggregating ERC20 and ETH refunds to the maker
@@ -2413,7 +2433,7 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
 
     /// @notice Pulls an exact ERC20 amount into escrow, rejecting fee-on-transfer / mid-transfer
     ///         rebase / phantom transfers
-    /// @dev `Token.safeTransferFrom` no-ops when `amount == 0`. Native token is rejected by callers.
+    /// @dev `Token.safeTransferFrom` no-ops when `amount == 0` and reverts `TransferFromOnNative` for the ETH sentinel.
     /// @param token ERC20 token to pull from the caller
     /// @param amount Expected amount received
     function _pullExactToken(
