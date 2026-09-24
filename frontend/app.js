@@ -2769,12 +2769,12 @@ ${orderFields}
         args: [order.orderId, amountB, amountA, deadline, ZERO_ADDRESS],
         value: nativeEthTotal([{ token: order.tokenB.address, amount: amountB }]),
       };
-    }
+    },
 
     /** Sends a call described by fillCall. */
     send({ method, args, value }) {
       return v2Send(method, args, value);
-    }
+    },
 
     /**
      * Takes every order in `orders` whole.
