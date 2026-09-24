@@ -190,8 +190,6 @@ contract TokenTest is Test {
         uint256 selfBefore = address(this).balance;
         uint256 bobBefore = _bob.balance;
 
-        // External call: `safeTransferFrom` is an internal free function, so a direct
-        // call reverts in this frame and `expectRevert` does not see it.
         vm.expectRevert(TransferFromOnNative.selector);
         this.externalSafeTransferFrom(address(this), _bob, 1 ether);
 

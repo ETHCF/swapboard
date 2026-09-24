@@ -11,8 +11,9 @@
  * - handleOrderFilled:   records a Fill, decrements remaining amounts, and closes the
  *                        order once tokenA or tokenB is exhausted
  * - handleOrderCanceled: closes the order; `availableA` is what was refunded to the maker
- * - handleOrderModified: records an OrderModification and repoints the order at the
- *                        maker's new amounts
+ * - handleOrderModified: records an OrderModification, repoints the order at the
+ *                        maker's new amounts, and reassigns the maker when the event
+ *                        maker differs from the stored one (moves ordersOpen)
  * - handleOrderPartialFillUpdated: flips the order's partial-fill flag
  *
  * v2 orders may be filled in multiple parts, so `handleOrderFilled` can run several
@@ -367,6 +368,7 @@ export function handleOrderModified(event: OrderModified): void {
   let timestamp = event.block.timestamp;
   let availableA = event.params.availableA;
   let availableB = event.params.availableB;
+  let newMakerAddress = event.params.maker;
   let wasPartiallyFilled = order.status == STATUS_PARTIALLY_FILLED;
   let priceBPerA = priceOf(availableA, tokenA.decimals, availableB, tokenB.decimals);
 
@@ -375,7 +377,7 @@ export function handleOrderModified(event: OrderModified): void {
   );
   modification.order = order.id;
   modification.orderId = order.orderId;
-  modification.maker = order.maker;
+  modification.maker = newMakerAddress.toHexString();
   modification.tokenA = tokenA.id;
   modification.tokenB = tokenB.id;
   modification.pair = pair.id;
@@ -396,6 +398,10 @@ export function handleOrderModified(event: OrderModified): void {
   modification.save();
 
   // Totals are reset to the new remainings, exactly as the contract does.
+  // Maker reassignment (ModifyOrderParams.maker) moves the open-order count.
+  let previousMakerId = order.maker;
+  let newMakerId = newMakerAddress.toHexString();
+  order.maker = newMakerId;
   order.amountA = availableA;
   order.amountB = availableB;
   order.availableA = availableA;
@@ -412,7 +418,13 @@ export function handleOrderModified(event: OrderModified): void {
   order.updatedAt = timestamp;
   order.save();
 
-  let maker = getOrCreateAccount(Address.fromString(order.maker), timestamp);
+  let maker = getOrCreateAccount(newMakerAddress, timestamp);
+  if (previousMakerId != newMakerId) {
+    let previousMaker = getOrCreateAccount(Address.fromString(previousMakerId), timestamp);
+    previousMaker.ordersOpen = previousMaker.ordersOpen.minus(ONE_BI);
+    previousMaker.save();
+    maker.ordersOpen = maker.ordersOpen.plus(ONE_BI);
+  }
   maker.save();
 
   let stats = getOrCreateGlobalStats();

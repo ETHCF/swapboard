@@ -135,7 +135,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_weth.balanceOf(address(_board)), 50 ether);
         assertEq(_weth.getTransferFromCalls(), 1);
 
-        _board.cancelOrder(orderId);
+        _board.cancelOrder(orderId, address(0));
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(_alice), aliceWethBefore);
@@ -169,7 +169,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.startPrank(_charlie);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
-        _board.fillOrder(orderId, 10 ether, 10 ether, 0);
+        _board.fillOrder(orderId, 10 ether, 10 ether, 0, address(0));
         vm.stopPrank();
 
         assertEq(_board.getOrder(orderId).maker, address(0));
@@ -203,7 +203,7 @@ contract SwapboardIntegrationTest is Test {
 
         vm.prank(_alice);
         vm.expectRevert(abi.encodeWithSelector(ISwapboard.OrderNotFound.selector, orderId));
-        _board.cancelOrder(orderId);
+        _board.cancelOrder(orderId, address(0));
     }
 
     /// @notice Tests creating and filling a batch of orders
@@ -247,11 +247,11 @@ contract SwapboardIntegrationTest is Test {
         }
 
         vm.startPrank(_alice);
-        _board.cancelOrder(orderIds[1]);
-        _board.cancelOrder(orderIds[3]);
-        _board.cancelOrder(orderIds[5]);
-        _board.cancelOrder(orderIds[7]);
-        _board.cancelOrder(orderIds[9]);
+        _board.cancelOrder(orderIds[1], address(0));
+        _board.cancelOrder(orderIds[3], address(0));
+        _board.cancelOrder(orderIds[5], address(0));
+        _board.cancelOrder(orderIds[7], address(0));
+        _board.cancelOrder(orderIds[9], address(0));
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(address(_board)), 0);
@@ -496,7 +496,7 @@ contract SwapboardIntegrationTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ISwapboard.FillAmountTooHigh.selector, orderId, remainingB + 1, remainingB)
         );
-        _board.fillOrder(orderId, remainingB + 1, 0, 0);
+        _board.fillOrder(orderId, remainingB + 1, 0, 0, address(0));
         vm.stopPrank();
 
         assertTrue(_board.canFill(orderId));
@@ -526,7 +526,7 @@ contract SwapboardIntegrationTest is Test {
         assertEq(_usdc.getTransferFromCalls(), usdcPullsBefore + 1);
 
         vm.prank(_alice);
-        _board.cancelOrder(orderId);
+        _board.cancelOrder(orderId, address(0));
 
         ISwapboard.Order memory order = _board.getOrder(orderId);
         assertEq(order.maker, address(0));
@@ -618,7 +618,7 @@ contract SwapboardIntegrationTest is Test {
         _usdc.approve(address(_board), 88_000e6);
         uint256 wethPullsBefore = _weth.getTransferFromCalls();
         uint256 usdcPullsBefore = _usdc.getTransferFromCalls();
-        _board.fillOrders(fills, 0);
+        _board.fillOrders(fills, 0, address(0));
         vm.stopPrank();
 
         assertEq(_weth.getTransferFromCalls(), wethPullsBefore);
@@ -645,7 +645,7 @@ contract SwapboardIntegrationTest is Test {
         _weth.approve(address(_board), 30 ether);
         uint256[] memory ids = _board.createOrders(orders);
         assertEq(_weth.getTransferFromCalls(), 1);
-        _board.cancelOrders(ids);
+        _board.cancelOrders(ids, address(0));
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(_alice), aliceWethBefore);
@@ -677,7 +677,8 @@ contract SwapboardIntegrationTest is Test {
                 availableA: snapshot.availableA,
                 availableB: snapshot.availableB
             }),
-            ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6})
+            ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6, maker: address(0)}),
+            address(0)
         );
         vm.stopPrank();
 
@@ -744,7 +745,7 @@ contract SwapboardIntegrationTest is Test {
                 availableA: snap0.availableA,
                 availableB: snap0.availableB
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6, maker: address(0)})
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: order1,
@@ -754,9 +755,9 @@ contract SwapboardIntegrationTest is Test {
                 availableA: snap1.availableA,
                 availableB: snap1.availableB
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 8 ether, availableB: 24_000e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 8 ether, availableB: 24_000e6, maker: address(0)})
         });
-        _board.modifyOrders(mods);
+        _board.modifyOrders(mods, address(0));
         vm.stopPrank();
 
         assertEq(_weth.balanceOf(address(_board)), 12 ether);
@@ -789,7 +790,7 @@ contract SwapboardIntegrationTest is Test {
 
         uint256 aliceWethBefore = _weth.balanceOf(_alice);
         uint256 aliceDaiBefore = _dai.balanceOf(_alice);
-        _board.modifyOrders(mods);
+        _board.modifyOrders(mods, address(0));
         vm.stopPrank();
 
         assertEq(aliceWethBefore - _weth.balanceOf(_alice), 10 ether);
@@ -829,14 +830,14 @@ contract SwapboardIntegrationTest is Test {
             previousAmounts: ISwapboard.OrderAmounts({
                 amountA: 10 ether, amountB: 30_000e6, availableA: 10 ether, availableB: 30_000e6
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 30 ether, availableB: 90_000e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 30 ether, availableB: 90_000e6, maker: address(0)})
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: wethLarge,
             previousAmounts: ISwapboard.OrderAmounts({
                 amountA: 40 ether, amountB: 120_000e6, availableA: 40 ether, availableB: 120_000e6
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 30 ether, availableB: 90_000e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 30 ether, availableB: 90_000e6, maker: address(0)})
         });
         // DAI: +50 / -200 => net refund 150
         mods[2] = ISwapboard.ModifyOrdersParams({
@@ -844,14 +845,14 @@ contract SwapboardIntegrationTest is Test {
             previousAmounts: ISwapboard.OrderAmounts({
                 amountA: 100 ether, amountB: 100e6, availableA: 100 ether, availableB: 100e6
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 150 ether, availableB: 150e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 150 ether, availableB: 150e6, maker: address(0)})
         });
         mods[3] = ISwapboard.ModifyOrdersParams({
             orderId: daiLarge,
             previousAmounts: ISwapboard.OrderAmounts({
                 amountA: 400 ether, amountB: 400e6, availableA: 400 ether, availableB: 400e6
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 200 ether, availableB: 200e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 200 ether, availableB: 200e6, maker: address(0)})
         });
     }
 

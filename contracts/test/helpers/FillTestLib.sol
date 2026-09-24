@@ -73,7 +73,7 @@ library FillTestLib {
         uint128 minAmountA,
         uint256 deadline
     ) internal {
-        board.fillOrder(orderId, amountB, minAmountA, deadline);
+        board.fillOrder(orderId, amountB, minAmountA, deadline, address(0));
     }
 
     /// @notice Fills an order sending exact amountB with an explicit minimum amountA
@@ -132,7 +132,7 @@ library FillTestLib {
         uint128 value,
         uint256 deadline
     ) internal {
-        board.fillOrder{value: value}(orderId, value, 0, deadline);
+        board.fillOrder{value: value}(orderId, value, 0, deadline, address(0));
     }
 
     /// @notice Fills an order paying native ETH as tokenB

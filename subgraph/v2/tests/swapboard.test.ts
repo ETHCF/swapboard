@@ -163,7 +163,8 @@ function createOrderModifiedEvent(
   orderId: i32,
   availableA: string,
   availableB: string,
-  logIndex: i32
+  logIndex: i32,
+  maker: string = MAKER_ADDRESS
 ): OrderModified {
   let event = changetype<OrderModified>(newMockEvent());
   event.parameters = new Array();
@@ -172,6 +173,7 @@ function createOrderModifiedEvent(
   event.parameters.push(
     new ethereum.EventParam("orderId", ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(orderId)))
   );
+  event.parameters.push(new ethereum.EventParam("maker", ethereum.Value.fromAddress(Address.fromString(maker))));
   event.parameters.push(
     new ethereum.EventParam("availableA", ethereum.Value.fromUnsignedBigInt(BigInt.fromString(availableA)))
   );
@@ -783,6 +785,19 @@ describe("handleOrderModified", () => {
     assert.fieldEquals("GlobalStats", "global", "filledOrders", "0");
     assert.fieldEquals("GlobalStats", "global", "canceledOrders", "0");
     assert.fieldEquals("GlobalStats", "global", "totalModifications", "1");
+  });
+
+  test("reassigns the order maker and moves the open-order count", () => {
+    createPartialFillOrder();
+    let event = createOrderModifiedEvent(1, REST_A, SEVEN_FIFTY_B, 1, TAKER_ADDRESS);
+    handleOrderModified(event);
+
+    let modId = event.transaction.hash.toHexString() + "-1";
+    assert.fieldEquals("Order", "1", "maker", TAKER);
+    assert.fieldEquals("OrderModification", modId, "maker", TAKER);
+    assert.fieldEquals("Account", MAKER, "ordersOpen", "0");
+    assert.fieldEquals("Account", TAKER, "ordersOpen", "1");
+    assert.fieldEquals("GlobalStats", "global", "openOrders", "1");
   });
 
   test("ignores modifications for orders that were never indexed", () => {

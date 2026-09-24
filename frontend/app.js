@@ -337,12 +337,12 @@
   const CONTRACT_ABI_V2 = [
     "function createOrder(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed) order) external payable returns (uint256)",
     "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders) external payable returns (uint256[])",
-    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline) external payable",
-    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline) external payable",
-    "function cancelOrder(uint256 orderId) external",
-    "function cancelOrders(uint256[] orderIds) external",
-    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder) external payable",
-    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder)[] mods) external payable",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, address taker) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, address taker) external payable",
+    "function cancelOrder(uint256 orderId, address maker) external",
+    "function cancelOrders(uint256[] orderIds, address maker) external",
+    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder, address maker) external payable",
+    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder)[] mods, address maker) external payable",
     "function setPartialFillAllowed(uint256 orderId, bool partialFillAllowed) external",
     "function getEth() external pure returns (address)",
     "function getNextOrderId() external view returns (uint256)",
@@ -353,7 +353,7 @@
     "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool indexed partialFillAllowed)",
     "event OrderFilled(uint256 indexed orderId, address indexed taker, uint128 amountA, uint128 amountB)",
     "event OrderCanceled(uint256 indexed orderId)",
-    "event OrderModified(uint256 indexed orderId, uint128 availableA, uint128 availableB)",
+    "event OrderModified(uint256 indexed orderId, address indexed maker, uint128 availableA, uint128 availableB)",
     "event OrderPartialFillUpdated(uint256 indexed orderId, bool indexed partialFillAllowed)",
     "error ZeroAddress()",
     "error ZeroAmount()",
@@ -2766,7 +2766,7 @@ ${orderFields}
     fillCall(order, amountA, amountB, deadline) {
       return {
         method: "fillOrder",
-        args: [order.orderId, amountB, amountA, deadline],
+        args: [order.orderId, amountB, amountA, deadline, ZERO_ADDRESS],
         value: nativeEthTotal([{ token: order.tokenB.address, amount: amountB }]),
       };
     },
@@ -2795,17 +2795,17 @@ ${orderFields}
         minAmountA: BigInt(o.availableA),
       }));
       const legs = orders.map((o) => ({ token: o.tokenB.address, amount: o.availableB }));
-      return v2Send("fillOrders", [fills, deadline], nativeEthTotal(legs));
+      return v2Send("fillOrders", [fills, deadline, ZERO_ADDRESS], nativeEthTotal(legs));
     },
 
     /** @see ISwapboard.cancelOrder — native ETH escrow is refunded as ETH */
     cancelOrder(orderId) {
-      return v2Send("cancelOrder", [orderId]);
+      return v2Send("cancelOrder", [orderId, ZERO_ADDRESS]);
     },
 
     /** @see ISwapboard.cancelOrders */
     cancelOrders(orderIds) {
-      return v2Send("cancelOrders", [orderIds]);
+      return v2Send("cancelOrders", [orderIds, ZERO_ADDRESS]);
     },
 
     /**
@@ -3145,6 +3145,7 @@ ${orderFields}
       showToast("Estimating gas...");
       gasEstimate = await SB.estimateFor(unwrap ? "cancelOrderUnwrap" : "cancelOrder", [
         order.orderId,
+        ...(CAPS.nativeEth ? [ZERO_ADDRESS] : []),
       ]);
     }
 
