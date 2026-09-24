@@ -12,6 +12,7 @@ import {
     NATIVE_TOKEN_ADDRESS,
     NATIVE_TOKEN_SYMBOL,
     NATIVE_TOKEN_DECIMALS,
+    TransferFromOnNative,
     toIERC20,
     toERC20
 } from "../src/token/Token.sol";
@@ -185,17 +186,29 @@ contract TokenTest is Test {
         assertEq(t.balanceOf(_bob), 0);
     }
 
-    function test_safeTransferFrom_native_noop() public {
-        uint256 before_ = address(this).balance;
-        NATIVE_TOKEN.safeTransferFrom(address(this), _bob, 1 ether);
-        assertEq(address(this).balance, before_);
-        assertEq(_bob.balance, 0);
+    function test_safeTransferFrom_native_reverts() public {
+        uint256 selfBefore = address(this).balance;
+        uint256 bobBefore = _bob.balance;
+
+        vm.expectRevert(TransferFromOnNative.selector);
+        this.externalSafeTransferFrom(address(this), _bob, 1 ether);
+
+        assertEq(address(this).balance, selfBefore);
+        assertEq(_bob.balance, bobBefore);
     }
 
-    function test_safeTransferFrom_native_zeroAmount_noop() public {
-        uint256 before_ = address(this).balance;
-        NATIVE_TOKEN.safeTransferFrom(address(this), _bob, 0);
-        assertEq(address(this).balance, before_);
+    function test_safeTransferFrom_native_zeroAmount_reverts() public {
+        vm.expectRevert(TransferFromOnNative.selector);
+        this.externalSafeTransferFrom(address(this), _bob, 0);
+    }
+
+    /// @dev External wrapper so `vm.expectRevert` observes `TransferFromOnNative`
+    function externalSafeTransferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external {
+        NATIVE_TOKEN.safeTransferFrom(from, to, amount);
     }
 
     function testFuzz_safeTransferFrom_erc20(

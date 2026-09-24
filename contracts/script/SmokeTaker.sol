@@ -44,7 +44,7 @@ contract SmokeTaker {
         uint128 minAmountA,
         uint256 deadline
     ) external payable {
-        _BOARD.fillOrder{value: msg.value}(orderId, amountB, minAmountA, deadline);
+        _BOARD.fillOrder{value: msg.value}(orderId, amountB, minAmountA, deadline, address(0));
     }
 
     /// @notice Fills several orders by exact tokenB sent
@@ -54,6 +54,6 @@ contract SmokeTaker {
         ISwapboard.FillOrderParams[] calldata fills,
         uint256 deadline
     ) external payable {
-        _BOARD.fillOrders{value: msg.value}(fills, deadline);
+        _BOARD.fillOrders{value: msg.value}(fills, deadline, address(0));
     }
 }

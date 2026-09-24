@@ -166,12 +166,12 @@ All operations are atomic. Partial fills are opt-in via `partialFillAllowed`. No
 ## Security
 
 - Reentrancy protection via OpenZeppelin
-- Fee-on-transfer / mid-transfer rebase / phantom detection on tokenA deposits and ERC20 tokenB payments to the maker (including multi-maker Permit2 board→maker distribution)
+- Fee-on-transfer / mid-transfer rebase / phantom detection on tokenA deposits, ERC20 tokenA payouts to the taker, ERC20 tokenA refunds to the maker, and ERC20 tokenB payments to the maker (including multi-maker Permit2 board→maker distribution)
 - The maker cannot fill their own order (`SelfFill`): a self-`transferFrom` of tokenB does not increase the recipient, so supporting self-fill needed a board hop. Forbidding it keeps tokenB a one-hop pull to a distinct maker
-- Post-deposit rebase (negative lock / positive surplus in escrow) remains an accepted limitation (see `contracts/test/security-research/`)
+- Fill takes `taker` (tokenA; `address(0)` → `msg.sender`); tokenB always goes to the order maker. Cancel and modify take `maker` (tokenA refunds; `address(0)` → `msg.sender`); top-ups still pull from the caller. `ModifyOrderParams.maker` may reassign the order maker (`address(0)` leaves it unchanged)
+- Post-deposit rebase remains an accepted limitation: a negative rebase can lock fill/cancel, and a positive rebase can strand surplus or, when the payout rounds, revert fill and cancel (see `contracts/test/security-research/`)
 - Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying transfer can take all escrow of that token; makers of the same scam token race whatever balance remains after a rebase. Other tokens in escrow are not affected
-- The board does not check that token addresses have code; makers must verify tokenA/tokenB before creating, and takers before filling
-- Outbound fee-on-transfer on tokenA payout to the taker remains an accepted limitation (see `contracts/test/security-research/`)
+- The board does not check that token addresses have code. An EOA or empty address used as a token can make create, fill, or cancel fail. Makers must verify tokenA and tokenB before creating, and takers before filling
 - `Token` helpers for ERC20 and native ETH transfers (zero-amount no-op; ETH via `sendValue`)
 - No proxy, no upgrades, no owner
 

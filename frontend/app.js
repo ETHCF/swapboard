@@ -347,20 +347,20 @@
     "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders) external payable returns (uint256[])",
     "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits) external payable returns (uint256[])",
     "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits) external payable returns (uint256[])",
-    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline) external payable",
-    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, tuple(uint256 amount, uint256 nonce, uint256 deadline, bytes signature) permit) external payable",
-    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permit) external payable",
-    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline) external payable",
-    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits) external payable",
-    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits) external payable",
-    "function cancelOrder(uint256 orderId) external",
-    "function cancelOrders(uint256[] orderIds) external",
-    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder) external payable",
-    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder, tuple(uint256 amount, uint256 nonce, uint256 deadline, bytes signature) permit) external payable",
-    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permit) external payable",
-    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder)[] mods) external payable",
-    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder)[] mods, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits) external payable",
-    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB) updatedOrder)[] mods, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits) external payable",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, address taker) external payable",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, tuple(uint256 amount, uint256 nonce, uint256 deadline, bytes signature) permit, address taker) external payable",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permit, address taker) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, address taker) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits, address taker) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits, address taker) external payable",
+    "function cancelOrder(uint256 orderId, address maker) external",
+    "function cancelOrders(uint256[] orderIds, address maker) external",
+    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder, address maker) external payable",
+    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder, tuple(uint256 amount, uint256 nonce, uint256 deadline, bytes signature) permit, address maker) external payable",
+    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permit, address maker) external payable",
+    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder)[] mods, address maker) external payable",
+    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder)[] mods, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits, address maker) external payable",
+    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder)[] mods, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits, address maker) external payable",
     "function setPartialFillAllowed(uint256 orderId, bool partialFillAllowed) external",
     "function getEth() external pure returns (address)",
     "function getNextOrderId() external view returns (uint256)",
@@ -371,7 +371,7 @@
     "event OrderCanceled(uint256 indexed orderId)",
     "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool indexed partialFillAllowed)",
     "event OrderFilled(uint256 indexed orderId, address indexed taker, uint128 amountA, uint128 amountB)",
-    "event OrderModified(uint256 indexed orderId, uint128 availableA, uint128 availableB)",
+    "event OrderModified(uint256 indexed orderId, address indexed maker, uint128 availableA, uint128 availableB)",
     "event OrderPartialFillUpdated(uint256 indexed orderId, bool indexed partialFillAllowed)",
     "error BalanceMismatch(uint256 expected, uint256 received)",
     "error DeadlineExpired()",
@@ -2789,16 +2789,17 @@ ${orderFields}
         "createOrders((address,uint128,address,uint128,bool)[],(address,uint256,uint256,uint256,bytes)[])",
     },
     fillOrder: {
-      plain: "fillOrder(uint256,uint128,uint128,uint256)",
-      permit: "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint8,bytes32,bytes32))",
-      permit2: "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint256,bytes))",
+      plain: "fillOrder(uint256,uint128,uint128,uint256,address)",
+      permit:
+        "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint8,bytes32,bytes32),address)",
+      permit2: "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint256,bytes),address)",
     },
     fillOrders: {
-      plain: "fillOrders((uint256,uint128,uint128)[],uint256)",
+      plain: "fillOrders((uint256,uint128,uint128)[],uint256,address)",
       permit:
-        "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint8,uint256,uint256,bytes32,bytes32)[])",
+        "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint8,uint256,uint256,bytes32,bytes32)[],address)",
       permit2:
-        "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint256,uint256,uint256,bytes)[])",
+        "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint256,uint256,uint256,bytes)[],address)",
     },
   };
 
@@ -3093,13 +3094,14 @@ ${orderFields}
    * Picks the entry point for a resolved pull, and the permit argument it takes.
    * @param {string} method - Plain method name, e.g. "fillOrder"
    * @param {Object} pull - Descriptor from resolvePull / resolveBatchPull
-   * @param {Array} args - Arguments the plain overload takes
+   * @param {Array} args - Arguments that precede the permit
+   * @param {Array} [tail] - Arguments that follow the permit (e.g. fill's `taker`)
    * @returns {{method: string, args: Array}} Method and args to send
    */
-  function withPermit(method, pull, args) {
+  function withPermit(method, pull, args, tail = []) {
     const overloads = PERMIT_OVERLOADS[method];
     if (!pull || pull.kind === "none" || pull.kind === "approve") {
-      return { method: overloads.plain, args };
+      return { method: overloads.plain, args: args.concat(tail) };
     }
 
     const overload = overloads[pull.kind];
@@ -3107,7 +3109,7 @@ ${orderFields}
       ? [pull.entries.map((e) => permitTuple(pull.kind, e))]
       : [permitTuple(pull.kind, pull.kind === "permit" ? pull.permit : pull.permit2)];
 
-    return { method: overload, args: args.concat(extra) };
+    return { method: overload, args: args.concat(extra, tail) };
   }
 
   /**
@@ -3255,7 +3257,12 @@ ${orderFields}
      * @returns {{method: string, args: Array, value: bigint}}
      */
     fillCall(order, amountA, amountB, deadline, pull) {
-      const call = withPermit("fillOrder", pull, [order.orderId, amountB, amountA, deadline]);
+      const call = withPermit(
+        "fillOrder",
+        pull,
+        [order.orderId, amountB, amountA, deadline],
+        [ZERO_ADDRESS]
+      );
       return {
         method: call.method,
         args: call.args,
@@ -3287,18 +3294,18 @@ ${orderFields}
         minAmountA: BigInt(o.availableA),
       }));
       const legs = orders.map((o) => ({ token: o.tokenB.address, amount: o.availableB }));
-      const call = withPermit("fillOrders", pull, [fills, deadline]);
+      const call = withPermit("fillOrders", pull, [fills, deadline], [ZERO_ADDRESS]);
       return v2Send(call.method, call.args, nativeEthTotal(legs));
     },
 
     /** @see ISwapboard.cancelOrder — native ETH escrow is refunded as ETH */
     cancelOrder(orderId) {
-      return v2Send("cancelOrder", [orderId]);
+      return v2Send("cancelOrder", [orderId, ZERO_ADDRESS]);
     },
 
     /** @see ISwapboard.cancelOrders */
     cancelOrders(orderIds) {
-      return v2Send("cancelOrders", [orderIds]);
+      return v2Send("cancelOrders", [orderIds, ZERO_ADDRESS]);
     },
 
     /**
@@ -3713,6 +3720,7 @@ ${orderFields}
       showToast("Estimating gas...");
       gasEstimate = await SB.estimateFor(unwrap ? "cancelOrderUnwrap" : "cancelOrder", [
         order.orderId,
+        ...(CAPS.nativeEth ? [ZERO_ADDRESS] : []),
       ]);
     }
 

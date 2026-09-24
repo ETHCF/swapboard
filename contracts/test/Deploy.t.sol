@@ -113,7 +113,7 @@ contract DeployTest is Test {
 
         uint256 makerEthBefore = maker.balance;
         vm.prank(maker);
-        board.cancelOrder(cancelId);
+        board.cancelOrder(cancelId, address(0));
 
         assertFalse(board.canFill(cancelId));
         assertEq(board.getOrder(cancelId).availableA, 0);

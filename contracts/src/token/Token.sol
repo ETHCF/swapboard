@@ -26,6 +26,9 @@ uint8 constant NATIVE_TOKEN_DECIMALS = 18;
 /// @dev Token value representing native ETH
 Token constant NATIVE_TOKEN = Token.wrap(NATIVE_TOKEN_ADDRESS);
 
+/// @notice Thrown when `safeTransferFrom` is used for the native ETH sentinel
+error TransferFromOnNative();
+
 using {
     equal as ==,
     notEqual as !=,
@@ -148,7 +151,8 @@ function safeTransfer(
 }
 
 /// @notice Transfers `amount` of ERC20 from `from` to `to` via allowance
-/// @dev No-ops when `amount == 0` or when `token` is native ETH
+/// @dev No-ops when `amount == 0`. Reverts `TransferFromOnNative` for the ETH sentinel;
+///      native value moves only through `safeTransfer` and `msg.value`.
 /// @param token Token to transfer
 /// @param from Holder
 /// @param to Recipient
@@ -159,7 +163,10 @@ function safeTransferFrom(
     address to,
     uint256 amount
 ) {
-    if (amount == 0 || isNative(token)) {
+    if (isNative(token)) {
+        revert TransferFromOnNative();
+    }
+    if (amount == 0) {
         return;
     }
     toIERC20(token).safeTransferFrom(from, to, amount);

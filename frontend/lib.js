@@ -1534,9 +1534,9 @@ const VERSION_CAPS = {
      * Sepolia deployment of Swapboard v2, and the subgraph that indexes it.
      * deploy.sh wrote both; being live, validateConfig now enforces them.
      */
-    contractAddress: "0x2cB5Ec296470793A36d08882630B9bf00fFB5938", // deploy:v2:contract
+    contractAddress: "0xEA7A84a18F5a7c21b97e83D5D7befaF053836B90", // deploy:v2:contract
     subgraphUrl:
-      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/swapboard-v2-sepolia/2.1.0/gn", // deploy:v2:subgraph
+      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/swapboard-v2-sepolia/2.2.0/gn", // deploy:v2:subgraph
     partialFill: true,
     batch: true,
     nativeEth: true,

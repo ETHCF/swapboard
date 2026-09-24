@@ -86,12 +86,12 @@ contract Smoke is Script {
         ISwapboard.Order memory order = _board.getOrder(id);
         _check(order.availableA == 50e18 && order.availableB == 100e6, "partial fills");
 
-        _board.modifyOrder(id, _amounts(order), ISwapboard.ModifyOrderParams({availableA: 60e18, availableB: 150e6}));
+        _board.modifyOrder(id, _amounts(order), ISwapboard.ModifyOrderParams({availableA: 60e18, availableB: 150e6, maker: address(0)}), address(0));
         order = _board.getOrder(id);
         _check(order.availableA == 60e18 && order.amountA == 60e18, "modifyOrder");
 
         _board.setPartialFillAllowed(id, false);
-        _board.cancelOrder(id);
+        _board.cancelOrder(id, address(0));
         _check(!_board.canFill(id), "cancelOrder");
     }
 
@@ -131,15 +131,15 @@ contract Smoke is Script {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: ids[0],
             previousAmounts: _amounts(_board.getOrder(ids[0])),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 8e18, availableB: 16e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 8e18, availableB: 16e6, maker: address(0)})
         });
-        _board.modifyOrders(mods);
+        _board.modifyOrders(mods, address(0));
         _check(_board.getOrder(ids[0]).availableA == 8e18, "modifyOrders");
 
         uint256[] memory cancels = new uint256[](2);
         cancels[0] = ids[0];
         cancels[1] = ids[2];
-        _board.cancelOrders(cancels);
+        _board.cancelOrders(cancels, address(0));
         _check(!_board.canFill(ids[0]) && !_board.canFill(ids[2]), "cancelOrders");
     }
 

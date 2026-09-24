@@ -252,8 +252,8 @@ function jsonResponse(payload) {
 const OVERLOAD = {
   createOrderPlain: "createOrder((address,uint128,address,uint128,bool))",
   createOrdersPlain: "createOrders((address,uint128,address,uint128,bool)[])",
-  fillOrderPlain: "fillOrder(uint256,uint128,uint128,uint256)",
-  fillOrdersPlain: "fillOrders((uint256,uint128,uint128)[],uint256)",
+  fillOrderPlain: "fillOrder(uint256,uint128,uint128,uint256,address)",
+  fillOrdersPlain: "fillOrders((uint256,uint128,uint128)[],uint256,address)",
   createOrderPermit:
     "createOrder((address,uint128,address,uint128,bool),(uint256,uint256,uint8,bytes32,bytes32))",
   createOrderPermit2:
@@ -263,12 +263,13 @@ const OVERLOAD = {
   createOrdersPermit2:
     "createOrders((address,uint128,address,uint128,bool)[],(address,uint256,uint256,uint256,bytes)[])",
   fillOrderPermit:
-    "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint8,bytes32,bytes32))",
-  fillOrderPermit2: "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint256,bytes))",
+    "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint8,bytes32,bytes32),address)",
+  fillOrderPermit2:
+    "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint256,bytes),address)",
   fillOrdersPermit:
-    "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint8,uint256,uint256,bytes32,bytes32)[])",
+    "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint8,uint256,uint256,bytes32,bytes32)[],address)",
   fillOrdersPermit2:
-    "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint256,uint256,uint256,bytes)[])",
+    "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint256,uint256,uint256,bytes)[],address)",
 };
 
 /**
@@ -3990,7 +3991,8 @@ describe("v2 create and batch entry points", () => {
         { orderId: "1", ...whole },
         { orderId: "2", ...whole },
       ]),
-      expect.any(Number)
+      expect.any(Number),
+      "0x0000000000000000000000000000000000000000"
     );
     expect(h.swap.fillOrders.mock.calls[0][0]).toHaveLength(2);
   }, 20000);
@@ -4017,9 +4019,14 @@ describe("v2 create and batch entry points", () => {
     expect(document.querySelector("#toast").textContent).toMatch(/Filled 2 orders/);
     expect(h.token.approve).not.toHaveBeenCalled();
     // The exact sum of both remaining payments, since v2 refunds nothing.
-    expect(h.swap.fillOrders).toHaveBeenCalledWith(expect.any(Array), expect.any(Number), {
-      value: 6000000000n,
-    });
+    expect(h.swap.fillOrders).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Number),
+      "0x0000000000000000000000000000000000000000",
+      {
+        value: 6000000000n,
+      }
+    );
   }, 20000);
 
   test("batch cancel of own orders uses cancelOrders", async () => {
@@ -4618,7 +4625,13 @@ describe("v2 single-order entry points", () => {
     // v2 treats WETH as an ordinary ERC20: approve exactly the payment, then
     // fill by payment, holding the receive to what the modal quoted.
     expect(h.token.approve).toHaveBeenCalledWith(expect.any(String), 3000000000n);
-    expect(h.swap.fillOrder).toHaveBeenCalledWith("1", 3000000000n, 10n ** 18n, expect.any(Number));
+    expect(h.swap.fillOrder).toHaveBeenCalledWith(
+      "1",
+      3000000000n,
+      10n ** 18n,
+      expect.any(Number),
+      "0x0000000000000000000000000000000000000000"
+    );
   }, 20000);
 
   test("a partial fill pays exactly the chosen amount", async () => {
@@ -4637,7 +4650,8 @@ describe("v2 single-order entry points", () => {
       "1",
       1500000000n,
       5n * 10n ** 17n,
-      expect.any(Number)
+      expect.any(Number),
+      "0x0000000000000000000000000000000000000000"
     );
   }, 20000);
 
@@ -4657,6 +4671,7 @@ describe("v2 single-order entry points", () => {
       3000000000n,
       10n ** 18n,
       expect.any(Number),
+      "0x0000000000000000000000000000000000000000",
       { value: 3000000000n }
     );
   }, 20000);
@@ -4666,7 +4681,10 @@ describe("v2 single-order entry points", () => {
     await mod.handleCancelOrder(makeOrder());
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/cancelled/i);
-    expect(h.swap.cancelOrder).toHaveBeenCalledWith("1");
+    expect(h.swap.cancelOrder).toHaveBeenCalledWith(
+      "1",
+      "0x0000000000000000000000000000000000000000"
+    );
   }, 20000);
 
   test("v2 prices the fill it will send", async () => {
@@ -4677,6 +4695,7 @@ describe("v2 single-order entry points", () => {
       3000000000n,
       10n ** 18n,
       expect.any(Number),
+      "0x0000000000000000000000000000000000000000",
     ]);
     expect(document.querySelector("#modal-body .gas-estimate")).not.toBeNull();
   }, 20000);
@@ -5178,12 +5197,15 @@ describe("connector adapters", () => {
         await v2.V2.send(call);
 
         expect(call.method).toBe(OVERLOAD.fillOrderPermit2);
-        expect(h.swap[OVERLOAD.fillOrderPermit2]).toHaveBeenCalledWith(1n, 100n, 5n, 123, [
+        // The permit sits before the trailing taker (address(0) pays msg.sender).
+        expect(h.swap[OVERLOAD.fillOrderPermit2]).toHaveBeenCalledWith(
+          1n,
           100n,
-          expect.any(BigInt),
-          expect.any(Number),
-          SIGNATURE,
-        ]);
+          5n,
+          123,
+          [100n, expect.any(BigInt), expect.any(Number), SIGNATURE],
+          "0x0000000000000000000000000000000000000000"
+        );
       });
 
       // MUTATION: Reuse the single Permit field order for TokenPermit
@@ -5360,7 +5382,7 @@ describe("connector adapters", () => {
     test("fillCall pays exactly amountB and holds the receive to the quote", () => {
       expect(v2.V2.fillCall(pair(A, B), 3n, 4n, 99)).toEqual({
         method: OVERLOAD.fillOrderPlain,
-        args: ["1", 4n, 3n, 99],
+        args: ["1", 4n, 3n, 99, "0x0000000000000000000000000000000000000000"],
         value: 0n,
       });
     });
@@ -5380,7 +5402,14 @@ describe("connector adapters", () => {
 
     test("send forwards a described fill", async () => {
       await v2.V2.send(v2.V2.fillCall(pair(A, NATIVE), 3n, 4n, 99));
-      expect(h.swap.fillOrder).toHaveBeenCalledWith("1", 4n, 3n, 99, { value: 4n });
+      expect(h.swap.fillOrder).toHaveBeenCalledWith(
+        "1",
+        4n,
+        3n,
+        99,
+        "0x0000000000000000000000000000000000000000",
+        { value: 4n }
+      );
     });
 
     test("fillOrders takes each order whole at its exact remaining payment", async () => {
@@ -5397,6 +5426,7 @@ describe("connector adapters", () => {
           { orderId: "2", amountB: 40n, minAmountA: 30n },
         ],
         99,
+        "0x0000000000000000000000000000000000000000",
         { value: 60n }
       );
     });
@@ -5405,15 +5435,22 @@ describe("connector adapters", () => {
       await v2.V2.fillOrders([pair(A, B)], 99);
       expect(h.swap.fillOrders).toHaveBeenCalledWith(
         [{ orderId: "1", amountB: 3000000000n, minAmountA: 10n ** 18n }],
-        99
+        99,
+        "0x0000000000000000000000000000000000000000"
       );
     });
 
     test("cancelOrder and cancelOrders forward the ids", async () => {
       await v2.V2.cancelOrder("1");
       await v2.V2.cancelOrders(["1", "2"]);
-      expect(h.swap.cancelOrder).toHaveBeenCalledWith("1");
-      expect(h.swap.cancelOrders).toHaveBeenCalledWith(["1", "2"]);
+      expect(h.swap.cancelOrder).toHaveBeenCalledWith(
+        "1",
+        "0x0000000000000000000000000000000000000000"
+      );
+      expect(h.swap.cancelOrders).toHaveBeenCalledWith(
+        ["1", "2"],
+        "0x0000000000000000000000000000000000000000"
+      );
     });
 
     test("nothing is sent without a deployment", async () => {
@@ -5438,8 +5475,14 @@ describe("connector adapters", () => {
     });
 
     test("estimateFor prices a call once deployed", async () => {
-      const est = await v2.V2.estimateFor("cancelOrder", ["1"]);
-      expect(h.swap.interface.encodeFunctionData).toHaveBeenCalledWith("cancelOrder", ["1"]);
+      const est = await v2.V2.estimateFor("cancelOrder", [
+        "1",
+        "0x0000000000000000000000000000000000000000",
+      ]);
+      expect(h.swap.interface.encodeFunctionData).toHaveBeenCalledWith("cancelOrder", [
+        "1",
+        "0x0000000000000000000000000000000000000000",
+      ]);
       expect(est).toMatchObject({ gas: "21000" });
     });
 

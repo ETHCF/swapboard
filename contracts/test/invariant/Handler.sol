@@ -476,9 +476,9 @@ contract SwapboardHandler is Test {
         ++_calls.fillOrder;
 
         if (order.tokenB == _ETH) {
-            _board.fillOrder{value: fillB128}(loaded.orderId, fillB128, amountAOut, 0);
+            _board.fillOrder{value: fillB128}(loaded.orderId, fillB128, amountAOut, 0, address(0));
         } else {
-            _board.fillOrder(loaded.orderId, fillB128, amountAOut, 0);
+            _board.fillOrder(loaded.orderId, fillB128, amountAOut, 0, address(0));
         }
 
         _recordFillGhosts(order, loaded.orderId, amountAOut);
@@ -506,7 +506,7 @@ contract SwapboardHandler is Test {
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
         fills[0] = FillTestLib.fillParams(order1, loaded.id1, order1.availableA);
         fills[1] = FillTestLib.fillParams(order2, loaded.id2, order2.availableA);
-        _board.fillOrders(fills, 0);
+        _board.fillOrders(fills, 0, address(0));
 
         _recordFillGhosts(order1, loaded.id1, order1.availableA);
         _recordFillGhosts(order2, loaded.id2, order2.availableA);
@@ -549,7 +549,7 @@ contract SwapboardHandler is Test {
         ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](2);
         fills[0] = ISwapboard.FillOrderParams({orderId: loaded.orderId, amountB: fillB1, minAmountA: amountAOut1});
         fills[1] = ISwapboard.FillOrderParams({orderId: loaded.orderId, amountB: fillB2, minAmountA: amountAOut2});
-        _board.fillOrders(fills, 0);
+        _board.fillOrders(fills, 0, address(0));
 
         _recordFillGhosts(order, loaded.orderId, uint256(amountAOut1) + uint256(amountAOut2));
     }
@@ -607,7 +607,7 @@ contract SwapboardHandler is Test {
 
         ++_calls.cancelOrder;
 
-        _board.cancelOrder(orderId);
+        _board.cancelOrder(orderId, address(0));
 
         if (order.tokenA == _ETH) {
             _ghostTotalEthWithdrawn += order.availableA;
@@ -650,7 +650,7 @@ contract SwapboardHandler is Test {
         uint256[] memory ids = new uint256[](2);
         ids[0] = id1;
         ids[1] = id2;
-        _board.cancelOrders(ids);
+        _board.cancelOrders(ids, address(0));
 
         _ghostTotalTokenAWithdrawn += order1.availableA + order2.availableA;
         _ghostOrdersCancelled += 2;
@@ -696,9 +696,9 @@ contract SwapboardHandler is Test {
             amountA: order.amountA, amountB: order.amountB, availableA: order.availableA, availableB: order.availableB
         });
         ISwapboard.ModifyOrderParams memory updated =
-            ISwapboard.ModifyOrderParams({availableA: newA, availableB: newB});
+            ISwapboard.ModifyOrderParams({availableA: newA, availableB: newB, maker: address(0)});
 
-        _board.modifyOrder{value: topUp.value}(orderId, previous, updated);
+        _board.modifyOrder{value: topUp.value}(orderId, previous, updated, address(0));
         _trackModifyOrderGhosts(order, orderId, newA, newB);
     }
 
@@ -798,7 +798,9 @@ contract SwapboardHandler is Test {
                 availableA: order1.availableA,
                 availableB: order1.availableB
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: amounts.newA1, availableB: amounts.newB1})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: amounts.newA1, availableB: amounts.newB1, maker: address(0)
+            })
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: id2,
@@ -808,10 +810,12 @@ contract SwapboardHandler is Test {
                 availableA: order2.availableA,
                 availableB: order2.availableB
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: amounts.newA2, availableB: amounts.newB2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: amounts.newA2, availableB: amounts.newB2, maker: address(0)
+            })
         });
 
-        _board.modifyOrders{value: ethValue}(mods);
+        _board.modifyOrders{value: ethValue}(mods, address(0));
         _trackModifyOrderGhosts(order1, id1, amounts.newA1, amounts.newB1);
         _trackModifyOrderGhosts(order2, id2, amounts.newA2, amounts.newB2);
     }
