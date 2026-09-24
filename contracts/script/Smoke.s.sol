@@ -86,7 +86,12 @@ contract Smoke is Script {
         ISwapboard.Order memory order = _board.getOrder(id);
         _check(order.availableA == 50e18 && order.availableB == 100e6, "partial fills");
 
-        _board.modifyOrder(id, _amounts(order), ISwapboard.ModifyOrderParams({availableA: 60e18, availableB: 150e6, maker: address(0)}), address(0));
+        _board.modifyOrder(
+            id,
+            _amounts(order),
+            ISwapboard.ModifyOrderParams({availableA: 60e18, availableB: 150e6, maker: address(0)}),
+            address(0)
+        );
         order = _board.getOrder(id);
         _check(order.availableA == 60e18 && order.amountA == 60e18, "modifyOrder");
 
