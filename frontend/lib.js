@@ -25,7 +25,47 @@ const CONFIG = {
   MAX_BATCH_CREATE: 10,
 };
 
-const EXPECTED_CHAIN_ID = 1;
+/**
+ * Chains a build can target. The page talks to exactly one of them, picked by
+ * BUILD_TARGET below. `chain` is the EIP-3085 shape wallet_addEthereumChain takes.
+ * @constant {Object<string, Object>}
+ */
+const CHAINS = {
+  mainnet: {
+    id: 1,
+    label: "Ethereum mainnet",
+    chain: {
+      chainId: "0x1",
+      chainName: "Ethereum",
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q"],
+      blockExplorerUrls: ["https://etherscan.io"],
+    },
+  },
+  sepolia: {
+    id: 11155111,
+    label: "Sepolia",
+    chain: {
+      chainId: "0xaa36a7",
+      chainName: "Sepolia",
+      nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"],
+      blockExplorerUrls: ["https://sepolia.etherscan.io"],
+    },
+  },
+};
+
+/**
+ * The network this build points at. The trailing `deploy:network` marker is
+ * load-bearing: deploy.sh rewrites it to the network it just deployed to.
+ */
+const BUILD_TARGET = {
+  network: "sepolia", // deploy:network
+};
+
+const ACTIVE_CHAIN = CHAINS[BUILD_TARGET.network];
+
+const EXPECTED_CHAIN_ID = ACTIVE_CHAIN.id;
 
 /**
  * Sentinel address representing native ETH in v2 orders.
@@ -148,7 +188,53 @@ function formatUsd(usdValue) {
   if (usdValue >= 0.01) {
     return "$" + usdValue.toFixed(4);
   }
-  return "$" + usdValue.toExponential(2);
+  if (usdValue >= 0.0001) {
+    return "$" + usdValue.toFixed(6).replace(/\.?0+$/, "");
+  }
+  return "$" + formatTinyDecimal(usdValue);
+}
+
+/**
+ * Formats a value below 0.0001 as a plain decimal with 4 significant digits,
+ * e.g. 0.0000017163 -> "0.000001716". Use setNumberText to display it with
+ * the zero run collapsed to a subscript count.
+ * @param {number} num - Value in (0, 0.0001)
+ * @returns {string}
+ */
+function formatTinyDecimal(num) {
+  if (!(num > 0)) return "0";
+  const zeros = -Math.floor(Math.log10(num)) - 1;
+  return num.toFixed(Math.min(100, zeros + 4)).replace(/\.?0+$/, "");
+}
+
+// "0." followed by 4+ zeros and then a significant digit
+const ZERO_RUN_RE = /(?<!\d)0\.(0{4,})(?=[1-9])/g;
+
+/**
+ * Sets an element's text, collapsing long zero runs after "0." into a
+ * subscript count (0.000001716 renders as 0.0₅1716). The zeros stay in the
+ * DOM, visually hidden, so textContent and copy/paste keep the real number;
+ * the count is drawn by CSS from data-n (see .zero-run in style.css).
+ * @param {HTMLElement} el
+ * @param {string} text
+ */
+function setNumberText(el, text) {
+  el.textContent = "";
+  let last = 0;
+  for (const match of text.matchAll(ZERO_RUN_RE)) {
+    const zeros = match[1];
+    el.appendChild(document.createTextNode(text.slice(last, match.index) + "0.0"));
+    const run = document.createElement("span");
+    run.className = "zero-run";
+    run.dataset.n = String(zeros.length);
+    const hidden = document.createElement("span");
+    hidden.className = "zero-run-digits";
+    hidden.textContent = zeros.slice(1);
+    run.appendChild(hidden);
+    el.appendChild(run);
+    last = match.index + match[0].length;
+  }
+  el.appendChild(document.createTextNode(text.slice(last)));
 }
 
 /**
@@ -220,7 +306,7 @@ function formatRatio(num) {
   if (num >= 0.0001) {
     return num.toFixed(6).replace(/\.?0+$/, "");
   }
-  return num.toExponential(2);
+  return formatTinyDecimal(num);
 }
 
 /**
@@ -370,6 +456,323 @@ function coinGeckoUrl(address) {
   if (typeof address !== "string") return null;
   const id = COINGECKO_ID_MAP[address.toLowerCase()];
   return id ? "https://www.coingecko.com/en/coins/" + id : null;
+}
+
+// ============================================================================
+// Permit registry
+// ============================================================================
+
+/**
+ * Generated permit-support data (see permit-tokens.js for how it was derived).
+ * Loaded from the preceding script tag in the browser and required under Jest.
+ * An absent file degrades to an empty registry rather than throwing: every
+ * lookup then answers "unknown", which callers already treat as "use approve".
+ * @constant {{GENERATED: string, CHAINS: Object<string, {TOKENS: Object<string,string>}>}}
+ */
+const PERMIT_DATA = (typeof module !== "undefined" && module.exports
+  ? require("./permit-tokens.js")
+  : typeof window !== "undefined" && window.SwapboardPermitTokens) || {
+  GENERATED: "",
+  CHAINS: {},
+};
+
+/**
+ * Permit flavour a token implements, or "unknown" when it is not in the registry.
+ *
+ * Verdicts are per chain, because an address that is a permit-capable token on
+ * mainnet is an unrelated contract (or nothing at all) on Sepolia. A chain the
+ * registry has no section for answers "unknown" for every address, which callers
+ * already treat as "use approve()".
+ *
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {string} "eip2612" | "dai" | "both" | "nonstandard" | "unverified" | "none" | "unknown"
+ */
+function permitKindFor(address, chainId = EXPECTED_CHAIN_ID) {
+  if (typeof address !== "string") return "unknown";
+  const section = (PERMIT_DATA.CHAINS || {})[String(chainId)];
+  if (!section) return "unknown";
+  return section.TOKENS[address.toLowerCase()] || "unknown";
+}
+
+/**
+ * Whether a token can be approved by signature instead of an approve() send.
+ *
+ * True only for the flavours a signature flow can actually drive, which here means
+ * the ones Swapboard's `Permit` struct can express: it is EIP-2612 shaped
+ * (value, deadline, v, r, s), so:
+ *
+ *   "dai"         false. DAI-style permit(holder,spender,nonce,expiry,allowed,...)
+ *                 takes a different argument list and there is no overload for it
+ *                 on chain, so signing one would revert the swap.
+ *   "both"        true -- those tokens do expose the 2612 entry point as well.
+ *   "nonstandard" false. Yearn-style permit(...,bytes) tokens answer
+ *                 DOMAIN_SEPARATOR() and nonces() like a 2612 token but revert
+ *                 when called as one.
+ *   "unverified"  false, and so is "unknown": an unrecognised token falls back to
+ *                 Permit2 or approve().
+ *
+ * The bias is deliberate -- a false negative costs one extra transaction, a false
+ * positive costs a failed swap.
+ *
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {boolean} True when an EIP-2612 signature can replace approve()
+ */
+function supportsPermit(address, chainId = EXPECTED_CHAIN_ID) {
+  return isSignablePermitKind(permitKindFor(address, chainId));
+}
+
+/**
+ * Whether a registry flavour maps onto Swapboard's EIP-2612 `Permit` struct.
+ * Split out so supportsPermit() and choosePullStrategy() cannot drift apart —
+ * one reads an address, the other an already-resolved kind.
+ * @param {string} kind - Flavour from permitKindFor()
+ * @returns {boolean} True when the 2612 entry point can be signed for
+ */
+function isSignablePermitKind(kind) {
+  return kind === "eip2612" || kind === "both";
+}
+
+// ============================================================================
+// Signature-based approvals
+// ============================================================================
+
+/**
+ * Canonical Permit2, identical on every chain it is deployed to.
+ * Mirrors `_PERMIT2` in contracts/src/Swapboard.sol — the board hardcodes it too,
+ * so a mismatch here means a signature no entry point can spend.
+ * @constant {string}
+ */
+const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+
+/**
+ * Longest a Permit2 batch can be, because the contract tracks which entries were
+ * used in a single uint256 bitmap and reverts `TooManyPermit2` past it.
+ * @constant {number}
+ */
+const MAX_PERMIT2_BATCH = 256;
+
+/**
+ * How long a fresh permit signature stays valid, in seconds.
+ * Long enough to survive a slow wallet confirmation and a congested block, short
+ * enough that an abandoned signature stops being spendable the same day.
+ * @constant {number}
+ */
+const PERMIT_TTL_SECONDS = 30 * 60;
+
+/**
+ * EIP-712 type definition for an EIP-2612 permit.
+ * Matches PERMIT_TYPEHASH in contracts/test/mocks/MockERC20Permit.sol.
+ * @constant {Object}
+ */
+const PERMIT_TYPES = {
+  Permit: [
+    { name: "owner", type: "address" },
+    { name: "spender", type: "address" },
+    { name: "value", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+};
+
+/**
+ * EIP-712 type definition for a Permit2 SignatureTransfer.
+ * Matches PERMIT_TRANSFER_FROM_TYPEHASH in contracts/test/mocks/MockPermit2.sol.
+ * @constant {Object}
+ */
+const PERMIT2_TYPES = {
+  PermitTransferFrom: [
+    { name: "permitted", type: "TokenPermissions" },
+    { name: "spender", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+  TokenPermissions: [
+    { name: "token", type: "address" },
+    { name: "amount", type: "uint256" },
+  ],
+};
+
+/**
+ * EIP-712 domain for Permit2.
+ *
+ * Deliberately has no `version` field — Permit2's own domain omits it, and adding
+ * one changes the separator, so every signature would be rejected.
+ *
+ * @param {number} chainId - Chain the signature is for
+ * @returns {{name: string, chainId: number, verifyingContract: string}}
+ */
+function permit2Domain(chainId) {
+  return { name: "Permit2", chainId, verifyingContract: PERMIT2_ADDRESS };
+}
+
+/**
+ * Builds the message half of an EIP-2612 permit signature.
+ * @param {Object} args
+ * @param {string} args.owner - Token holder signing
+ * @param {string} args.spender - Address being approved (the board)
+ * @param {bigint|string} args.value - Allowance being signed for
+ * @param {bigint|string} args.nonce - Current nonces(owner) on the token
+ * @param {number} args.deadline - Unix timestamp the signature expires at
+ * @returns {Object} EIP-712 message
+ */
+function buildPermitMessage({ owner, spender, value, nonce, deadline }) {
+  return {
+    owner,
+    spender,
+    value: BigInt(value).toString(),
+    nonce: BigInt(nonce).toString(),
+    deadline,
+  };
+}
+
+/**
+ * Builds the message half of a Permit2 SignatureTransfer signature.
+ * @param {Object} args
+ * @param {string} args.token - ERC20 being pulled
+ * @param {bigint|string} args.amount - Maximum the signature authorises
+ * @param {string} args.spender - Address allowed to spend it (the board)
+ * @param {bigint|string} args.nonce - Unordered nonce; see permit2Nonce
+ * @param {number} args.deadline - Unix timestamp the signature expires at
+ * @returns {Object} EIP-712 message
+ */
+function buildPermit2Message({ token, amount, spender, nonce, deadline }) {
+  return {
+    permitted: { token, amount: BigInt(amount).toString() },
+    spender,
+    nonce: BigInt(nonce).toString(),
+    deadline,
+  };
+}
+
+/**
+ * Picks a Permit2 nonce.
+ *
+ * Permit2 nonces are unordered — it stores a spent-bit per nonce rather than a
+ * counter — so a random draw is the right shape. A counter would collide as soon
+ * as two signatures were outstanding at once, which a batch does routinely.
+ *
+ * @param {Uint8Array|number[]} randomBytes - At least 32 bytes of randomness
+ * @returns {bigint} Nonce to sign
+ */
+function permit2Nonce(randomBytes) {
+  let nonce = 0n;
+  for (let i = 0; i < 32; i++) {
+    nonce = (nonce << 8n) | BigInt(randomBytes[i] & 0xff);
+  }
+  return nonce;
+}
+
+/**
+ * Expiry timestamp for a fresh signature.
+ * @param {number} nowSec - Current unix time in seconds
+ * @param {number} [ttlSec] - Lifetime
+ * @returns {number} Unix timestamp
+ */
+function permitDeadline(nowSec, ttlSec = PERMIT_TTL_SECONDS) {
+  return Math.floor(nowSec) + ttlSec;
+}
+
+/**
+ * Decides how one token's amount should reach the board.
+ *
+ * The single decision point for the whole approval story — if you are asking why
+ * a token took a given path, read this and nothing else. Order of preference:
+ *
+ *   "none"    native ETH (rides msg.value), a zero pull, or a standing allowance
+ *             that already covers it. Costs the user nothing and asks for nothing.
+ *   "permit"  the token implements EIP-2612, so one signature replaces the
+ *             approval transaction entirely.
+ *   "permit2" the token does not, but the user has already approved canonical
+ *             Permit2 for it, so a SignatureTransfer can pull it.
+ *   "approve" nothing else applies: send the approve() transaction, as before.
+ *
+ * @param {Object} args
+ * @param {boolean} args.isNative - Whether the token is the native-ETH sentinel
+ * @param {bigint|string} args.allowance - Current allowance granted to the board
+ * @param {bigint|string} args.amount - Amount this call needs to pull
+ * @param {string} args.permitKind - Flavour from permitKindFor()
+ * @param {bigint|string} args.permit2Allowance - Allowance granted to Permit2
+ * @returns {string} "none" | "permit" | "permit2" | "approve"
+ */
+function choosePullStrategy({ isNative, allowance, amount, permitKind, permit2Allowance }) {
+  if (isNative) return "none";
+
+  const needed = BigInt(amount);
+  if (needed <= 0n) return "none";
+  if (BigInt(allowance) >= needed) return "none";
+
+  if (isSignablePermitKind(permitKind)) return "permit";
+  if (BigInt(permit2Allowance) >= needed) return "permit2";
+  return "approve";
+}
+
+/**
+ * Plans the pulls for a batch call.
+ *
+ * Three constraints shape this. A call takes either `TokenPermit[]` or
+ * `TokenPermit2[]` and never both, so the batch commits to one signature flavour.
+ * The contract rejects a batch that carries a duplicate token
+ * (`DuplicatePermitToken`) or an entry nothing spends (`UnusedPermit` /
+ * `UnusedPermit2`), so entries are aggregated per token and emitted only for
+ * tokens actually pulled. And a Permit2 batch caps at MAX_PERMIT2_BATCH.
+ *
+ * Whichever signature group is larger wins the overload; the losing group falls
+ * back to approve() transactions, since that costs fewer transactions than
+ * splitting the call in two. A tie goes to EIP-2612, matching the single-token
+ * preference order.
+ *
+ * The two approve lists are kept apart because they are settled by different
+ * callers. `approvals` are tokens that could never be signed for; a batch is
+ * chunked into several transactions, and those want one approval covering the
+ * whole batch, sent once outside the chunk loop. `demoted` are tokens that could
+ * have been signed for but lost the vote in this chunk — which chunk they lose in
+ * depends on the chunk, so only the chunk can settle them.
+ *
+ * @param {Array<Object>} legs - {token, amount, isNative, allowance, permitKind, permit2Allowance}
+ * @returns {{strategy: string, entries: Array<Object>, approvals: Array<Object>, demoted: Array<Object>}}
+ *          `strategy` is "none" | "permit" | "permit2"; `entries` are the tokens
+ *          taking that signature path.
+ */
+function planBatchPulls(legs) {
+  const byToken = new Map();
+
+  for (const leg of legs) {
+    if (leg.isNative) continue;
+    const key = leg.token.toLowerCase();
+    const seen = byToken.get(key);
+    if (seen) {
+      seen.amount += BigInt(leg.amount);
+    } else {
+      byToken.set(key, { ...leg, token: leg.token, amount: BigInt(leg.amount) });
+    }
+  }
+
+  const permits = [];
+  const permit2s = [];
+  const approvals = [];
+
+  for (const leg of byToken.values()) {
+    const strategy = choosePullStrategy(leg);
+    if (strategy === "permit") permits.push(leg);
+    else if (strategy === "permit2") permit2s.push(leg);
+    else if (strategy === "approve") approvals.push(leg);
+  }
+
+  // Past the bitmap limit the contract reverts TooManyPermit2, so the tail
+  // approves instead of making the whole call unsendable.
+  const overflow = permit2s.splice(MAX_PERMIT2_BATCH);
+
+  if (permits.length === 0 && permit2s.length === 0) {
+    return { strategy: "none", entries: [], approvals, demoted: overflow };
+  }
+
+  if (permits.length >= permit2s.length) {
+    return { strategy: "permit", entries: permits, approvals, demoted: permit2s.concat(overflow) };
+  }
+
+  return { strategy: "permit2", entries: permit2s, approvals, demoted: permits.concat(overflow) };
 }
 
 /**
@@ -789,7 +1192,6 @@ const ERROR_SIGNATURES = {
   "0x201b580a": "SameToken",
   "0x6e65ed84": "BalanceMismatch",
   "0x4e90badc": "OrderNotFound",
-  "0xd2c02610": "OrderNotActive",
   "0x98cd7222": "NotMaker",
   "0x8230dc8f": "ETHAmountMismatch",
   "0x1ab7da6b": "DeadlineExpired",
@@ -802,12 +1204,16 @@ const ERROR_SIGNATURES = {
   // v1 only: v2 dropped the code-size check on token addresses.
   "0x8a8b41ec": "NotAContract",
 
+  // v1 only: v2 deletes an order when it closes, so a filled or canceled id
+  // reverts OrderNotFound instead.
+  "0xd2c02610": "OrderNotActive",
+
   // v2 only: partial fills, slippage bounds, batch entry points, and maker edits.
+  "0x9d7a930f": "SelfFill",
   "0xed38596f": "PartialFillNotAllowed",
   "0x535a34f0": "FillAmountTooHigh",
   "0x19113a72": "FillAmountMismatch",
   "0x54b9c511": "DuplicateOrderId",
-  "0x9d7a930f": "SelfFill",
 
   // v2 only: modifyOrder(s) and setPartialFillAllowed.
   "0xa88ee577": "NoChange",
@@ -840,7 +1246,6 @@ const ERROR_MESSAGES = {
   ZeroAddress: "Invalid token address",
   ZeroAmount: "Amount too small (check decimal places)",
   SameToken: "Offered and wanted tokens must be different",
-  NotAContract: "Token address is not a contract",
   BalanceMismatch:
     "Token transfer amount mismatch (fee-on-transfer / mid-transfer rebase / phantom tokens not supported on deposits or tokenB payments)",
   OrderNotFound: (args) => `Order #${args[0]} not found`,
@@ -849,13 +1254,14 @@ const ERROR_MESSAGES = {
     `Order #${args[0]} changed while you were editing it. Refresh and try again.`,
   NotMaker: "You are not the maker of this order",
   SelfFill: "You cannot fill your own order",
+  NotAContract: "Token address is not a contract",
   ZeroETH: "ETH amount cannot be zero",
   NotWETH: "Token is not WETH",
   ETHAmountMismatch: "ETH amount does not match required amount",
   ETHTransferFailed: "ETH transfer to recipient failed",
   DeadlineExpired: "Transaction deadline passed. Please try again.",
 
-  // v2. The three fill errors all mean the order moved between quote and
+  // v2. The two fill errors both mean the order moved between quote and
   // submission, so each says what to do rather than restating the numbers.
   PartialFillNotAllowed: (args) => `Order #${args[0]} must be filled in full`,
   FillAmountTooHigh: (args) =>
@@ -1116,6 +1522,8 @@ const VERSION_CAPS = {
     gasEstimate: true,
     /** Real subgraph, so post-transaction indexing can be polled. */
     subgraphPolling: true,
+    /** The v1 contract has no permit overloads; approvals are always a transaction. */
+    permit: false,
     /** Writes hit chain. */
     live: true,
   },
@@ -1123,32 +1531,25 @@ const VERSION_CAPS = {
     version: 2,
     label: "v2",
     /**
-     * Placeholders until v2 ships: there is no deployed contract and no
-     * subgraph indexing one. `live: false` below is what keeps these from
-     * being reached, and validateConfig only enforces them once a version
-     * goes live. deploy.sh fills both in.
+     * Sepolia deployment of Swapboard v2, and the subgraph that indexes it.
+     * deploy.sh wrote both; being live, validateConfig now enforces them.
      */
-    contractAddress: "0x0000000000000000000000000000000000000000", // deploy:v2:contract
+    contractAddress: "0xEA7A84a18F5a7c21b97e83D5D7befaF053836B90", // deploy:v2:contract
     subgraphUrl:
-      "https://api.goldsky.com/api/public/project_YOUR_ID/subgraphs/swapboard-v2/2.0.0/gn", // deploy:v2:subgraph
+      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/swapboard-v2-sepolia/2.2.0/gn", // deploy:v2:subgraph
     partialFill: true,
     batch: true,
     nativeEth: true,
     multiCreate: true,
     remainingAmounts: true,
-    /**
-     * The connector encodes against the real v2 ABI, so a call can be priced.
-     * Until there is a deployment it declines to estimate against the zero
-     * placeholder, so the modal shows no figure rather than a made-up one.
-     */
+    /** The connector encodes against the real v2 ABI, so a call can be priced. */
     gasEstimate: true,
-    /** Off until a v2 subgraph is deployed: polling a placeholder only times out. */
-    subgraphPolling: false,
-    /**
-     * Not deployed. Writes still go through the real connector, which refuses
-     * to send to the zero placeholder outside mock mode — see requireDeployed().
-     */
-    live: false,
+    /** Real subgraph, so post-transaction indexing can be polled. */
+    subgraphPolling: true,
+    /** Every entry point has EIP-2612 and Permit2 overloads; see choosePullStrategy. */
+    permit: true,
+    /** Writes hit chain. */
+    live: true,
   },
 };
 
@@ -1746,6 +2147,8 @@ if (typeof window !== "undefined") {
     // Config
     CONFIG,
     EXPECTED_CHAIN_ID,
+    CHAINS,
+    ACTIVE_CHAIN,
 
     // Utility functions
     escapeHtml,
@@ -1760,6 +2163,8 @@ if (typeof window !== "undefined") {
     formatNumber,
     formatTimeAgo,
     formatRatio,
+    formatTinyDecimal,
+    setNumberText,
     parseAmount,
 
     // Price registry
@@ -1769,6 +2174,25 @@ if (typeof window !== "undefined") {
     PRICE_CACHE_TTL_MS,
     getCachedPrice,
     getTokenPrice,
+
+    // Permit registry
+    permitKindFor,
+    supportsPermit,
+    isSignablePermitKind,
+
+    // Signature-based approvals
+    PERMIT2_ADDRESS,
+    MAX_PERMIT2_BATCH,
+    PERMIT_TTL_SECONDS,
+    PERMIT_TYPES,
+    PERMIT2_TYPES,
+    permit2Domain,
+    buildPermitMessage,
+    buildPermit2Message,
+    permit2Nonce,
+    permitDeadline,
+    choosePullStrategy,
+    planBatchPulls,
     fetchPrices,
     calculateMarketDeviation,
 
@@ -1852,6 +2276,8 @@ if (typeof module !== "undefined" && module.exports) {
     // Config
     CONFIG,
     EXPECTED_CHAIN_ID,
+    CHAINS,
+    ACTIVE_CHAIN,
     COINGECKO_ID_MAP,
     NATIVE_ETH,
 
@@ -1868,6 +2294,8 @@ if (typeof module !== "undefined" && module.exports) {
     formatNumber,
     formatTimeAgo,
     formatRatio,
+    formatTinyDecimal,
+    setNumberText,
     parseAmount,
 
     // Price functions
@@ -1878,6 +2306,25 @@ if (typeof module !== "undefined" && module.exports) {
     coinGeckoUrl,
     priceRatio,
     calculateMarketDeviation,
+
+    // Permit registry
+    permitKindFor,
+    supportsPermit,
+    isSignablePermitKind,
+
+    // Signature-based approvals
+    PERMIT2_ADDRESS,
+    MAX_PERMIT2_BATCH,
+    PERMIT_TTL_SECONDS,
+    PERMIT_TYPES,
+    PERMIT2_TYPES,
+    permit2Domain,
+    buildPermitMessage,
+    buildPermit2Message,
+    permit2Nonce,
+    permitDeadline,
+    choosePullStrategy,
+    planBatchPulls,
 
     // Token search
     searchTokens,
