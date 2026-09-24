@@ -213,8 +213,8 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _assertFilled();
     }
 
-    /// @notice fillOrder with Permit2 pays tokenA to a non-zero `recipient`
-    function test_fillOrder_permit2_recipient_receivesTokenA() public {
+    /// @notice fillOrder with Permit2 pays tokenA to a non-zero `taker`
+    function test_fillOrder_permit2_taker_receivesTokenA() public {
         uint256 orderId = _createWithAllowance();
         ISwapboard.Permit2Permit memory permit = _signPermit2(_tokenB, _taker, _TAKER_PK, _AMOUNT_B);
         address payout = makeAddr("payout");
@@ -306,7 +306,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.modifyOrder(
             orderId,
             _amounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2}),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)}),
             permit,
             address(0)
         );
@@ -328,7 +328,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.modifyOrder{value: _AMOUNT_A}(
             orderId,
             _amounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2}),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)}),
             permit,
             address(0)
         );
@@ -343,7 +343,9 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: orderId,
             previousAmounts: _amounts(snapshot),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
         ISwapboard.TokenPermit2[] memory permits = _single(_tokenPermit2(_tokenA, _maker, _MAKER_PK, _AMOUNT_A));
 
@@ -751,7 +753,9 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: orderId,
             previousAmounts: _amounts(_board.getOrder(orderId)),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
         ISwapboard.TokenPermit2[] memory permits = new ISwapboard.TokenPermit2[](257);
 
@@ -771,7 +775,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.modifyOrder(
             orderId,
             _amounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2}),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)}),
             _skipPermit2(),
             address(0)
         );
@@ -791,7 +795,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.modifyOrder{value: _AMOUNT_A}(
             orderId,
             _amounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2}),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)}),
             _skipPermit2(),
             address(0)
         );
@@ -810,7 +814,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.modifyOrder(
             orderId,
             _amounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2, maker: address(0)}),
             _skipPermit2(),
             address(0)
         );
@@ -820,8 +824,8 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A / 2);
     }
 
-    /// @notice Refund-only modifyOrder with Permit2 pays tokenA refund to `recipient`
-    function test_modifyOrder_permit2_refundOnly_recipient() public {
+    /// @notice Refund-only modifyOrder with Permit2 pays tokenA refund to `maker`
+    function test_modifyOrder_permit2_refundOnly_maker() public {
         uint256 orderId = _createWithAllowance();
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
         address payout = makeAddr("payout");
@@ -831,7 +835,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.modifyOrder(
             orderId,
             _amounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2, maker: address(0)}),
             _skipPermit2(),
             payout
         );
@@ -840,6 +844,32 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         assertEq(_tokenA.balanceOf(payout), _AMOUNT_A / 2);
         assertEq(_tokenA.balanceOf(_maker), makerBefore);
         assertEq(_tokenA.balanceOf(address(_board)), _AMOUNT_A / 2);
+    }
+
+    /// @notice modifyOrder with empty Permit2 can reassign the order maker
+    function test_modifyOrder_permit2_changesMaker() public {
+        uint256 orderId = _createWithAllowance();
+        ISwapboard.Order memory snapshot = _board.getOrder(orderId);
+        address newMaker = makeAddr("newMaker");
+
+        vm.prank(_maker);
+        _board.modifyOrder(
+            orderId,
+            _amounts(snapshot),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A, availableB: _AMOUNT_B, maker: newMaker}),
+            _skipPermit2(),
+            address(0)
+        );
+
+        assertEq(_board.getOrder(orderId).maker, newMaker);
+
+        vm.prank(_maker);
+        vm.expectRevert(abi.encodeWithSelector(ISwapboard.NotMaker.selector, orderId, _maker, newMaker));
+        _board.cancelOrder(orderId, address(0));
+
+        vm.prank(newMaker);
+        _board.cancelOrder(orderId, address(0));
+        assertEq(_tokenA.balanceOf(newMaker), _AMOUNT_A);
     }
 
     /// @notice modifyOrder refund-only with a non-empty Permit2 signature reverts UnusedPermit2
@@ -853,7 +883,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.modifyOrder(
             orderId,
             _amounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2, maker: address(0)}),
             permit,
             address(0)
         );
@@ -871,7 +901,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.modifyOrder(
             orderId,
             _amounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2}),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2, maker: address(0)}),
             _skipPermit2(),
             address(0)
         );
@@ -893,7 +923,9 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: ids[0],
             previousAmounts: _amounts(snapshot),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
 
         vm.prank(_maker);
@@ -923,12 +955,16 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: ids[0],
             previousAmounts: _amounts(_board.getOrder(ids[0])),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: ids[1],
             previousAmounts: _amounts(_board.getOrder(ids[1])),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
 
         vm.prank(_maker);
@@ -949,7 +985,9 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: orderId,
             previousAmounts: _amounts(snapshot),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
 
         vm.prank(_maker);
@@ -969,7 +1007,9 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: orderId,
             previousAmounts: _amounts(snapshot),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
 
         ISwapboard.TokenPermit2[] memory permits = new ISwapboard.TokenPermit2[](2);
@@ -989,7 +1029,9 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: orderId,
             previousAmounts: _amounts(snapshot),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
 
         ISwapboard.TokenPermit2 memory invalid = _dummyTokenPermit2(address(_tokenA));
@@ -1008,7 +1050,9 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: orderId,
             previousAmounts: _amounts(snapshot),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
 
         vm.prank(_maker);
@@ -1024,7 +1068,9 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: orderId,
             previousAmounts: _amounts(snapshot),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
 
         vm.prank(_maker);
@@ -1042,7 +1088,9 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: orderId,
             previousAmounts: _amounts(snapshot),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2, maker: address(0)
+            })
         });
 
         // Empty array: no Permit2 needed for a refund-only modify
@@ -1062,7 +1110,9 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: orderId,
             previousAmounts: _amounts(snapshot),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2, maker: address(0)
+            })
         });
 
         ISwapboard.TokenPermit2[] memory permits = _single(_tokenPermit2(_tokenA, _maker, _MAKER_PK, _AMOUNT_A));
@@ -1138,7 +1188,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.modifyOrder{value: 1}(
             orderId,
             _amounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2}),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)}),
             _skipPermit2(),
             address(0)
         );
@@ -1155,7 +1205,7 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         _board.modifyOrder{value: 1}(
             orderId,
             _amounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2}),
+            ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)}),
             permit,
             address(0)
         );
@@ -1189,12 +1239,16 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
         mods[0] = ISwapboard.ModifyOrdersParams({
             orderId: ids[0],
             previousAmounts: _amounts(_board.getOrder(ids[0])),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A * 2, availableB: _AMOUNT_B * 2, maker: address(0)
+            })
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: ids[1],
             previousAmounts: _amounts(_board.getOrder(ids[1])),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B / 2, maker: address(0)
+            })
         });
 
         uint256 makerCBefore = _tokenC.balanceOf(_maker);
@@ -1217,13 +1271,15 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
             orderId: ids[0],
             previousAmounts: _amounts(_board.getOrder(ids[0])),
             updatedOrder: ISwapboard.ModifyOrderParams({
-                availableA: _AMOUNT_A + (_AMOUNT_A / 2), availableB: _AMOUNT_B
+                availableA: _AMOUNT_A + (_AMOUNT_A / 2), availableB: _AMOUNT_B, maker: address(0)
             })
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: ids[1],
             previousAmounts: _amounts(_board.getOrder(ids[1])),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B, maker: address(0)
+            })
         });
 
         ISwapboard.TokenPermit2[] memory permits = _single(_tokenPermit2(_tokenA, _maker, _MAKER_PK, _AMOUNT_A));
@@ -1243,13 +1299,15 @@ contract SwapboardPermit2Test is SwapboardTwoPartyTest {
             orderId: ids[0],
             previousAmounts: _amounts(_board.getOrder(ids[0])),
             updatedOrder: ISwapboard.ModifyOrderParams({
-                availableA: _AMOUNT_A + (_AMOUNT_A / 4), availableB: _AMOUNT_B
+                availableA: _AMOUNT_A + (_AMOUNT_A / 4), availableB: _AMOUNT_B, maker: address(0)
             })
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: ids[1],
             previousAmounts: _amounts(_board.getOrder(ids[1])),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: _AMOUNT_A / 2, availableB: _AMOUNT_B, maker: address(0)
+            })
         });
 
         ISwapboard.TokenPermit2[] memory permits = _single(_tokenPermit2(_tokenA, _maker, _MAKER_PK, _AMOUNT_A));

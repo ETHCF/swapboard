@@ -677,7 +677,7 @@ contract SwapboardIntegrationTest is Test {
                 availableA: snapshot.availableA,
                 availableB: snapshot.availableB
             }),
-            ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6}),
+            ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6, maker: address(0)}),
             address(0)
         );
         vm.stopPrank();
@@ -745,7 +745,7 @@ contract SwapboardIntegrationTest is Test {
                 availableA: snap0.availableA,
                 availableB: snap0.availableB
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 4 ether, availableB: 12_000e6, maker: address(0)})
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: order1,
@@ -755,7 +755,7 @@ contract SwapboardIntegrationTest is Test {
                 availableA: snap1.availableA,
                 availableB: snap1.availableB
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 8 ether, availableB: 24_000e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 8 ether, availableB: 24_000e6, maker: address(0)})
         });
         _board.modifyOrders(mods, address(0));
         vm.stopPrank();
@@ -830,14 +830,14 @@ contract SwapboardIntegrationTest is Test {
             previousAmounts: ISwapboard.OrderAmounts({
                 amountA: 10 ether, amountB: 30_000e6, availableA: 10 ether, availableB: 30_000e6
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 30 ether, availableB: 90_000e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 30 ether, availableB: 90_000e6, maker: address(0)})
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: wethLarge,
             previousAmounts: ISwapboard.OrderAmounts({
                 amountA: 40 ether, amountB: 120_000e6, availableA: 40 ether, availableB: 120_000e6
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 30 ether, availableB: 90_000e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 30 ether, availableB: 90_000e6, maker: address(0)})
         });
         // DAI: +50 / -200 => net refund 150
         mods[2] = ISwapboard.ModifyOrdersParams({
@@ -845,14 +845,14 @@ contract SwapboardIntegrationTest is Test {
             previousAmounts: ISwapboard.OrderAmounts({
                 amountA: 100 ether, amountB: 100e6, availableA: 100 ether, availableB: 100e6
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 150 ether, availableB: 150e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 150 ether, availableB: 150e6, maker: address(0)})
         });
         mods[3] = ISwapboard.ModifyOrdersParams({
             orderId: daiLarge,
             previousAmounts: ISwapboard.OrderAmounts({
                 amountA: 400 ether, amountB: 400e6, availableA: 400 ether, availableB: 400e6
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 200 ether, availableB: 200e6})
+            updatedOrder: ISwapboard.ModifyOrderParams({availableA: 200 ether, availableB: 200e6, maker: address(0)})
         });
     }
 

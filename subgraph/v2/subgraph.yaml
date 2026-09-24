@@ -36,7 +36,7 @@ dataSources:
           handler: handleOrderFilled
         - event: OrderCanceled(indexed uint256)
           handler: handleOrderCanceled
-        - event: OrderModified(indexed uint256,uint128,uint128)
+        - event: OrderModified(indexed uint256,indexed address,uint128,uint128)
           handler: handleOrderModified
         - event: OrderPartialFillUpdated(indexed uint256,indexed bool)
           handler: handleOrderPartialFillUpdated

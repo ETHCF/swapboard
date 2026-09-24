@@ -133,6 +133,7 @@ For market makers and trading bots.
     "name": "OrderModified",
     "inputs": [
       { "name": "orderId", "type": "uint256", "indexed": true },
+      { "name": "maker", "type": "address", "indexed": true },
       { "name": "availableA", "type": "uint128", "indexed": false },
       { "name": "availableB", "type": "uint128", "indexed": false }
     ]
@@ -341,7 +342,7 @@ async function monitorOrders(provider) {
     console.log(`Order ${orderId} canceled`);
   });
 
-  contract.on("OrderModified", (orderId, availableA, availableB) => {
+  contract.on("OrderModified", (orderId, maker, availableA, availableB) => {
     console.log(`Order ${orderId} modified: remaining ${availableA}/${availableB}`);
   });
 
@@ -552,7 +553,7 @@ function fillOrder(
     uint128 amountB,
     uint128 minAmountA,
     uint256 deadline,
-    address recipient
+    address taker
 ) external payable;
 
 function fillOrder(
@@ -561,20 +562,20 @@ function fillOrder(
     uint128 minAmountA,
     uint256 deadline,
     Permit calldata permit,
-    address recipient
+    address taker
 ) external payable;
 
 function fillOrders(
     FillOrderParams[] calldata fills,
     uint256 deadline,
-    address recipient
+    address taker
 ) external payable;
 
 function fillOrders(
     FillOrderParams[] calldata fills,
     uint256 deadline,
     TokenPermit[] calldata permits,
-    address recipient
+    address taker
 ) external payable;
 ```
 
@@ -586,11 +587,12 @@ Behavior:
 - Reverts with `FillAmountTooHigh` when `amountB` exceeds `availableB`.
 - If tokenB is ETH, `msg.value` must equal `amountB`.
 - Empty `fillOrders` reverts with `ZeroAmount`.
-- `recipient == address(0)` pays the taker. Any other address receives tokenA. TokenB still goes to the maker.
+- `taker == address(0)` pays the taker; any other address receives tokenA.
+- TokenB always goes to the order maker.
 
 ### `modifyOrder`
 
-Maker-only. Updates an active order's **remaining** liquidity only (not `partialFillAllowed`).
+Maker-only. Updates an active order's **remaining** liquidity and optionally reassigns the order maker (not `partialFillAllowed`).
 
 ```solidity
 struct OrderAmounts {
@@ -603,13 +605,14 @@ struct OrderAmounts {
 struct ModifyOrderParams {
     uint128 availableA;       // desired remaining tokenA in escrow
     uint128 availableB;       // desired remaining tokenB required
+    address maker;            // new order maker, or address(0) to leave unchanged
 }
 
 function modifyOrder(
     uint256 orderId,
     OrderAmounts calldata previousAmounts,
     ModifyOrderParams calldata updatedOrder,
-    address recipient
+    address maker
 ) external payable;
 
 function modifyOrder(
@@ -617,7 +620,7 @@ function modifyOrder(
     OrderAmounts calldata previousAmounts,
     ModifyOrderParams calldata updatedOrder,
     Permit calldata permit,
-    address recipient
+    address maker
 ) external payable;
 ```
 
@@ -625,12 +628,12 @@ Behavior:
 
 - Pass `previousAmounts` from a recent `getOrder` snapshot. If any of the four amount fields differs on-chain, the call reverts with `OrderStateMismatch`.
 - Callers set **remainings**, not totals. On success, `amountA` / `amountB` are reset to those remainings (on-chain fill % goes to 0; historical fills live in events).
-- Maker, token pair, and `partialFillAllowed` are immutable on this path.
+- Token pair and `partialFillAllowed` are immutable on this path. `updatedOrder.maker` may reassign the order maker (`address(0)` leaves it unchanged).
 - TokenA escrow is refunded when remaining A decreases, or pulled / `msg.value`-topped-up when it increases. For ETH tokenA, `msg.value` must equal the top-up (and must be `0` on refund / no-change / ERC20 tokenA).
-- Emits `OrderModified(orderId, availableA, availableB)`.
+- Emits `OrderModified(orderId, maker, availableA, availableB)`.
 - **`ZeroAmount` blocks setting remaining to 0** — closing the order and reclaiming escrow requires `cancelOrder` / `cancelOrders`, not a zeroed modify.
-- **`NoChange`** when both remainings already match on-chain.
-- `recipient == address(0)` pays the maker for refunds. Top-ups are still pulled from the caller.
+- **`NoChange`** when remainings and maker are unchanged on-chain.
+- Refund `maker == address(0)` pays the caller for refunds. Top-ups are still pulled from the caller.
 
 ### `modifyOrders`
 
@@ -643,12 +646,12 @@ struct ModifyOrdersParams {
     ModifyOrderParams updatedOrder;
 }
 
-function modifyOrders(ModifyOrdersParams[] calldata mods, address recipient) external payable;
+function modifyOrders(ModifyOrdersParams[] calldata mods, address maker) external payable;
 
 function modifyOrders(
     ModifyOrdersParams[] calldata mods,
     TokenPermit[] calldata permits,
-    address recipient
+    address maker
 ) external payable;
 ```
 
@@ -748,10 +751,10 @@ async function setPartialFillAllowed(signer, orderId, partialFillAllowed) {
 - Post-deposit rebases (while tokenA sits in escrow) are not checked: a negative rebase can lock fill/cancel; a positive rebase can strand surplus, and share rounding on the later payout can revert fill and cancel (`BalanceMismatch`). See `contracts/test/security-research/`.
 - Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying `transfer` can take all escrow of that token. Makers of the same scam token share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected.
 - Token addresses are not checked for code. An EOA or empty address used as a token can make create, fill, or cancel fail. Makers must verify tokenA and tokenB before creating, and takers before filling.
-- Recipients must be able to hold the ERC20 they are paid. A maker that forwards, stakes, or burns tokenB in a transfer hook reverts `BalanceMismatch` and its orders cannot be filled. A taker that does not retain tokenA reverts the same way unless the fill names a `recipient` that holds it.
+- Recipients must be able to hold the ERC20 they are paid. A maker that forwards, stakes, or burns tokenB in a transfer hook reverts `BalanceMismatch` and its orders cannot be filled. A taker that does not retain tokenA reverts the same way unless the fill names a `taker` that holds it.
 - Partial fills are allowed only when `partialFillAllowed` is true (set at create or via `setPartialFillAllowed`).
 - The maker cannot fill their own order (`SelfFill`). A self-`transferFrom` of tokenB typically does not increase the recipient, so the exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board and back. Banning it keeps every fill payment a single pull to a distinct maker. (Multi-maker Permit2 still hops through the board to split one pull across makers.)
 - No expiry. Orders remain active until filled or canceled.
-- Fill, cancel, and modify take `recipient`. `address(0)` pays `msg.sender`. Any other address receives the caller's ETH and tokens (tokenA on fill, tokenA refunds on cancel and modify). TokenB still goes to the maker, so a maker that rejects ETH still cannot be paid ETH tokenB. A caller that rejects ETH, or cannot hold the ERC20, can name an address that can.
+- Fill takes `taker` (tokenA; `address(0)` → `msg.sender`); tokenB always goes to the order maker. Cancel and modify take `maker` (tokenA refunds; `address(0)` → `msg.sender`); top-ups still pull from the caller. `ModifyOrderParams.maker` may reassign the order maker (`address(0)` leaves it unchanged).
 - To close an order or reclaim all escrow, call `cancelOrder` / `cancelOrders`. `modifyOrder` / `modifyOrders` cannot set remaining to 0 (`ZeroAmount`).
 - Contract has no admin functions. No pause. No upgrades.

@@ -135,7 +135,7 @@ contract ReentrantAttacker is MockERC20 {
                     availableA: order.availableA,
                     availableB: order.availableB
                 }),
-                updatedOrder: ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1})
+                updatedOrder: ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1, maker: address(0)})
             });
             try _BOARD.modifyOrders(mods, address(0)) {} catch {}
         }

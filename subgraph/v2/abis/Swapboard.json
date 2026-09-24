@@ -33,7 +33,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "recipient",
+        "name": "maker",
         "type": "address",
         "internalType": "address"
       }
@@ -51,7 +51,7 @@
         "internalType": "uint256[]"
       },
       {
-        "name": "recipient",
+        "name": "maker",
         "type": "address",
         "internalType": "address"
       }
@@ -488,7 +488,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "recipient",
+        "name": "taker",
         "type": "address",
         "internalType": "address"
       }
@@ -553,7 +553,7 @@
         ]
       },
       {
-        "name": "recipient",
+        "name": "taker",
         "type": "address",
         "internalType": "address"
       }
@@ -613,7 +613,7 @@
         ]
       },
       {
-        "name": "recipient",
+        "name": "taker",
         "type": "address",
         "internalType": "address"
       }
@@ -690,7 +690,7 @@
         ]
       },
       {
-        "name": "recipient",
+        "name": "taker",
         "type": "address",
         "internalType": "address"
       }
@@ -762,7 +762,7 @@
         ]
       },
       {
-        "name": "recipient",
+        "name": "taker",
         "type": "address",
         "internalType": "address"
       }
@@ -802,7 +802,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "recipient",
+        "name": "taker",
         "type": "address",
         "internalType": "address"
       }
@@ -1008,11 +1008,16 @@
             "name": "availableB",
             "type": "uint128",
             "internalType": "uint128"
+          },
+          {
+            "name": "maker",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       },
       {
-        "name": "recipient",
+        "name": "maker",
         "type": "address",
         "internalType": "address"
       }
@@ -1070,95 +1075,11 @@
             "name": "availableB",
             "type": "uint128",
             "internalType": "uint128"
-          }
-        ]
-      },
-      {
-        "name": "permit",
-        "type": "tuple",
-        "internalType": "struct ISwapboard.Permit2Permit",
-        "components": [
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
           },
           {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "signature",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "modifyOrder",
-    "inputs": [
-      {
-        "name": "orderId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "previousAmounts",
-        "type": "tuple",
-        "internalType": "struct ISwapboard.OrderAmounts",
-        "components": [
-          {
-            "name": "amountA",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "amountB",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "availableA",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "availableB",
-            "type": "uint128",
-            "internalType": "uint128"
-          }
-        ]
-      },
-      {
-        "name": "updatedOrder",
-        "type": "tuple",
-        "internalType": "struct ISwapboard.ModifyOrderParams",
-        "components": [
-          {
-            "name": "availableA",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "availableB",
-            "type": "uint128",
-            "internalType": "uint128"
+            "name": "maker",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       },
@@ -1195,7 +1116,101 @@
         ]
       },
       {
-        "name": "recipient",
+        "name": "maker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "modifyOrder",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "previousAmounts",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.OrderAmounts",
+        "components": [
+          {
+            "name": "amountA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "amountB",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "availableA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "availableB",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      },
+      {
+        "name": "updatedOrder",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.ModifyOrderParams",
+        "components": [
+          {
+            "name": "availableA",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "availableB",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "maker",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct ISwapboard.Permit2Permit",
+        "components": [
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "signature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "maker",
         "type": "address",
         "internalType": "address"
       }
@@ -1258,6 +1273,85 @@
                 "name": "availableB",
                 "type": "uint128",
                 "internalType": "uint128"
+              },
+              {
+                "name": "maker",
+                "type": "address",
+                "internalType": "address"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "maker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "modifyOrders",
+    "inputs": [
+      {
+        "name": "mods",
+        "type": "tuple[]",
+        "internalType": "struct ISwapboard.ModifyOrdersParams[]",
+        "components": [
+          {
+            "name": "orderId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "previousAmounts",
+            "type": "tuple",
+            "internalType": "struct ISwapboard.OrderAmounts",
+            "components": [
+              {
+                "name": "amountA",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "amountB",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "availableA",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "availableB",
+                "type": "uint128",
+                "internalType": "uint128"
+              }
+            ]
+          },
+          {
+            "name": "updatedOrder",
+            "type": "tuple",
+            "internalType": "struct ISwapboard.ModifyOrderParams",
+            "components": [
+              {
+                "name": "availableA",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "availableB",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "maker",
+                "type": "address",
+                "internalType": "address"
               }
             ]
           }
@@ -1301,7 +1395,7 @@
         ]
       },
       {
-        "name": "recipient",
+        "name": "maker",
         "type": "address",
         "internalType": "address"
       }
@@ -1364,6 +1458,11 @@
                 "name": "availableB",
                 "type": "uint128",
                 "internalType": "uint128"
+              },
+              {
+                "name": "maker",
+                "type": "address",
+                "internalType": "address"
               }
             ]
           }
@@ -1402,76 +1501,7 @@
         ]
       },
       {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "modifyOrders",
-    "inputs": [
-      {
-        "name": "mods",
-        "type": "tuple[]",
-        "internalType": "struct ISwapboard.ModifyOrdersParams[]",
-        "components": [
-          {
-            "name": "orderId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "previousAmounts",
-            "type": "tuple",
-            "internalType": "struct ISwapboard.OrderAmounts",
-            "components": [
-              {
-                "name": "amountA",
-                "type": "uint128",
-                "internalType": "uint128"
-              },
-              {
-                "name": "amountB",
-                "type": "uint128",
-                "internalType": "uint128"
-              },
-              {
-                "name": "availableA",
-                "type": "uint128",
-                "internalType": "uint128"
-              },
-              {
-                "name": "availableB",
-                "type": "uint128",
-                "internalType": "uint128"
-              }
-            ]
-          },
-          {
-            "name": "updatedOrder",
-            "type": "tuple",
-            "internalType": "struct ISwapboard.ModifyOrderParams",
-            "components": [
-              {
-                "name": "availableA",
-                "type": "uint128",
-                "internalType": "uint128"
-              },
-              {
-                "name": "availableB",
-                "type": "uint128",
-                "internalType": "uint128"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "name": "recipient",
+        "name": "maker",
         "type": "address",
         "internalType": "address"
       }
@@ -1612,6 +1642,12 @@
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
+      },
+      {
+        "name": "maker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "availableA",

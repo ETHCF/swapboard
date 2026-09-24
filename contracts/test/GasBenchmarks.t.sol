@@ -75,7 +75,9 @@ contract GasBenchmarks is Test {
         return ISwapboard.ModifyOrdersParams({
             orderId: orderId,
             previousAmounts: _previousAmounts(snapshot),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: availableA, availableB: availableB})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: availableA, availableB: availableB, maker: address(0)
+            })
         });
     }
 
@@ -472,7 +474,7 @@ contract GasBenchmarks is Test {
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
         ISwapboard.OrderAmounts memory previous = _previousAmounts(snapshot);
         ISwapboard.ModifyOrderParams memory updated =
-            ISwapboard.ModifyOrderParams({availableA: ORDER_A, availableB: ORDER_B / 2});
+            ISwapboard.ModifyOrderParams({availableA: ORDER_A, availableB: ORDER_B / 2, maker: address(0)});
 
         vm.prank(_maker);
         uint256 gasBefore = gasleft();
@@ -490,7 +492,7 @@ contract GasBenchmarks is Test {
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
         ISwapboard.OrderAmounts memory previous = _previousAmounts(snapshot);
         ISwapboard.ModifyOrderParams memory updated =
-            ISwapboard.ModifyOrderParams({availableA: ORDER_A + 50 ether, availableB: ORDER_B});
+            ISwapboard.ModifyOrderParams({availableA: ORDER_A + 50 ether, availableB: ORDER_B, maker: address(0)});
 
         vm.prank(_maker);
         uint256 gasBefore = gasleft();
@@ -508,7 +510,7 @@ contract GasBenchmarks is Test {
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
         ISwapboard.OrderAmounts memory previous = _previousAmounts(snapshot);
         ISwapboard.ModifyOrderParams memory updated =
-            ISwapboard.ModifyOrderParams({availableA: ORDER_A / 2, availableB: ORDER_B});
+            ISwapboard.ModifyOrderParams({availableA: ORDER_A / 2, availableB: ORDER_B, maker: address(0)});
 
         vm.prank(_maker);
         uint256 gasBefore = gasleft();
@@ -528,7 +530,7 @@ contract GasBenchmarks is Test {
         ISwapboard.OrderAmounts memory previous = _previousAmounts(snapshot);
         uint128 newA = ETH_AMOUNT + (ETH_AMOUNT / 2);
         ISwapboard.ModifyOrderParams memory updated =
-            ISwapboard.ModifyOrderParams({availableA: newA, availableB: ORDER_B});
+            ISwapboard.ModifyOrderParams({availableA: newA, availableB: ORDER_B, maker: address(0)});
 
         vm.prank(_maker);
         uint256 gasBefore = gasleft();
@@ -547,7 +549,7 @@ contract GasBenchmarks is Test {
         ISwapboard.Order memory snapshot = _board.getOrder(orderId);
         ISwapboard.OrderAmounts memory previous = _previousAmounts(snapshot);
         ISwapboard.ModifyOrderParams memory updated =
-            ISwapboard.ModifyOrderParams({availableA: ETH_AMOUNT / 2, availableB: ORDER_B});
+            ISwapboard.ModifyOrderParams({availableA: ETH_AMOUNT / 2, availableB: ORDER_B, maker: address(0)});
 
         vm.prank(_maker);
         uint256 gasBefore = gasleft();
@@ -1065,7 +1067,7 @@ contract GasBenchmarks is Test {
         _board.modifyOrder(
             orderId,
             _previousAmounts(snapshot),
-            ISwapboard.ModifyOrderParams({availableA: ORDER_A * 2, availableB: ORDER_B * 2}),
+            ISwapboard.ModifyOrderParams({availableA: ORDER_A * 2, availableB: ORDER_B * 2, maker: address(0)}),
             permit,
             address(0)
         );

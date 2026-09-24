@@ -81,7 +81,8 @@ contract EthReentrantReceiver {
                 availableA: order.availableA,
                 availableB: order.availableB
             });
-            ISwapboard.ModifyOrderParams memory updated = ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1});
+            ISwapboard.ModifyOrderParams memory updated =
+                ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1, maker: address(0)});
             try _BOARD.modifyOrder(_orderId, previous, updated, address(0)) {} catch {}
         } else if (_attack == Attack.ModifyOrders) {
             ISwapboard.Order memory order = _BOARD.getOrder(_orderId);
@@ -94,7 +95,7 @@ contract EthReentrantReceiver {
                     availableA: order.availableA,
                     availableB: order.availableB
                 }),
-                updatedOrder: ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1})
+                updatedOrder: ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1, maker: address(0)})
             });
             try _BOARD.modifyOrders(mods, address(0)) {} catch {}
         }

@@ -10,8 +10,10 @@ import {ISemver} from "./ISemver.sol";
 ///      All amounts are in base units (wei-equivalent for 18 decimal tokens).
 ///      Native ETH is represented by the sentinel returned from `getEth()`.
 ///      Create, fill, and modify have EIP-2612 and Permit2 SignatureTransfer overloads.
-///      Fill, cancel, and modify take `recipient`: `address(0)` pays `msg.sender`, and any other
-///      address receives the caller's ETH and tokens.
+///      Fill takes `taker` (tokenA payee; `address(0)` → `msg.sender`). TokenB always goes to the
+///      order maker. Cancel and modify take `maker` (tokenA refund payee; `address(0)` →
+///      `msg.sender`); top-ups still pull from the caller. `ModifyOrderParams.maker` may reassign
+///      the order maker (`address(0)` leaves it unchanged).
 interface ISwapboard is ISemver {
     /// @notice Represents a single OTC order
     /// @dev `uint128` amounts are sufficient for practical order sizes (e.g. ~3.4e20 wei ≈
@@ -52,15 +54,19 @@ interface ISwapboard is ISemver {
         bool partialFillAllowed;
     }
 
-    /// @notice Arguments for modifying an existing order's remaining amounts
-    /// @dev Token addresses, maker, and `partialFillAllowed` cannot be changed here (use
+    /// @notice Arguments for modifying an existing order's remaining amounts and optional maker
+    /// @dev Token addresses and `partialFillAllowed` cannot be changed here (use
     ///      `setPartialFillAllowed` for the fill flag). Callers set the desired *remaining*
     ///      liquidity; order totals (`amountA` / `amountB`) are reset to those remainings.
+    ///      `maker == address(0)` leaves the order maker unchanged; any other address reassigns
+    ///      ownership (and future tokenB receipt) to that address.
     /// @param availableA Desired remaining tokenA in escrow
     /// @param availableB Desired remaining tokenB required to complete the order
+    /// @param maker New order maker, or `address(0)` to leave unchanged
     struct ModifyOrderParams {
         uint128 availableA;
         uint128 availableB;
+        address maker;
     }
 
     /// @notice Expected on-chain amounts used for modify race protection
@@ -200,11 +206,12 @@ interface ISwapboard is ISemver {
 
     // solhint-disable gas-indexed-events
 
-    /// @notice Emitted when an order's remaining amounts are modified by its maker
+    /// @notice Emitted when an order's remaining amounts and/or maker are modified
     /// @param orderId Unique identifier for the modified order
+    /// @param maker Order maker after the modify (unchanged or newly assigned)
     /// @param availableA New remaining tokenA in escrow
     /// @param availableB New remaining tokenB required
-    event OrderModified(uint256 indexed orderId, uint128 availableA, uint128 availableB);
+    event OrderModified(uint256 indexed orderId, address indexed maker, uint128 availableA, uint128 availableB);
 
     // solhint-enable gas-indexed-events
 
@@ -223,8 +230,8 @@ interface ISwapboard is ISemver {
     error ZeroAmount();
 
     /// @notice Thrown when a modification would leave the order unchanged
-    /// @dev `modifyOrder` / `modifyOrders` when both remainings match on-chain; `setPartialFillAllowed`
-    ///      when the flag already equals the requested value.
+    /// @dev `modifyOrder` / `modifyOrders` when remainings and maker are unchanged on-chain;
+    ///      `setPartialFillAllowed` when the flag already equals the requested value.
     error NoChange();
 
     /// @notice Thrown when tokenA and tokenB are the same address
@@ -385,128 +392,127 @@ interface ISwapboard is ISemver {
     ///      The maker cannot fill their own order (`SelfFill`): a self-`transferFrom` of tokenB
     ///      does not increase the recipient, so the exact-receive check would fail. Forbidding it
     ///      keeps tokenB a one-hop pull to a distinct maker.
-    ///      If tokenA is ETH, pays the taker in ETH. `recipient == address(0)` pays `msg.sender`;
-    ///      any other address receives tokenA. TokenB still goes to the maker.
+    ///      If tokenA is ETH, pays the taker in ETH. `taker == address(0)` pays `msg.sender`;
+    ///      any other address receives tokenA. TokenB always goes to the order maker.
     ///      A fill that exhausts either remaining side `delete`s the order (subsequent reads look
     ///      like `OrderNotFound`); partial fills keep originals and update availables only.
     /// @param orderId The unique identifier of the order to fill
     /// @param amountB Exact amount of tokenB to send
     /// @param minAmountA Minimum amount of tokenA the taker will accept
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
-    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
+    /// @param taker Address that receives tokenA (`address(0)` pays the taker)
     function fillOrder(
         uint256 orderId,
         uint128 amountB,
         uint128 minAmountA,
         uint256 deadline,
-        address recipient
+        address taker
     ) external payable;
 
     /// @notice Fills an order by exact amountB after an EIP-2612 permit for tokenB
     /// @dev `permit.v == 0` skips the permit. Native tokenB with `permit.v != 0` reverts
-    ///      `PermitOnNative`. `recipient == address(0)` pays `msg.sender`.
+    ///      `PermitOnNative`. `taker == address(0)` pays `msg.sender`. TokenB always goes to the order maker.
     /// @param orderId The unique identifier of the order to fill
     /// @param amountB Exact amount of tokenB to send
     /// @param minAmountA Minimum amount of tokenA the taker will accept
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     /// @param permit EIP-2612 signature for tokenB (`v == 0` to skip)
-    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
+    /// @param taker Address that receives tokenA (`address(0)` pays the taker)
     function fillOrder(
         uint256 orderId,
         uint128 amountB,
         uint128 minAmountA,
         uint256 deadline,
         Permit calldata permit,
-        address recipient
+        address taker
     ) external payable;
 
     /// @notice Fills an order by exact amountB pulling tokenB via Permit2 SignatureTransfer
     /// @dev Empty `permit.signature` skips. Native tokenB with a non-empty signature reverts
-    ///      `PermitOnNative`. ERC20 tokenB is pulled directly to the maker.
-    ///      `recipient == address(0)` pays `msg.sender`.
+    ///      `PermitOnNative`. ERC20 tokenB is pulled directly to the order maker.
+    ///      `taker == address(0)` pays `msg.sender`. TokenB always goes to the order maker.
     /// @param orderId The unique identifier of the order to fill
     /// @param amountB Exact amount of tokenB to send
     /// @param minAmountA Minimum amount of tokenA the taker will accept
     /// @param deadline Unix timestamp after which the fill reverts (0 = no deadline)
     /// @param permit Permit2 signature for tokenB (empty signature to skip)
-    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
+    /// @param taker Address that receives tokenA (`address(0)` pays the taker)
     function fillOrder(
         uint256 orderId,
         uint128 amountB,
         uint128 minAmountA,
         uint256 deadline,
         Permit2Permit calldata permit,
-        address recipient
+        address taker
     ) external payable;
 
     /// @notice Fills multiple orders in one call by exact tokenB sent
     /// @dev The same `orderId` may appear more than once when the order allows partial fills and
     ///      still has remaining liquidity; otherwise later legs revert (`FillAmountTooHigh` /
     ///      `OrderNotFound` / `PartialFillNotAllowed`). ERC20 tokenB payments are aggregated per
-    ///      unique `(maker, token)` and pulled directly to each maker; ETH tokenB is summed into
+    ///      unique `(maker, token)` and pulled directly to each order maker; ETH tokenB is summed into
     ///      one `msg.value` check. ERC20 tokenA payouts are aggregated and must increase
-    ///      `recipient`'s balance by exactly that total (`BalanceMismatch`). `recipient ==
-    ///      address(0)` pays the taker.
+    ///      `taker`'s balance by exactly that total (`BalanceMismatch`). `taker == address(0)` pays the taker. TokenB always goes to each order maker.
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
-    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
+    /// @param taker Address that receives tokenA (`address(0)` pays the taker)
     function fillOrders(
         FillOrderParams[] calldata fills,
         uint256 deadline,
-        address recipient
+        address taker
     ) external payable;
 
     /// @notice Fills multiple orders by exact tokenB after EIP-2612 permits
     /// @dev One permit per distinct ERC20 tokenB. An unused entry reverts `UnusedPermit`.
-    ///      `recipient == address(0)` pays the taker.
+    ///      `taker == address(0)` pays the taker. TokenB always goes to each order maker.
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     /// @param permits EIP-2612 signatures keyed by tokenB (empty = none)
-    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
+    /// @param taker Address that receives tokenA (`address(0)` pays the taker)
     function fillOrders(
         FillOrderParams[] calldata fills,
         uint256 deadline,
         TokenPermit[] calldata permits,
-        address recipient
+        address taker
     ) external payable;
 
     /// @notice Fills multiple orders by exact tokenB via Permit2 SignatureTransfer
     /// @dev One Permit2 entry per distinct ERC20 tokenB. For each such token the signed amount must
-    ///      cover the total paid across makers. Sole-maker pulls go to that maker; multi-maker
+    ///      cover the total paid across makers. Sole-maker pulls go to that order maker; multi-maker
     ///      totals pull here then distribute. Every ERC20 tokenB hop exact-checks the recipient
     ///      (`BalanceMismatch`). Tokens without an entry use classic direct-to-maker pulls.
-    ///      Empty array = none. `recipient == address(0)` pays the taker.
+    ///      Empty array = none. `taker == address(0)` pays the taker. TokenB always goes to each order maker.
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     /// @param permits Permit2 signatures keyed by tokenB (empty = none)
-    /// @param recipient Address that receives tokenA (`address(0)` pays the taker)
+    /// @param taker Address that receives tokenA (`address(0)` pays the taker)
     function fillOrders(
         FillOrderParams[] calldata fills,
         uint256 deadline,
         TokenPermit2[] calldata permits,
-        address recipient
+        address taker
     ) external payable;
 
     /// @notice Cancels an existing order and returns available tokenA to maker
     /// @dev Only callable by the order's maker. Returns ETH if tokenA is ETH.
-    ///      Clears the order from storage after refunding. `recipient == address(0)` pays the
+    ///      Clears the order from storage after refunding. `maker == address(0)` pays the
     ///      maker; any other address receives the refund.
     /// @param orderId The unique identifier of the order to cancel
-    /// @param recipient Address that receives tokenA (`address(0)` pays the maker)
+    /// @param maker Address that receives tokenA (`address(0)` pays the maker)
     function cancelOrder(
         uint256 orderId,
-        address recipient
+        address maker
     ) external;
 
     /// @notice Cancels multiple orders in one call
     /// @dev Only the maker may cancel each order. Repeated `tokenA` refunds are aggregated into
     ///      a single ERC20 transfer per unique token. ETH refunds are summed into one send.
-    ///      `recipient == address(0)` pays the maker.
+    ///      `maker == address(0)` pays the maker.
     /// @param orderIds Identifiers of the orders to cancel
-    /// @param recipient Address that receives tokenA (`address(0)` pays the maker)
+    /// @param maker Address that receives tokenA (`address(0)` pays the maker)
     function cancelOrders(
         uint256[] calldata orderIds,
-        address recipient
+        address maker
     ) external;
 
     /// @notice Modifies an existing order's remaining liquidity
@@ -518,89 +524,89 @@ interface ISwapboard is ISemver {
     ///      `ZeroAmount` blocks setting either remaining to 0 — use `cancelOrder` / `cancelOrders`
     ///      to close and reclaim escrow instead.
     ///      `NoChange` when both remainings already match on-chain.
-    ///      Token addresses and maker are immutable. Escrow is refunded or topped-up for tokenA.
-    ///      `recipient == address(0)` pays the maker for refunds; top-ups still pull from the caller.
+    ///      Token addresses are immutable. `updatedOrder.maker` may reassign the order maker. Escrow is refunded or topped-up for tokenA.
+    ///      `maker == address(0)` pays the maker for refunds; top-ups still pull from the caller.
     /// @param orderId The order ID
     /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
     /// @param updatedOrder Desired remaining amounts
-    /// @param recipient Address that receives a tokenA refund (`address(0)` pays the maker)
+    /// @param maker Address that receives a tokenA refund (`address(0)` pays the maker)
     function modifyOrder(
         uint256 orderId,
         OrderAmounts calldata previousAmounts,
         ModifyOrderParams calldata updatedOrder,
-        address recipient
+        address maker
     ) external payable;
 
     /// @notice Modifies remaining liquidity after an EIP-2612 permit for tokenA
     /// @dev Used when topping up escrowed tokenA. `permit.v == 0` skips. Native tokenA with
     ///      `permit.v != 0` reverts `PermitOnNative`. A non-skip permit on a refund-only modify
-    ///      (no top-up) reverts `UnusedPermit`. `recipient == address(0)` pays the maker.
+    ///      (no top-up) reverts `UnusedPermit`. `maker == address(0)` pays the maker.
     /// @param orderId The order ID
     /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
     /// @param updatedOrder Desired remaining amounts
     /// @param permit EIP-2612 signature for tokenA (`v == 0` to skip)
-    /// @param recipient Address that receives a tokenA refund (`address(0)` pays the maker)
+    /// @param maker Address that receives a tokenA refund (`address(0)` pays the maker)
     function modifyOrder(
         uint256 orderId,
         OrderAmounts calldata previousAmounts,
         ModifyOrderParams calldata updatedOrder,
         Permit calldata permit,
-        address recipient
+        address maker
     ) external payable;
 
     /// @notice Modifies remaining liquidity pulling tokenA top-up via Permit2 SignatureTransfer
     /// @dev Empty `permit.signature` skips. Native tokenA with a non-empty signature reverts
     ///      `PermitOnNative`. A non-empty signature on a refund-only modify (no top-up) reverts
-    ///      `UnusedPermit2`. `recipient == address(0)` pays the maker.
+    ///      `UnusedPermit2`. `maker == address(0)` pays the maker.
     /// @param orderId The order ID
     /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
     /// @param updatedOrder Desired remaining amounts
     /// @param permit Permit2 signature for tokenA (empty signature to skip)
-    /// @param recipient Address that receives a tokenA refund (`address(0)` pays the maker)
+    /// @param maker Address that receives a tokenA refund (`address(0)` pays the maker)
     function modifyOrder(
         uint256 orderId,
         OrderAmounts calldata previousAmounts,
         ModifyOrderParams calldata updatedOrder,
         Permit2Permit calldata permit,
-        address recipient
+        address maker
     ) external payable;
 
     /// @notice Modifies multiple orders' remaining liquidity in one call
     /// @dev Only the maker may modify each order. Duplicate `orderId`s revert.
     ///      Per unique tokenA (and ETH), top-ups are netted against refunds so only the net delta
     ///      is pulled or sent. `msg.value` must equal the net ETH top-up (0 when flat or net refund).
-    ///      `recipient == address(0)` pays the maker.
+    ///      `maker == address(0)` pays the maker.
     /// @param mods Modify arguments in execution order
-    /// @param recipient Address that receives a net tokenA refund (`address(0)` pays the maker)
+    /// @param maker Address that receives a tokenA refund (`address(0)` pays the maker)
     function modifyOrders(
         ModifyOrdersParams[] calldata mods,
-        address recipient
+        address maker
     ) external payable;
 
     /// @notice Modifies multiple orders after applying EIP-2612 permits
     /// @dev Permits are applied before netted tokenA top-ups. One permit per distinct ERC20 with a
-    ///      net top-up. An unused entry reverts `UnusedPermit`. `recipient == address(0)` pays the
+    ///      net top-up. An unused entry reverts `UnusedPermit`. `maker == address(0)` pays the
     ///      maker.
     /// @param mods Modify arguments in execution order
     /// @param permits EIP-2612 signatures keyed by tokenA (empty = none)
-    /// @param recipient Address that receives a net tokenA refund (`address(0)` pays the maker)
+    /// @param maker Address that receives a tokenA refund (`address(0)` pays the maker)
     function modifyOrders(
         ModifyOrdersParams[] calldata mods,
         TokenPermit[] calldata permits,
-        address recipient
+        address maker
     ) external payable;
 
     /// @notice Modifies multiple orders pulling net tokenA top-ups via Permit2 SignatureTransfer
     /// @dev One Permit2 entry per distinct ERC20 tokenA. Signed `amount` must cover the net top-up
-    ///      for that token after refund netting. Empty array = none. `recipient == address(0)` pays
+    ///      for that token after refund netting. Empty array = none. `maker == address(0)` pays
     ///      the maker.
     /// @param mods Modify arguments in execution order
     /// @param permits Permit2 signatures keyed by tokenA (empty = none)
-    /// @param recipient Address that receives a net tokenA refund (`address(0)` pays the maker)
+    /// @param maker Address that receives a tokenA refund (`address(0)` pays the maker)
     function modifyOrders(
         ModifyOrdersParams[] calldata mods,
         TokenPermit2[] calldata permits,
-        address recipient
+        address maker
     ) external payable;
 
     /// @notice Sets whether an active order may be filled in multiple parts

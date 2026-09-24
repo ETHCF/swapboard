@@ -696,7 +696,7 @@ contract SwapboardHandler is Test {
             amountA: order.amountA, amountB: order.amountB, availableA: order.availableA, availableB: order.availableB
         });
         ISwapboard.ModifyOrderParams memory updated =
-            ISwapboard.ModifyOrderParams({availableA: newA, availableB: newB});
+            ISwapboard.ModifyOrderParams({availableA: newA, availableB: newB, maker: address(0)});
 
         _board.modifyOrder{value: topUp.value}(orderId, previous, updated, address(0));
         _trackModifyOrderGhosts(order, orderId, newA, newB);
@@ -798,7 +798,9 @@ contract SwapboardHandler is Test {
                 availableA: order1.availableA,
                 availableB: order1.availableB
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: amounts.newA1, availableB: amounts.newB1})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: amounts.newA1, availableB: amounts.newB1, maker: address(0)
+            })
         });
         mods[1] = ISwapboard.ModifyOrdersParams({
             orderId: id2,
@@ -808,7 +810,9 @@ contract SwapboardHandler is Test {
                 availableA: order2.availableA,
                 availableB: order2.availableB
             }),
-            updatedOrder: ISwapboard.ModifyOrderParams({availableA: amounts.newA2, availableB: amounts.newB2})
+            updatedOrder: ISwapboard.ModifyOrderParams({
+                availableA: amounts.newA2, availableB: amounts.newB2, maker: address(0)
+            })
         });
 
         _board.modifyOrders{value: ethValue}(mods, address(0));
