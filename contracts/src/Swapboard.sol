@@ -1865,26 +1865,13 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         address tokenA = order.tokenA;
         _requireMaker(orderId, maker);
 
-        uint128 amountA = order.amountA;
-        uint128 amountB = order.amountB;
-        uint128 availableA = order.availableA;
-        uint128 availableB = order.availableB;
-
-        _requireOrderAmountsMatch(orderId, previousAmounts, amountA, amountB, availableA, availableB);
-
-        uint128 newAvailableA = updatedOrder.availableA;
-        uint128 newAvailableB = updatedOrder.availableB;
-        if (newAvailableA == 0 || newAvailableB == 0) {
-            revert ZeroAmount();
-        }
-
-        address newMaker = updatedOrder.maker;
-        bool makerChanged = newMaker != address(0) && newMaker != maker;
-        if (newAvailableA == availableA && newAvailableB == availableB && !makerChanged) {
-            revert NoChange();
-        }
-
-        EscrowADelta memory delta = _escrowADelta(newAvailableA, availableA);
+        (
+            uint128 newAvailableA,
+            uint128 newAvailableB,
+            address newMaker,
+            bool makerChanged,
+            EscrowADelta memory delta
+        ) = _validatedModifyEffect(orderId, order, previousAmounts, updatedOrder);
 
         // Reset totals to the new remainings (filled history is not preserved in amount fields).
         order.amountA = newAvailableA;
@@ -1899,6 +1886,55 @@ contract Swapboard is ISwapboard, Semver, ReentrancyGuardTransient {
         emit OrderModified(orderId, maker, newAvailableA, newAvailableB);
 
         return ModifyLeg({tokenA: tokenA, topUp: delta.topUp, refund: delta.refund});
+    }
+
+    /// @notice Validates a modify snapshot and computes the tokenA escrow delta
+    /// @param orderId Order to modify
+    /// @param order Live order storage
+    /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
+    /// @param updatedOrder Desired remaining amounts and optional new maker
+    /// @return newAvailableA Desired remaining tokenA
+    /// @return newAvailableB Desired remaining tokenB
+    /// @return newMaker Candidate maker from `updatedOrder` (`address(0)` means unchanged)
+    /// @return makerChanged True when the order maker must be rewritten
+    /// @return delta Escrow top-up / refund for settlement
+    function _validatedModifyEffect(
+        uint256 orderId,
+        Order storage order,
+        OrderAmounts calldata previousAmounts,
+        ModifyOrderParams calldata updatedOrder
+    )
+        private
+        view
+        returns (
+            uint128 newAvailableA,
+            uint128 newAvailableB,
+            address newMaker,
+            bool makerChanged,
+            EscrowADelta memory delta
+        )
+    {
+        address maker = order.maker;
+        uint128 amountA = order.amountA;
+        uint128 amountB = order.amountB;
+        uint128 availableA = order.availableA;
+        uint128 availableB = order.availableB;
+
+        _requireOrderAmountsMatch(orderId, previousAmounts, amountA, amountB, availableA, availableB);
+
+        newAvailableA = updatedOrder.availableA;
+        newAvailableB = updatedOrder.availableB;
+        if (newAvailableA == 0 || newAvailableB == 0) {
+            revert ZeroAmount();
+        }
+
+        newMaker = updatedOrder.maker;
+        makerChanged = newMaker != address(0) && newMaker != maker;
+        if (newAvailableA == availableA && newAvailableB == availableB && !makerChanged) {
+            revert NoChange();
+        }
+
+        delta = _escrowADelta(newAvailableA, availableA);
     }
 
     /// @notice Reverts when live amounts differ from the caller's previousAmounts snapshot
