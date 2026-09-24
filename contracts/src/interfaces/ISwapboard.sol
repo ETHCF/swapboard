@@ -452,7 +452,8 @@ interface ISwapboard is ISemver {
     ///      `OrderNotFound` / `PartialFillNotAllowed`). ERC20 tokenB payments are aggregated per
     ///      unique `(maker, token)` and pulled directly to each order maker; ETH tokenB is summed into
     ///      one `msg.value` check. ERC20 tokenA payouts are aggregated and must increase
-    ///      `taker`'s balance by exactly that total (`BalanceMismatch`). `taker == address(0)` pays the taker. TokenB always goes to each order maker.
+    ///      `taker`'s balance by exactly that total (`BalanceMismatch`). `taker == address(0)` pays
+    ///      the taker. TokenB always goes to each order maker.
     /// @param fills Fill arguments in execution order
     /// @param deadline Unix timestamp after which the batch reverts (0 = no deadline)
     /// @param taker Address that receives tokenA (`address(0)` pays the taker)
@@ -524,7 +525,8 @@ interface ISwapboard is ISemver {
     ///      `ZeroAmount` blocks setting either remaining to 0 — use `cancelOrder` / `cancelOrders`
     ///      to close and reclaim escrow instead.
     ///      `NoChange` when both remainings already match on-chain.
-    ///      Token addresses are immutable. `updatedOrder.maker` may reassign the order maker. Escrow is refunded or topped-up for tokenA.
+    ///      Token addresses are immutable. `updatedOrder.maker` may reassign the order maker. Escrow
+    ///      is refunded or topped-up for tokenA.
     ///      `maker == address(0)` pays the maker for refunds; top-ups still pull from the caller.
     /// @param orderId The order ID
     /// @param previousAmounts Expected on-chain amounts from the caller's snapshot
