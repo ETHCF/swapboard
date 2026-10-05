@@ -904,6 +904,8 @@ tbody tr.highlighted-order:hover {
   color: var(--bg);
   padding: 10px 20px;
   max-width: 400px;
+  /* Wrap at word boundaries; only split a word (e.g. an address) that cannot fit a line. */
+  overflow-wrap: break-word;
   z-index: 1001;
 }
 
