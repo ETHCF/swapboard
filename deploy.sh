@@ -38,6 +38,7 @@ NETWORK="${1:-sepolia}"
 SKIP_CONTRACT="${SKIP_CONTRACT:-false}"
 SKIP_SUBGRAPH="${SKIP_SUBGRAPH:-false}"
 SKIP_FRONTEND="${SKIP_FRONTEND:-false}"
+# DISABLE_MOCK=1 ships the frontend without mock.js (see frontend/scripts/strip-mock.sh).
 
 # Foundry keystore account that signs the contract deploy. Testnet deploys
 # should use their own testnet-only account (e.g. DEPLOYER_ACCOUNT=sepolia-deployer)
@@ -290,6 +291,9 @@ if [[ "$SKIP_FRONTEND" != "true" ]]; then
     for f in $PROD_FILES; do
         cp "$SCRIPT_DIR/frontend/$f" "$DIST_DIR/$f"
     done
+    if [[ "${DISABLE_MOCK:-}" == "1" ]]; then
+        sh "$SCRIPT_DIR/frontend/scripts/strip-mock.sh" "$DIST_DIR"
+    fi
 
     cd "$DIST_DIR"
 
@@ -298,7 +302,7 @@ if [[ "$SKIP_FRONTEND" != "true" ]]; then
     HASH_APPJS=$(sha256sum app.js | cut -d' ' -f1)
     HASH_LIBJS=$(sha256sum lib.js | cut -d' ' -f1)
     HASH_CSS=$(sha256sum style.css | cut -d' ' -f1)
-    HASH_MOCK=$(sha256sum mock.js | cut -d' ' -f1)
+    HASH_MOCK=$([[ -f mock.js ]] && sha256sum mock.js | cut -d' ' -f1 || true)
 
     # Get git commit info
     COMMIT_FULL=$(git rev-parse HEAD 2>/dev/null || echo "unknown")

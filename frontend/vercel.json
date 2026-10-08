@@ -1,6 +1,6 @@
 {
   "framework": null,
-  "buildCommand": "mkdir -p dist && for f in index.html app.js lib.js permit-tokens.js known-tokens.js warning.svg style.css mock.js API.html manifest.json sw.js og-image.jpg; do cp \"$f\" \"dist/$f\"; done",
+  "buildCommand": "mkdir -p dist && for f in index.html app.js lib.js permit-tokens.js known-tokens.js warning.svg style.css mock.js API.html manifest.json sw.js og-image.jpg; do cp \"$f\" \"dist/$f\"; done && if [ \"$DISABLE_MOCK\" = 1 ]; then sh scripts/strip-mock.sh dist; fi",
   "outputDirectory": "dist",
   "installCommand": "",
   "headers": [

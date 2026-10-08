@@ -23,7 +23,9 @@ const SOURCES = [
   {
     // The two tokens contracts/script/Seed.s.sol deploys and posts orders for. No
     // public list covers Sepolia, so without these every order there is "unknown".
-    // Metadata read back from the deployed contracts.
+    // Metadata read back from the deployed contracts. SMKU
+    // (0x169eF946da971eFE80aE39d930A65827E772fb4E, order #11) is a third test token
+    // left off on purpose, so the unknown-token warning has something to show.
     name: "Swapboard",
     tokens: [
       {

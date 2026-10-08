@@ -8,19 +8,18 @@
  * @license AGPL-3.0-only
  *
  * Activation:
- *   Mock mode activates automatically based on the following precedence:
+ *   Off unless asked for, on every host including localhost. In order of precedence:
  *
- *   1. URL parameter (highest priority):
- *      - ?mock=true   - Force enable mock mode
- *      - ?mock=false  - Force disable mock mode
+ *   1. URL parameter (highest priority), remembered in localStorage:
+ *      - ?mock=true   - Enable mock mode
+ *      - ?mock=false  - Disable mock mode
  *
  *   2. localStorage (persisted preference):
  *      - localStorage.setItem('swapboard_mock', 'true')
  *      - localStorage.setItem('swapboard_mock', 'false')
  *
- *   3. Hostname detection (default):
- *      - Enabled on: localhost, 127.0.0.1, file:// protocol
- *      - Disabled on: all other hosts (production)
+ *   A build run with DISABLE_MOCK=1 leaves this file out altogether (see
+ *   scripts/strip-mock.sh), so neither switch can turn it on.
  *
  * What this file is for
  * ---------------------
@@ -58,7 +57,7 @@
 
   /**
    * Determines if mock mode should be enabled.
-   * Checks URL params, localStorage, and hostname in that order.
+   * Checks URL params, then localStorage; off when neither says otherwise.
    * @returns {boolean}
    */
   function shouldEnableMock() {
@@ -78,24 +77,11 @@
 
     // 2. Check localStorage (persisted preference)
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored !== null) {
-        return stored === "true";
-      }
+      return localStorage.getItem(STORAGE_KEY) === "true";
     } catch (e) {
       // localStorage may be unavailable
+      return false;
     }
-
-    // 3. Hostname detection (default behavior)
-    const hostname = window.location.hostname;
-    const protocol = window.location.protocol;
-    const isDev =
-      hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
-      hostname === "" ||
-      protocol === "file:";
-
-    return isDev;
   }
 
   // Exit early if mock mode is disabled

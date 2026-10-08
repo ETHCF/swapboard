@@ -43,7 +43,7 @@ const EXPECTED = {
 };
 
 /**
- * Pins the protocol version in a test URL.
+ * Pins the protocol version in a test URL, and turns mock mode on.
  *
  * These tests exercise the v2 layout — the select column, the batch controls,
  * the [ETH] toggle — none of which exist in v1. Without an explicit `?v=`,
@@ -51,18 +51,24 @@ const EXPECTED = {
  * An explicit `?v=` in a supplied URL is left alone, so a caller can still
  * point the suite at v1.
  *
+ * The expected values below are mock.js's seeded data, and mock mode is off
+ * unless asked for, so `?mock=true` is added too.
+ *
  * @param {string} rawUrl - URL to test, file:// or http://
- * @returns {string} URL carrying a `v` parameter
+ * @returns {string} URL carrying `v` and `mock` parameters
  */
 function withVersion(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
     if (!parsed.searchParams.has("v")) parsed.searchParams.set("v", TEST_VERSION);
+    if (!parsed.searchParams.has("mock")) parsed.searchParams.set("mock", "true");
     return parsed.toString();
   } catch {
     // Not parseable as a URL (a bare path, say); fall back to string append.
-    if (/[?&]v=/.test(rawUrl)) return rawUrl;
-    return rawUrl + (rawUrl.includes("?") ? "&" : "?") + "v=" + TEST_VERSION;
+    let url = rawUrl;
+    if (!/[?&]v=/.test(url)) url += (url.includes("?") ? "&" : "?") + "v=" + TEST_VERSION;
+    if (!/[?&]mock=/.test(url)) url += "&mock=true";
+    return url;
   }
 }
 

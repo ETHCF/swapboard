@@ -24,11 +24,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build dist
+        env:
+          # Repository variable; set to 1 to ship without mock.js.
+          DISABLE_MOCK: ${{ vars.DISABLE_MOCK }}
         run: |
           mkdir -p dist
           for f in index.html app.js lib.js permit-tokens.js known-tokens.js warning.svg style.css mock.js API.html manifest.json sw.js; do
             cp "frontend/$f" "dist/$f"
           done
+          if [ "$DISABLE_MOCK" = 1 ]; then sh frontend/scripts/strip-mock.sh dist; fi
 
           COMMIT_HASH="${GITHUB_SHA:0:7}"
           COMMIT_FULL="${GITHUB_SHA}"
@@ -37,7 +41,7 @@ jobs:
           HASH_APPJS=$(sha256sum dist/app.js | cut -d' ' -f1)
           HASH_CSS=$(sha256sum dist/style.css | cut -d' ' -f1)
           HASH_HTML=$(sha256sum dist/index.html | cut -d' ' -f1)
-          HASH_MOCK=$(sha256sum dist/mock.js | cut -d' ' -f1)
+          HASH_MOCK=$([ -f dist/mock.js ] && sha256sum dist/mock.js | cut -d' ' -f1 || true)
 
           sed -i "s/__COMMIT_HASH__/${COMMIT_HASH}/g" dist/index.html
           sed -i "s/__COMMIT_FULL__/${COMMIT_FULL}/g" dist/index.html

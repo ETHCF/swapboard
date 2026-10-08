@@ -132,6 +132,12 @@ SKIP_FRONTEND=true ./deploy.sh sepolia    # Skip IPFS upload
 The subgraph manifest and the frontend's chain (`deploy:network` in `frontend/lib.js`)
 are pointed at the network being deployed to.
 
+**Mock mode:** `frontend/mock.js` serves simulated orders and a fake wallet, but only
+when a page is opened with `?mock=true` (the choice is remembered; `?mock=false` clears
+it). To ship a build with no mock at all, set `DISABLE_MOCK=1`: `deploy.sh` and the
+Vercel build read it from the environment, and the Pages workflow from the repository
+variable of the same name. The build then leaves out `mock.js` and its `<script>` tag.
+
 **Smoke test a testnet deployment:**
 
 ```bash
