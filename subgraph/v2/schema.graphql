@@ -40,7 +40,7 @@ type Order @entity(immutable: false) {
   id: ID!
   "Numeric order ID from the contract"
   orderId: BigInt! @index
-  "Account that created the order and deposited tokenA"
+  "Current order maker: the creator, or whoever a modifyOrder reassigned it to. Receives tokenB"
   maker: Account! @index
   "Token being sold (held in escrow)"
   tokenA: Token! @index
@@ -150,7 +150,8 @@ type Fill @entity(immutable: true) {
 }
 
 """
-A single OrderModified event: the maker repriced a live order's remaining amounts.
+A single OrderModified event: the maker repriced a live order's remaining amounts and/or
+reassigned the order to a new maker.
 The contract resets the order's totals to the new remainings, so this entity is the
 only record of what the order looked like beforehand.
 
@@ -164,7 +165,7 @@ type OrderModification @entity(immutable: true) {
   order: Order! @index
   "Order ID from the contract, denormalised for cheap filtering"
   orderId: BigInt! @index
-  "Account that created the order (only the maker may modify)"
+  "Order maker after this modify (the new maker when the modify reassigned the order)"
   maker: Account! @index
   "Token being sold"
   tokenA: Token! @index
