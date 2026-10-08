@@ -3655,11 +3655,15 @@ ${orderFields}
 
     // Rewritten on every change to a partial fill's amount, so the sentence
     // always states the fill that Confirm will send.
+    // Each contract token carries its full address so the filler can check it
+    // against the token they expect; native ETH has none.
     const summary = document.createElement("div");
+    const describeToken = (token) =>
+      isNativeEth(token.address) ? token.symbol : `${token.symbol} (${token.address})`;
     const describeFill = (amountA, amountB) => {
       summary.textContent =
-        `You will send ${formatAmount(amountB, order.tokenB.decimals)} ${order.tokenB.symbol} ` +
-        `and receive ${formatAmount(amountA, order.tokenA.decimals)} ${order.tokenA.symbol} in return.`;
+        `You will send ${formatAmount(amountB, order.tokenB.decimals)} ${describeToken(order.tokenB)} ` +
+        `and receive ${formatAmount(amountA, order.tokenA.decimals)} ${describeToken(order.tokenA)} in return.`;
     };
     describeFill(remainingA, remainingB);
     body.appendChild(summary);

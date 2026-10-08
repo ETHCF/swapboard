@@ -1866,16 +1866,46 @@ describe("handleFillOrder", () => {
     await connect(v2, h);
     // 1 WETH for 3,000 USDC.
     await v2.handleFillOrder(makeOrder({ partialFillAllowed: true }));
+    const WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+    const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
     const summary = document.querySelector("#modal-body .partial-fill-note").nextElementSibling;
-    expect(summary.textContent).toBe("You will send 3,000 USDC and receive 1 WETH in return.");
+    expect(summary.textContent).toBe(
+      `You will send 3,000 USDC (${USDC}) and receive 1 WETH (${WETH}) in return.`
+    );
 
     const input = document.querySelector("#modal-body .partial-fill-controls input");
     input.value = "750";
     input.dispatchEvent(new Event("input"));
-    expect(summary.textContent).toBe("You will send 750 USDC and receive 0.25 WETH in return.");
+    expect(summary.textContent).toBe(
+      `You will send 750 USDC (${USDC}) and receive 0.25 WETH (${WETH}) in return.`
+    );
 
     document.querySelectorAll("#modal-body .partial-fill-presets button")[1].click(); // 50%
-    expect(summary.textContent).toBe("You will send 1,500 USDC and receive 0.5 WETH in return.");
+    expect(summary.textContent).toBe(
+      `You will send 1,500 USDC (${USDC}) and receive 0.5 WETH (${WETH}) in return.`
+    );
+  });
+
+  test("the fill summary names a contract token's address but not native ETH's", async () => {
+    const h = installEthers();
+    routeFetch({ orders: [] });
+    await connect(app, h);
+    const SMKU = "0x5555555555555555555555555555555555555555";
+    await app.handleFillOrder(
+      makeOrder({
+        tokenA: { address: SMKU, symbol: "SMKU", decimals: 18 },
+        tokenB: {
+          address: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+          symbol: "ETH",
+          decimals: 18,
+        },
+        amountA: "500000000000000000000",
+        amountB: "5000000000000000",
+      })
+    );
+    expect(document.querySelector("#modal-body").textContent).toContain(
+      `You will send 0.005 ETH and receive 500 SMKU (${SMKU}) in return.`
+    );
   });
 
   test("a v2 all-or-nothing order has no partial-fill note", async () => {
