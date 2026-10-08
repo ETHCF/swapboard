@@ -57,12 +57,15 @@ const BODY_HTML = INDEX_HTML.match(/<body[^>]*>([\s\S]*)<\/body>/i)[1];
  * the require -- there is no setter afterwards. Pass { search: "?v=2" } to load
  * the v2 capability set (batch, partial fills, native ETH), and
  * { undeployedV2: true } to put v2 back on its pre-deploy placeholder.
+ * `libOverrides` replaces lib exports before app.js destructures them, for
+ * answers that would otherwise depend on the chain the build targets.
  *
- * @param {{search?: string, hash?: string, undeployedV2?: boolean}} [opts]
+ * @param {{search?: string, hash?: string, undeployedV2?: boolean,
+ *   libOverrides?: Object}} [opts]
  */
 function loadApp(opts = {}) {
   jest.resetModules();
-  const { search = "", hash = "", undeployedV2 = false } = opts;
+  const { search = "", hash = "", undeployedV2 = false, libOverrides = {} } = opts;
   window.history.replaceState({}, "", "/" + search + hash);
   // innerHTML alone leaves the body's own class list and dataset behind, so
   // dark-mode / data-version leak into the next test.
@@ -74,7 +77,7 @@ function loadApp(opts = {}) {
   // A fresh lib per load (resetModules above), so the override cannot leak.
   const lib = require("./lib");
   if (undeployedV2) Object.assign(lib.VERSION_CAPS[2], UNDEPLOYED_V2);
-  window.SwapboardLib = lib;
+  window.SwapboardLib = { ...lib, ...libOverrides };
   return require("./app");
 }
 
@@ -3256,6 +3259,21 @@ describe("create row token fields", () => {
       app.renderTokenInfoLine(el, { address: PLAIN, symbol: "AAA", name: "Alpha", decimals: 18 });
       expect(el.textContent).toContain("AAA");
     });
+
+    test("flags a token that is on no token list", () => {
+      const el = document.createElement("div");
+      app.renderTokenInfoLine(el, { address: PLAIN, symbol: "AAA", name: "Alpha", decimals: 18 });
+      expect(el.querySelector(".unknown-token")).not.toBeNull();
+    });
+
+    test("does not flag a listed token, linked or not", () => {
+      const mod = loadApp({ libOverrides: { isKnownToken: () => true } });
+      for (const address of [WETH, PLAIN]) {
+        const el = document.createElement("div");
+        mod.renderTokenInfoLine(el, { address, symbol: "AAA", name: "Alpha", decimals: 18 });
+        expect(el.querySelector(".unknown-token")).toBeNull();
+      }
+    });
   });
 
   describe("loadRowBalance", () => {
@@ -4203,6 +4221,46 @@ describe("order table cells", () => {
   test("buildTokenCell gives an ERC20 a link and a copy button", () => {
     const td = app.buildTokenCell({ address: PLAIN, symbol: "AAA", decimals: 18 }, "Wanted");
     expect(td.querySelector(".copy-btn")).not.toBeNull();
+  });
+
+  test("createUnknownTokenBadge is a focusable warning icon with a caution hint", () => {
+    const badge = app.createUnknownTokenBadge();
+    expect(badge.className).toBe("unknown-token");
+    expect(badge.tabIndex).toBe(0);
+    expect(badge.dataset.tooltip).toMatch(/^Unknown token/);
+    expect(badge.dataset.tooltip).toMatch(/extra caution/);
+    expect(badge.getAttribute("aria-label")).toBe(badge.dataset.tooltip);
+    // Empty, so the cell's address tooltip does not stack on the hint.
+    expect(badge.getAttribute("title")).toBe("");
+    expect(badge.querySelector("img").getAttribute("src")).toBe("warning.svg");
+  });
+
+  test("buildTokenCell flags an unlisted token but not a listed one", () => {
+    const token = { address: PLAIN, symbol: "AAA", decimals: 18 };
+    expect(app.buildTokenCell(token, "Wanted").querySelector(".unknown-token")).not.toBeNull();
+    const listed = loadApp({ libOverrides: { isKnownToken: () => true } });
+    expect(listed.buildTokenCell(token, "Wanted").querySelector(".unknown-token")).toBeNull();
+  });
+
+  test("native ETH is never flagged as unknown", () => {
+    const v2 = loadApp({ search: "?v=2" });
+    const eth = { address: NATIVE, symbol: "ETH", decimals: 18 };
+    expect(v2.buildTokenCell(eth, "Offered").querySelector(".unknown-token")).toBeNull();
+    const el = document.createElement("div");
+    v2.fillOrderModalAmount(el, eth, 10n ** 18n);
+    expect(el.querySelector(".unknown-token")).toBeNull();
+  });
+
+  test("fillOrderModalAmount flags an unlisted token but not a listed one", () => {
+    const token = { address: PLAIN, symbol: "AAA", decimals: 18 };
+    const el = document.createElement("div");
+    app.fillOrderModalAmount(el, token, 10n ** 18n);
+    expect(el.querySelector(".unknown-token")).not.toBeNull();
+
+    const listed = loadApp({ libOverrides: { isKnownToken: () => true } });
+    const el2 = document.createElement("div");
+    listed.fillOrderModalAmount(el2, token, 10n ** 18n);
+    expect(el2.querySelector(".unknown-token")).toBeNull();
   });
 
   test("buildAmountCell formats the remaining amount", () => {

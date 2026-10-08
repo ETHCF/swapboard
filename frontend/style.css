@@ -762,6 +762,48 @@ tbody tr.highlighted-order:hover {
   cursor: help;
 }
 
+/* Warning icon beside a token missing from known-tokens.js, with its hint drawn
+   from data-tooltip on hover or keyboard focus (as .partial-fill-hint does). */
+.unknown-token {
+  position: relative;
+  display: inline-block;
+  margin: 0 2px;
+  vertical-align: -2px;
+  cursor: help;
+}
+
+.unknown-token img {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.unknown-token::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  width: 260px;
+  max-width: 70vw;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-weight: normal;
+  line-height: 1.4;
+  white-space: normal;
+  text-align: left;
+  color: var(--bg);
+  background: var(--fg);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+  z-index: 10;
+}
+
+.unknown-token:hover::after,
+.unknown-token:focus-visible::after {
+  opacity: 1;
+}
+
 .quick-amounts {
   display: flex;
   gap: 5px;

@@ -20,6 +20,7 @@ module.exports = {
     "!*.unit.test.js",
     "!mock.js",
     "!permit-tokens.js",
+    "!known-tokens.js",
     "!coverage/**",
     "!__mocks__/**",
   ],

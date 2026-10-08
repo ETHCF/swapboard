@@ -535,6 +535,50 @@ function isSignablePermitKind(kind) {
 }
 
 // ============================================================================
+// Known-token registry
+// ============================================================================
+
+/**
+ * Generated token-list data (see known-tokens.js for its sources). Loaded the
+ * same way as PERMIT_DATA, and an absent file degrades the same way: to an empty
+ * registry, in which every token is unknown and so gets the warning.
+ * @constant {{GENERATED: string, CHAINS: Object<string, Object<string, Object>>}}
+ */
+const KNOWN_TOKEN_DATA = (typeof module !== "undefined" && module.exports
+  ? require("./known-tokens.js")
+  : typeof window !== "undefined" && window.SwapboardKnownTokens) || {
+  GENERATED: "",
+  CHAINS: {},
+};
+
+/**
+ * Token-list metadata for an address, or null when no list we ship carries it.
+ *
+ * Per chain for the same reason as permitKindFor: an address only means
+ * something on the chain it was deployed to.
+ *
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {{symbol: string, name: string, decimals: number}|null} Listed metadata
+ */
+function knownTokenInfo(address, chainId = EXPECTED_CHAIN_ID) {
+  if (typeof address !== "string") return null;
+  const section = (KNOWN_TOKEN_DATA.CHAINS || {})[String(chainId)];
+  if (!section) return null;
+  return section[address.toLowerCase()] || null;
+}
+
+/**
+ * Whether a token appears on one of the public token lists we ship.
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {boolean} True when the address is listed for that chain
+ */
+function isKnownToken(address, chainId = EXPECTED_CHAIN_ID) {
+  return knownTokenInfo(address, chainId) !== null;
+}
+
+// ============================================================================
 // Signature-based approvals
 // ============================================================================
 
@@ -2180,6 +2224,10 @@ if (typeof window !== "undefined") {
     supportsPermit,
     isSignablePermitKind,
 
+    // Known-token registry
+    knownTokenInfo,
+    isKnownToken,
+
     // Signature-based approvals
     PERMIT2_ADDRESS,
     MAX_PERMIT2_BATCH,
@@ -2311,6 +2359,10 @@ if (typeof module !== "undefined" && module.exports) {
     permitKindFor,
     supportsPermit,
     isSignablePermitKind,
+
+    // Known-token registry
+    knownTokenInfo,
+    isKnownToken,
 
     // Signature-based approvals
     PERMIT2_ADDRESS,

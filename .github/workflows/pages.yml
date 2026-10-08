@@ -26,7 +26,7 @@ jobs:
       - name: Build dist
         run: |
           mkdir -p dist
-          for f in index.html app.js lib.js style.css mock.js API.html manifest.json sw.js; do
+          for f in index.html app.js lib.js permit-tokens.js known-tokens.js warning.svg style.css mock.js API.html manifest.json sw.js; do
             cp "frontend/$f" "dist/$f"
           done
 

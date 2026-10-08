@@ -28,6 +28,8 @@ const {
   permitKindFor,
   supportsPermit,
   isSignablePermitKind,
+  knownTokenInfo,
+  isKnownToken,
   PERMIT2_ADDRESS,
   MAX_PERMIT2_BATCH,
   PERMIT_TTL_SECONDS,
@@ -1647,6 +1649,61 @@ describe("supportsPermit", () => {
     expect(supportsPermit("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", SEPOLIA)).toBe(false);
     expect(supportsPermit("0x1c7d4b196cb0c7b01d743fbc6116a902379c7238", SEPOLIA)).toBe(true);
     expect(supportsPermit("0xfff9976782d46cc05630d1f6ebab18b2324d6b14", SEPOLIA)).toBe(false);
+  });
+});
+
+// ============================================================================
+// Known-token registry
+// ============================================================================
+
+describe("knownTokenInfo", () => {
+  const MAINNET = 1;
+  const SEPOLIA = 11155111;
+  const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+
+  // MUTATION: Drop the toLowerCase() before the lookup
+  // BREAKS: Checksummed addresses miss the lowercase keys and every token is
+  //         flagged unknown
+  test("resolves a listed token regardless of address casing", () => {
+    const info = knownTokenInfo("0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48", MAINNET);
+    expect(info).toEqual({ symbol: "USDC", name: "USDC", decimals: 6 });
+    expect(knownTokenInfo(USDC, MAINNET)).toBe(info);
+  });
+
+  test("includes tokens only the Trust Wallet list carries", () => {
+    // Trust Wallet entries mostly omit chainId; the generator files them under 1.
+    expect(knownTokenInfo("0x607f4c5bb672230e8672085532f7e901544a7375", MAINNET)).not.toBeNull();
+  });
+
+  // MUTATION: Ignore chainId and search every section
+  // BREAKS: A mainnet listing vouches for whatever lives at that address elsewhere
+  test("answers per chain", () => {
+    expect(knownTokenInfo(USDC, SEPOLIA)).toBeNull();
+    expect(knownTokenInfo(USDC, 8453)).toBeNull();
+  });
+
+  test("lists the Sepolia test tokens Seed.s.sol trades", () => {
+    expect(knownTokenInfo("0xcb650b2bcf7437af4e806fbff2dcd4109c4ccdff", SEPOLIA).symbol).toBe(
+      "SMKA"
+    );
+    expect(knownTokenInfo("0x8125d46e9b27914d112ce6271fe4a7e4f977cfde", SEPOLIA).decimals).toBe(6);
+    expect(knownTokenInfo("0xcb650b2bcf7437af4e806fbff2dcd4109c4ccdff", MAINNET)).toBeNull();
+  });
+
+  test("returns null for unlisted or malformed addresses", () => {
+    expect(knownTokenInfo("0x1111111111111111111111111111111111111111", MAINNET)).toBeNull();
+    expect(knownTokenInfo(null, MAINNET)).toBeNull();
+    expect(knownTokenInfo(42, MAINNET)).toBeNull();
+  });
+});
+
+describe("isKnownToken", () => {
+  test("is true only for a listed address on its chain", () => {
+    const usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+    expect(isKnownToken(usdc, 1)).toBe(true);
+    expect(isKnownToken(usdc, 11155111)).toBe(false);
+    expect(isKnownToken("0x1111111111111111111111111111111111111111", 1)).toBe(false);
+    expect(isKnownToken(undefined, 1)).toBe(false);
   });
 });
 

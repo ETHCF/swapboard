@@ -77,6 +77,7 @@
     PERMIT2_TYPES,
     permit2Domain,
     permitKindFor,
+    isKnownToken,
     buildPermitMessage,
     buildPermit2Message,
     permit2Nonce,
@@ -455,6 +456,10 @@
   let highlightedOrderId = null;
   let notificationsEnabled = false;
   const UNISWAP_TOKEN_LIST_URL = "https://tokens.uniswap.org";
+  /** Hint on the warning icon beside a token missing from known-tokens.js. */
+  const UNKNOWN_TOKEN_WARNING =
+    "Unknown token: it may be a scam or an impersonation, so take extra caution and verify " +
+    "the contract address before trading.";
   let uniswapTokens = [];
   let autoRefreshInterval = null;
   const AUTO_REFRESH_MS = 30000;
@@ -1418,6 +1423,40 @@
   }
 
   /**
+   * Warning icon for a token that is not on any token list we ship, with a
+   * hover/focus hint drawn from data-tooltip (see hintPartialFill for why not
+   * `title`). The empty `title` keeps an ancestor's native tooltip -- the token
+   * cell's address -- from stacking on top of it.
+   *
+   * @returns {HTMLSpanElement}
+   */
+  function createUnknownTokenBadge() {
+    const badge = document.createElement("span");
+    badge.className = "unknown-token";
+    badge.tabIndex = 0;
+    badge.title = "";
+    badge.dataset.tooltip = UNKNOWN_TOKEN_WARNING;
+    badge.setAttribute("aria-label", UNKNOWN_TOKEN_WARNING);
+
+    const img = document.createElement("img");
+    img.src = "warning.svg";
+    img.alt = "";
+    badge.appendChild(img);
+    return badge;
+  }
+
+  /**
+   * Appends the unknown-token badge when `address` is an unlisted contract.
+   * Native ETH has no contract to impersonate, so it never gets one.
+   * @param {HTMLElement} el - Element to append to
+   * @param {string} address - Token address
+   */
+  function appendUnknownTokenBadge(el, address) {
+    if (isNativeEth(address) || isKnownToken(address)) return;
+    el.appendChild(createUnknownTokenBadge());
+  }
+
+  /**
    * Renders "<amount> <symbol>" into an order-modal row.
    *
    * Links to CoinGecko and offers the contract address where there is one;
@@ -1446,6 +1485,7 @@
     }
 
     el.appendChild(amountNode);
+    appendUnknownTokenBadge(el, token.address);
     if (!native) el.appendChild(createCopyButton(token.address));
 
     if (original !== null && original !== undefined && BigInt(original) > amount) {
@@ -2297,6 +2337,7 @@ ${orderFields}
       wrap.appendChild(span);
     }
 
+    appendUnknownTokenBadge(wrap, token.address);
     wrap.appendChild(createCopyButton(token.address));
     td.appendChild(wrap);
     td.title = token.address;
@@ -4201,15 +4242,13 @@ ${orderFields}
       verifyLink.textContent = "[verify]";
       verifyLink.className = "verify-link";
       infoEl.appendChild(verifyLink);
-      return;
+    } else {
+      infoEl.appendChild(
+        document.createTextNode(info.symbol + " (" + info.decimals + " decimals) ")
+      );
     }
 
-    infoEl.appendChild(document.createTextNode(info.symbol + " (" + info.decimals + " decimals) "));
-    const warnSpan = document.createElement("span");
-    warnSpan.className = "token-warning";
-    warnSpan.textContent = "[unknown token]";
-    warnSpan.title = "This token is not in our verified list. Double-check the address.";
-    infoEl.appendChild(warnSpan);
+    appendUnknownTokenBadge(infoEl, info.address);
   }
 
   /**
@@ -5790,6 +5829,7 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
       buildBatchItem,
       buildPartialFillControls,
       buildTokenCell,
+      createUnknownTokenBadge,
       cancelSelectedOrders,
       checkWatchedOrders,
       clearSelection,
