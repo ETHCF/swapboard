@@ -447,14 +447,33 @@ const DOMAIN_SEPARATOR_OTHER = "0x" + "cd".repeat(32);
 const DOMAIN_SEPARATOR_UNMATCHABLE = "0x" + "ef".repeat(32);
 
 /**
- * A Sepolia token the generated registry marks "eip2612" (Circle USDC). Written
- * out rather than invented, because permitKindFor answers off the real registry
- * and an invented address would silently take the approve() path instead.
+ * A token the generated registry marks "eip2612" on the build's chain (Circle
+ * USDC). Written out rather than invented, because permitKindFor answers off the
+ * real registry and an invented address would silently take the approve() path
+ * instead. Keyed by chain so the suite holds whichever network lib.js targets.
  */
-const PERMIT_TOKEN = "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
+const PERMIT_TOKEN = {
+  1: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+  11155111: "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238",
+}[EXPECTED_CHAIN_ID];
 
-/** A Sepolia token the registry marks "none" (WETH9). */
-const NO_PERMIT_TOKEN = "0xfff9976782d46cc05630d1f6ebab18b2324d6b14";
+/** A token the registry marks "none" on the build's chain (WETH9). */
+const NO_PERMIT_TOKEN = {
+  1: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+  11155111: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
+}[EXPECTED_CHAIN_ID];
+
+/**
+ * makeOrder with a tokenB that takes the approve() path on every chain (mainnet
+ * USDT: "none" on mainnet, absent on Sepolia). The default tokenB, mainnet USDC,
+ * is permit-capable on a mainnet build, so a fill there signs instead of approving.
+ */
+function makeApproveOrder(over = {}) {
+  return makeOrder({
+    tokenB: { address: "0xdac17f958d2ee523a2206206994597c13d831ec7", symbol: "USDT", decimals: 6 },
+    ...over,
+  });
+}
 
 const SWAPBOARD_ADDRESS = deploymentFor(1).CONTRACT_ADDRESS;
 
@@ -4061,7 +4080,9 @@ describe("v2 create and batch entry points", () => {
 
   test("batch fill of several orders pays each whole in one fillOrders", async () => {
     const { mod, h } = await v2();
-    routeFetch({ orders: [makeOrder({ orderId: "1" }), makeOrder({ orderId: "2" })] });
+    routeFetch({
+      orders: [makeApproveOrder({ orderId: "1" }), makeApproveOrder({ orderId: "2" })],
+    });
     await mod.loadOrders();
     mod.toggleOrderSelection(mod.findOrderById("1"), false);
     mod.toggleOrderSelection(mod.findOrderById("2"), false);
@@ -4090,8 +4111,8 @@ describe("v2 create and batch entry points", () => {
     };
     routeFetch({
       orders: [
-        makeOrder({ orderId: "1", ...ethWanted }),
-        makeOrder({ orderId: "2", ...ethWanted }),
+        makeApproveOrder({ orderId: "1", ...ethWanted }),
+        makeApproveOrder({ orderId: "2", ...ethWanted }),
       ],
     });
     await mod.loadOrders();
@@ -4119,8 +4140,8 @@ describe("v2 create and batch entry points", () => {
     const { mod, h } = await v2();
     routeFetch({
       orders: [
-        makeOrder({ orderId: "1", maker: WALLET_ADDRESS }),
-        makeOrder({ orderId: "2", maker: WALLET_ADDRESS }),
+        makeApproveOrder({ orderId: "1", maker: WALLET_ADDRESS }),
+        makeApproveOrder({ orderId: "2", maker: WALLET_ADDRESS }),
       ],
     });
     await mod.loadOrders();
@@ -4135,7 +4156,7 @@ describe("v2 create and batch entry points", () => {
   test("a batch spanning more than one transaction says so", async () => {
     const { mod, h } = await v2();
     // MAX_BATCH_FILL is 15, so 20 orders is two transactions.
-    const many = Array.from({ length: 20 }, (_, i) => makeOrder({ orderId: String(i + 1) }));
+    const many = Array.from({ length: 20 }, (_, i) => makeApproveOrder({ orderId: String(i + 1) }));
     routeFetch({ orders: many });
     await mod.loadOrders();
     for (const o of many) mod.toggleOrderSelection(mod.findOrderById(o.orderId), false);
@@ -4150,7 +4171,7 @@ describe("v2 create and batch entry points", () => {
 
   test("a failed batch reports the error", async () => {
     const { mod, h } = await v2();
-    routeFetch({ orders: [makeOrder({ orderId: "1" })] });
+    routeFetch({ orders: [makeApproveOrder({ orderId: "1" })] });
     await mod.loadOrders();
     mod.toggleOrderSelection(mod.findOrderById("1"), false);
     await mod.fillSelectedOrders();
@@ -4169,7 +4190,10 @@ describe("v2 create and batch entry points", () => {
     const { mod } = await v2();
     routeFetch({
       orders: [
-        makeOrder({ orderId: "1", tokenB: { address: NATIVE, symbol: "ETH", decimals: 18 } }),
+        makeApproveOrder({
+          orderId: "1",
+          tokenB: { address: NATIVE, symbol: "ETH", decimals: 18 },
+        }),
       ],
     });
     await mod.loadOrders();
@@ -4745,7 +4769,7 @@ describe("v2 single-order entry points", () => {
 
   test("an all-or-nothing fill takes the whole remainder at its exact payment", async () => {
     const { mod, h } = await v2();
-    await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
+    await mod.handleFillOrder(makeApproveOrder({ partialFillAllowed: false }));
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/filled/i);
     // v2 treats WETH as an ordinary ERC20: approve exactly the payment, then
@@ -4762,7 +4786,7 @@ describe("v2 single-order entry points", () => {
 
   test("a partial fill pays exactly the chosen amount", async () => {
     const { mod, h } = await v2();
-    await mod.handleFillOrder(makeOrder({ partialFillAllowed: true }));
+    await mod.handleFillOrder(makeApproveOrder({ partialFillAllowed: true }));
     // Half of an order asking 3000 USDC for 1 WETH: pay 1500, receive 0.5.
     const presets = document.querySelectorAll("#modal-body .partial-fill-presets button");
     [...presets].find((b) => b.textContent === "50%").click();
@@ -4784,7 +4808,7 @@ describe("v2 single-order entry points", () => {
   test("an ETH-wanted fill pays the quote as msg.value, with no approval", async () => {
     const { mod, h } = await v2();
     await mod.handleFillOrder(
-      makeOrder({
+      makeApproveOrder({
         partialFillAllowed: false,
         tokenB: { address: NATIVE, symbol: "ETH", decimals: 18 },
       })
@@ -4804,7 +4828,7 @@ describe("v2 single-order entry points", () => {
 
   test("cancelling a v2 order goes through cancelOrder", async () => {
     const { mod, h } = await v2();
-    await mod.handleCancelOrder(makeOrder());
+    await mod.handleCancelOrder(makeApproveOrder());
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toMatch(/cancelled/i);
     expect(h.swap.cancelOrder).toHaveBeenCalledWith(
@@ -4815,7 +4839,7 @@ describe("v2 single-order entry points", () => {
 
   test("v2 prices the fill it will send", async () => {
     const { mod, h } = await v2();
-    await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
+    await mod.handleFillOrder(makeApproveOrder({ partialFillAllowed: false }));
     expect(h.swap.interface.encodeFunctionData).toHaveBeenCalledWith(OVERLOAD.fillOrderPlain, [
       "1",
       3000000000n,
@@ -4829,7 +4853,7 @@ describe("v2 single-order entry points", () => {
   test("without a deployment a fill says so, approving and sending nothing", async () => {
     const { mod, h } = await v2({ undeployed: true });
     delete window.SWAPBOARD_MOCK;
-    await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
+    await mod.handleFillOrder(makeApproveOrder({ partialFillAllowed: false }));
     expect(document.querySelector("#modal-body .gas-estimate")).toBeNull();
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toBe(
@@ -4847,7 +4871,7 @@ describe("v2 single-order entry points", () => {
     h.swap.fillOrder.mockRejectedValue({
       data: "0x19113a72" + word(1n) + word(25n * 10n ** 16n) + word(10n ** 18n),
     });
-    await mod.handleFillOrder(makeOrder({ partialFillAllowed: false }));
+    await mod.handleFillOrder(makeApproveOrder({ partialFillAllowed: false }));
     await confirmModal(V2_SETTLE);
     expect(document.querySelector("#toast").textContent).toBe(
       "Fill failed: Order #1 repriced while you were confirming. Refresh and try again."
