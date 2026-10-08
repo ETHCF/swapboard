@@ -81,6 +81,28 @@ function loadApp(opts = {}) {
   return require("./app");
 }
 
+/**
+ * Captures the text of the next CSV download. Stubs Blob to keep its parts, and
+ * the object-URL calls the download makes; `restore` puts Blob back.
+ * @returns {{text: function(): string, restore: function(): void}}
+ */
+function captureCsv() {
+  const RealBlob = global.Blob;
+  let parts = [];
+  global.Blob = jest.fn((p) => {
+    parts = p;
+    return {};
+  });
+  global.URL.createObjectURL = jest.fn(() => "blob:csv");
+  global.URL.revokeObjectURL = jest.fn();
+  return {
+    text: () => parts.join(""),
+    restore: () => {
+      global.Blob = RealBlob;
+    },
+  };
+}
+
 /** Replaces window.location with a writable stub, returning a restore fn. */
 function stubLocation(href = "https://swapboard.test/") {
   const real = window.location;
@@ -2945,6 +2967,22 @@ describe("approvals", () => {
     );
     await app.exportMyOrders();
     expect(global.URL.createObjectURL).toHaveBeenCalled();
+  });
+
+  test("exportMyOrders neutralizes a formula in a token symbol", async () => {
+    await connected();
+    const csv = captureCsv();
+    const tokenA = {
+      address: "0x1111111111111111111111111111111111111111",
+      symbol: "=1+1",
+      decimals: 18,
+    };
+    global.fetch.mockImplementation(async () =>
+      jsonResponse({ data: { orders: [makeOrder({ maker: WALLET_ADDRESS, tokenA })] } })
+    );
+    await app.exportMyOrders();
+    expect(csv.text().split("\n")[1]).toContain(",'=1+1,");
+    csv.restore();
   });
 
   test("switchWallet reopens the wallet picker", async () => {
@@ -6265,6 +6303,26 @@ describe("last mile", () => {
 
     document.querySelector("#export-csv").click();
     expect(document.querySelector("#toast").textContent).toBe("No orders to export");
+  });
+
+  test("the CSV button neutralizes a formula in a token symbol", async () => {
+    const mod = loadApp();
+    installEthers();
+    const tokenA = {
+      address: "0x1111111111111111111111111111111111111111",
+      symbol: "@cmd",
+      decimals: 18,
+    };
+    routeFetch({ orders: [makeOrder({ orderId: "1", tokenA })] });
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    mod.initApp();
+    await flush();
+    await mod.loadOrders();
+
+    const csv = captureCsv();
+    document.querySelector("#export-csv").click();
+    expect(csv.text().split("\n")[1]).toContain(",'@cmd,");
+    csv.restore();
   });
 
   test("the CSV button exports the loaded rows", async () => {

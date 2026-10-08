@@ -78,6 +78,7 @@
     permit2Domain,
     permitKindFor,
     isKnownToken,
+    toCsv,
     buildPermitMessage,
     buildPermit2Message,
     permit2Nonce,
@@ -5207,7 +5208,7 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
         o.taker || "",
       ];
     });
-    const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const csvContent = toCsv(headers, rows);
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -5714,19 +5715,10 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
           order.tokenB.symbol,
           amountB,
           createdDate,
-        ]
-          .map((val) => {
-            // Escape quotes and wrap in quotes if contains comma
-            const str = String(val);
-            if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-              return '"' + str.replace(/"/g, '""') + '"';
-            }
-            return str;
-          })
-          .join(",");
+        ];
       });
 
-      const csvContent = [headers.join(","), ...rows].join("\n");
+      const csvContent = toCsv(headers, rows);
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);

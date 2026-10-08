@@ -873,6 +873,47 @@ function calculateMarketDeviation(order, getPriceFn = getTokenPrice) {
 }
 
 // ============================================================================
+// CSV Export
+// ============================================================================
+
+/**
+ * Leading characters a spreadsheet may read as the start of a formula. Tab and
+ * carriage return are in the set because some importers strip them and then
+ * evaluate what follows.
+ * @constant {string[]}
+ */
+const CSV_FORMULA_PREFIXES = ["=", "+", "-", "@", "\t", "\r"];
+
+/**
+ * Renders one CSV cell so it is read back as the text it holds.
+ *
+ * Exported cells carry token symbols, which whoever deployed the token chose:
+ * a symbol like `=HYPERLINK(...)` would otherwise run as a formula when the
+ * file is opened. Such a cell is prefixed with a single quote, which the
+ * spreadsheet shows as text. A cell holding a comma, quote or line break is then
+ * quoted, so it cannot spill into the next column or row.
+ *
+ * @param {*} value - Cell value; null and undefined become empty
+ * @returns {string} Safe CSV cell
+ */
+function csvCell(value) {
+  let str = value === null || value === undefined ? "" : String(value);
+  if (CSV_FORMULA_PREFIXES.some((p) => str.startsWith(p))) str = "'" + str;
+  if (/[",\r\n]/.test(str)) str = '"' + str.replace(/"/g, '""') + '"';
+  return str;
+}
+
+/**
+ * Builds a CSV document, every cell (headers included) through csvCell().
+ * @param {string[]} headers - Column names
+ * @param {Array<Array<*>>} rows - Cell values, one array per row
+ * @returns {string} CSV text, newline-separated
+ */
+function toCsv(headers, rows) {
+  return [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+// ============================================================================
 // Token Search Functions
 // ============================================================================
 
@@ -2244,6 +2285,11 @@ if (typeof window !== "undefined") {
     fetchPrices,
     calculateMarketDeviation,
 
+    // CSV export
+    CSV_FORMULA_PREFIXES,
+    csvCell,
+    toCsv,
+
     // Token search
     searchTokens,
 
@@ -2377,6 +2423,11 @@ if (typeof module !== "undefined" && module.exports) {
     permitDeadline,
     choosePullStrategy,
     planBatchPulls,
+
+    // CSV export
+    CSV_FORMULA_PREFIXES,
+    csvCell,
+    toCsv,
 
     // Token search
     searchTokens,

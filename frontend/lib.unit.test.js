@@ -100,6 +100,9 @@ const {
   CHAINS,
   ACTIVE_CHAIN,
   EXPECTED_CHAIN_ID,
+  CSV_FORMULA_PREFIXES,
+  csvCell,
+  toCsv,
 } = require("./lib");
 
 // ============================================================================
@@ -1275,6 +1278,70 @@ describe("calculateMarketDeviation", () => {
 // ============================================================================
 // searchTokens
 // ============================================================================
+
+describe("csvCell", () => {
+  // MUTATION: Drop any one prefix from CSV_FORMULA_PREFIXES
+  // BREAKS: A token symbol starting with that character runs as a formula when
+  //         the export is opened in a spreadsheet
+  test.each([
+    ["=1+1", "'=1+1"],
+    ["+1+1", "'+1+1"],
+    ["-2+3", "'-2+3"],
+    ["@SUM(A1)", "'@SUM(A1)"],
+    ["\t=1", "'\t=1"],
+  ])("prefixes %j with a single quote", (input, expected) => {
+    expect(csvCell(input)).toBe(expected);
+  });
+
+  test("prefixes a leading carriage return, then quotes the cell for it", () => {
+    expect(csvCell("\r=1")).toBe(`"'\r=1"`);
+  });
+
+  test("covers exactly the prefixes it documents", () => {
+    expect(CSV_FORMULA_PREFIXES).toEqual(["=", "+", "-", "@", "\t", "\r"]);
+  });
+
+  // MUTATION: startsWith -> includes
+  // BREAKS: Ordinary values like dates get a stray quote
+  test("leaves a value alone when the character is not leading", () => {
+    expect(csvCell("2026-10-08T00:00:00.000Z")).toBe("2026-10-08T00:00:00.000Z");
+    expect(csvCell("A=B")).toBe("A=B");
+    expect(csvCell(42)).toBe("42");
+  });
+
+  test("quotes commas, quotes and line breaks", () => {
+    expect(csvCell("a,b")).toBe(`"a,b"`);
+    expect(csvCell(`say "hi"`)).toBe(`"say ""hi"""`);
+    expect(csvCell("a\nb")).toBe(`"a\nb"`);
+  });
+
+  test("prefixes before quoting, so the quote lands inside the field", () => {
+    expect(csvCell(`=HYPERLINK("http://x")`)).toBe(`"'=HYPERLINK(""http://x"")"`);
+  });
+
+  test("renders null and undefined as empty", () => {
+    expect(csvCell(null)).toBe("");
+    expect(csvCell(undefined)).toBe("");
+  });
+});
+
+describe("toCsv", () => {
+  test("joins escaped cells with commas and rows with newlines", () => {
+    expect(
+      toCsv(
+        ["A", "B"],
+        [
+          ["=x", "1,5"],
+          [null, "ok"],
+        ]
+      )
+    ).toBe(`A,B\n'=x,"1,5"\n,ok`);
+  });
+
+  test("escapes headers too", () => {
+    expect(toCsv(["-h"], [])).toBe("'-h");
+  });
+});
 
 describe("searchTokens", () => {
   const tokenList = [
