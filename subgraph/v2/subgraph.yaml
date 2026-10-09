@@ -6,12 +6,12 @@ schema:
 dataSources:
   - kind: ethereum
     name: Swapboard
-    network: sepolia
+    network: mainnet
     source:
       # Placeholder: deploy.sh rewrites address and startBlock after deployment.
-      address: "0xEA7A84a18F5a7c21b97e83D5D7befaF053836B90"
+      address: "0x0000000000119fc45829a3fc42e0fa4472BB9a28"
       abi: Swapboard
-      startBlock: 11772941
+      startBlock: 26149328
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
