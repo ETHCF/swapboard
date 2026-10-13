@@ -60,7 +60,7 @@ const CHAINS = {
  * load-bearing: deploy.sh rewrites it to the network it just deployed to.
  */
 const BUILD_TARGET = {
-  network: "sepolia", // deploy:network
+  network: "mainnet", // deploy:network
 };
 
 const ACTIVE_CHAIN = CHAINS[BUILD_TARGET.network];
@@ -1616,12 +1616,12 @@ const VERSION_CAPS = {
     version: 2,
     label: "v2",
     /**
-     * Sepolia deployment of Swapboard v2, and the subgraph that indexes it.
+     * Mainnet deployment of Swapboard v2, and the subgraph that indexes it.
      * deploy.sh wrote both; being live, validateConfig now enforces them.
      */
-    contractAddress: "0xEA7A84a18F5a7c21b97e83D5D7befaF053836B90", // deploy:v2:contract
+    contractAddress: "0x0000000000119fc45829a3fc42e0fa4472BB9a28", // deploy:v2:contract
     subgraphUrl:
-      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/swapboard-v2-sepolia/2.2.0/gn", // deploy:v2:subgraph
+      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/swapboard-v2/2.0.0/gn", // deploy:v2:subgraph
     partialFill: true,
     batch: true,
     nativeEth: true,
