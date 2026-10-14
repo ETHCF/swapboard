@@ -108,11 +108,11 @@
 
   /**
    * Protocol version being mocked.
-   * Falls back to 1 when lib.js is absent, matching its own DEFAULT_VERSION.
+   * Falls back to 2 when lib.js is absent, matching its own DEFAULT_VERSION.
    * @constant {number}
    */
   const MOCK_VERSION = (() => {
-    if (typeof Lib.resolveVersion !== "function") return 1;
+    if (typeof Lib.resolveVersion !== "function") return 2;
     let stored = null;
     try {
       stored = localStorage.getItem(Lib.VERSION_STORAGE_KEY);

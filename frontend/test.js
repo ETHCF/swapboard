@@ -47,7 +47,7 @@ const EXPECTED = {
  *
  * These tests exercise the v2 layout — the select column, the batch controls,
  * the [ETH] toggle — none of which exist in v1. Without an explicit `?v=`,
- * resolveVersion() falls back to DEFAULT_VERSION (1) and the selectors miss.
+ * the suite would silently follow DEFAULT_VERSION if it ever changed.
  * An explicit `?v=` in a supplied URL is left alone, so a caller can still
  * point the suite at v1.
  *

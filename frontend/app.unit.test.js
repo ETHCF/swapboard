@@ -54,7 +54,8 @@ const BODY_HTML = INDEX_HTML.match(/<body[^>]*>([\s\S]*)<\/body>/i)[1];
  *
  * ACTIVE_VERSION and CAPS are resolved once at IIFE execution time from the URL
  * and localStorage, so the protocol version has to be set on the location before
- * the require -- there is no setter afterwards. Pass { search: "?v=2" } to load
+ * the require -- there is no setter afterwards. Loads pin v1 by default, since
+ * most of this suite exercises the v1 layout; pass { search: "?v=2" } to load
  * the v2 capability set (batch, partial fills, native ETH), and
  * { undeployedV2: true } to put v2 back on its pre-deploy placeholder.
  * `libOverrides` replaces lib exports before app.js destructures them, for
@@ -65,7 +66,7 @@ const BODY_HTML = INDEX_HTML.match(/<body[^>]*>([\s\S]*)<\/body>/i)[1];
  */
 function loadApp(opts = {}) {
   jest.resetModules();
-  const { search = "", hash = "", undeployedV2 = false, libOverrides = {} } = opts;
+  const { search = "?v=1", hash = "", undeployedV2 = false, libOverrides = {} } = opts;
   window.history.replaceState({}, "", "/" + search + hash);
   // innerHTML alone leaves the body's own class list and dataset behind, so
   // dark-mode / data-version leak into the next test.
@@ -683,6 +684,11 @@ describe("getOrderIdFromHash", () => {
 describe("protocol version", () => {
   test("defaults to v1 capabilities", () => {
     expect(app.orderColumnCount()).toBe(9);
+  });
+
+  test("an unpinned load with nothing stored runs v2", () => {
+    const fresh = loadApp({ search: "" });
+    expect(fresh.orderColumnCount()).toBe(10);
   });
 
   test("v2 adds the select column", () => {
@@ -2354,7 +2360,7 @@ describe("wired controls", () => {
    * handlers are live and can be driven through the real DOM.
    * @param {string} [search] - Location search, e.g. "?v=2"
    */
-  async function boot(search = "") {
+  async function boot(search = "?v=1") {
     const mod = loadApp({ search });
     const h = installEthers();
     routeFetch({ orders: [makeOrder({ orderId: "1", maker: WALLET_ADDRESS })] });
@@ -3809,7 +3815,7 @@ describe("order table rendering", () => {
   });
 
   test("v1 renders no select column", async () => {
-    await render([makeOrder()], { search: "" });
+    await render([makeOrder()], { search: "?v=1" });
     expect(document.querySelector('#order-table input[type="checkbox"]')).toBeNull();
   });
 
@@ -4402,7 +4408,7 @@ describe("remaining wiring", () => {
   });
 
   /** Boots, connects and returns the module. */
-  async function boot(search = "") {
+  async function boot(search = "?v=1") {
     const mod = loadApp({ search });
     const h = installEthers();
     routeFetch({ orders: [makeOrder({ orderId: "1" })] });

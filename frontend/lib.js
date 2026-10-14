@@ -1564,11 +1564,11 @@ const VERSION_STORAGE_KEY = "swapboard_version";
 
 /**
  * Version used when nothing else selects one.
- * v1, because it is the only version with deployed contracts and a subgraph
- * that answers — v2 is opt-in preview until that changes.
+ * v2, the current deployment. v1 stays reachable through the switcher or
+ * `?v=1` for orders still open on it.
  * @constant {number}
  */
-const DEFAULT_VERSION = 1;
+const DEFAULT_VERSION = 2;
 
 /** Versions this frontend knows how to speak. */
 const SUPPORTED_VERSIONS = [1, 2];

@@ -181,8 +181,8 @@
     },
     2: {
       title: "Welcome to SWAPBOARD v2",
-      note: "V2: partial fills, batch fill/cancel/create, and native ETH. Preview — contracts are not deployed yet; add ?mock=true to try it against simulated data.",
-      hint: "Swapboard v2 — preview, contracts not yet deployed",
+      note: "V2: partial fills, batch fill/cancel/create, and native ETH. Live on mainnet.",
+      hint: "Swapboard v2 — deployed and live on mainnet",
     },
   };
 

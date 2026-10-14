@@ -3481,13 +3481,12 @@ describe("parseVersion", () => {
 });
 
 describe("resolveVersion", () => {
-  // MUTATION: Change DEFAULT_VERSION to 2
-  // BREAKS: a first-time visitor lands on the version whose subgraph query
-  //         errors out and whose contracts are not deployed
-  test("defaults to v1 when nothing selects a version", () => {
-    expect(resolveVersion({})).toEqual({ version: 1, pinned: false });
-    expect(resolveVersion()).toEqual({ version: 1, pinned: false });
-    expect(DEFAULT_VERSION).toBe(1);
+  // MUTATION: Change DEFAULT_VERSION to 1
+  // BREAKS: a first-time visitor lands on the legacy version
+  test("defaults to v2 when nothing selects a version", () => {
+    expect(resolveVersion({})).toEqual({ version: 2, pinned: false });
+    expect(resolveVersion()).toEqual({ version: 2, pinned: false });
+    expect(DEFAULT_VERSION).toBe(2);
   });
 
   // MUTATION: Check localStorage before the URL parameter
@@ -3504,17 +3503,17 @@ describe("resolveVersion", () => {
   });
 
   // MUTATION: Ignore the stored value
-  // BREAKS: the switcher appears not to stick — every reload reverts to v1
+  // BREAKS: the switcher appears not to stick — every reload reverts to v2
   test("falls back to the stored preference", () => {
-    expect(resolveVersion({ stored: "2" })).toEqual({ version: 2, pinned: false });
-    expect(resolveVersion({ search: "?other=1", stored: "2" }).version).toBe(2);
+    expect(resolveVersion({ stored: "1" })).toEqual({ version: 1, pinned: false });
+    expect(resolveVersion({ search: "?other=2", stored: "1" }).version).toBe(1);
   });
 
   // MUTATION: Trust the stored value without parsing
   // BREAKS: corrupted storage pins the app to a version that does not exist
   test("ignores an unusable stored value", () => {
-    expect(resolveVersion({ stored: "banana" }).version).toBe(1);
-    expect(resolveVersion({ stored: "9" }).version).toBe(1);
+    expect(resolveVersion({ stored: "banana" }).version).toBe(2);
+    expect(resolveVersion({ stored: "9" }).version).toBe(2);
   });
 
   // MUTATION: Let the URLSearchParams throw escape
