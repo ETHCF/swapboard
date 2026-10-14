@@ -1,0 +1,7 @@
+packages:
+  - "."
+
+allowBuilds:
+  keccak: true
+  protobufjs: true
+  secp256k1: true

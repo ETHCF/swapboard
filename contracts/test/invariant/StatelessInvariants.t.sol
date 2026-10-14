@@ -1,160 +1,449 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity 0.8.33;
+pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 // solhint-disable gas-small-strings
 
 import {Test} from "forge-std/Test.sol";
+import {FillTestLib} from "../helpers/FillTestLib.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
 import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
-import {MockWETH} from "../mocks/MockWETH.sol";
 
 /// @title SwapboardStatelessInvariantTest
 /// @notice Stateless invariant tests using direct property assertions
 contract SwapboardStatelessInvariantTest is Test {
-    Swapboard public board;
-    MockERC20 public tokenA;
-    MockERC20 public tokenB;
-    MockWETH public mockWeth;
+    Swapboard internal _board;
+    MockERC20 internal _tokenA;
+    MockERC20 internal _tokenB;
 
-    address public maker = makeAddr("maker");
-    address public taker = makeAddr("taker");
+    // forge-lint: disable-start(function-init-state)
+    address internal _maker = makeAddr("maker");
+    address internal _taker = makeAddr("taker");
+
+    // forge-lint: disable-end(function-init-state)
 
     /// @notice Deploys fixtures for each test
     function setUp() public {
-        mockWeth = new MockWETH();
-        board = new Swapboard(address(mockWeth));
-        tokenA = new MockERC20("Token A", "TKA", 18);
-        tokenB = new MockERC20("Token B", "TKB", 18);
+        _board = new Swapboard();
+        _tokenA = new MockERC20("Token A", "TKA", 18);
+        _tokenB = new MockERC20("Token B", "TKB", 18);
 
-        tokenA.mint(maker, type(uint128).max);
-        tokenB.mint(taker, type(uint128).max);
+        _tokenA.mint(_maker, type(uint128).max);
+        _tokenB.mint(_taker, type(uint128).max);
 
-        vm.prank(maker);
-        tokenA.approve(address(board), type(uint256).max);
-        vm.prank(taker);
-        tokenB.approve(address(board), type(uint256).max);
+        vm.prank(_maker);
+        _tokenA.approve(address(_board), type(uint256).max);
+        vm.prank(_taker);
+        _tokenB.approve(address(_board), type(uint256).max);
     }
 
-    /// @notice Property: After createOrder, maker loses exactly amountA
-    function testFuzz_createOrder_makerBalanceDecrease(
-        uint256 amountA,
-        uint256 amountB
+    /// @notice Property: create sets available equal to original amounts
+    function testFuzz_createOrder_availableEqualsOriginal(
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
-        uint256 balanceBefore = tokenA.balanceOf(maker);
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
-        vm.prank(maker);
-        board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, amountA);
+        assertEq(order.availableB, amountB);
+    }
 
-        uint256 balanceAfter = tokenA.balanceOf(maker);
-        assertEq(balanceBefore - balanceAfter, amountA, "Maker balance decrease incorrect");
+    /// @notice Property: fills decrement available only; originals stay fixed
+    function testFuzz_fillOrder_decrementsAvailableOnly(
+        uint256 amountASeed,
+        uint256 amountBSeed,
+        uint256 fillASeed
+    ) public {
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 2, type(uint64).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 2, type(uint64).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 fillA = uint128(bound(fillASeed, 1, amountA));
+
+        uint256 amountBIn =
+            fillA == amountA ? amountB : (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+        vm.assume(amountBIn > 0);
+        uint256 amountAOut = amountBIn == amountB ? amountA : (amountBIn * uint256(amountA)) / uint256(amountB);
+
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: true
+            })
+        );
+
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, fillA);
+        vm.stopPrank();
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        // casting to 'uint128' is safe because amountAOut <= amountA and amountBIn <= amountB
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 remainingA = amountA - uint128(amountAOut);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 remainingB = amountB - uint128(amountBIn);
+        if (remainingA == 0 || remainingB == 0) {
+            assertEq(order.maker, address(0));
+            return;
+        }
+
+        assertEq(order.amountA, amountA);
+        assertEq(order.amountB, amountB);
+        assertEq(order.availableA, remainingA);
+        assertEq(order.availableB, remainingB);
+        assertTrue(!(order.availableA > order.amountA));
+        assertTrue(!(order.availableB > order.amountB));
+    }
+
+    /// @notice Property: full fill zeroes available and deletes the order
+    function testFuzz_fillOrder_full_zeroesAvailableKeepsOriginals(
+        uint256 amountASeed,
+        uint256 amountBSeed
+    ) public {
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
+
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
+
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, amountA);
+        vm.stopPrank();
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
+        assertEq(order.availableA, 0);
+        assertEq(order.availableB, 0);
+    }
+
+    /// @notice Property: cancel deletes the order and refunds remaining availableA
+    function testFuzz_cancelOrder_deletesOrderKeepsRefund(
+        uint256 amountASeed,
+        uint256 amountBSeed,
+        uint256 fillASeed
+    ) public {
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 2, type(uint64).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 2, type(uint64).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 fillA = uint128(bound(fillASeed, 1, amountA - 1));
+
+        uint256 amountBIn = (uint256(fillA) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+        vm.assume(amountBIn > 0 && amountBIn < amountB);
+
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: true
+            })
+        );
+
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, fillA);
+        vm.stopPrank();
+
+        uint256 makerBefore = _tokenA.balanceOf(_maker);
+        uint128 remainingA = _board.getOrder(orderId).availableA;
+
+        vm.prank(_maker);
+        _board.cancelOrder(orderId, address(0));
+
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
+        assertEq(order.amountA, 0);
+        assertEq(order.amountB, 0);
+        assertEq(order.availableA, 0);
+        assertEq(order.availableB, 0);
+        assertEq(_tokenA.balanceOf(_maker), makerBefore + remainingA);
+    }
+
+    /// @notice Property: fill progress is readable as (amount - available) / amount
+    function testFuzz_fillProgress_monotonicAcrossTwoFills(
+        uint256 amountASeed,
+        uint256 amountBSeed,
+        uint256 fillA1Seed
+    ) public {
+        // casting to 'uint128' is safe because bound is capped at uint64.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 3, type(uint64).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 3, type(uint64).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 fillA1 = uint128(bound(fillA1Seed, 1, amountA - 2));
+
+        uint256 bIn1 = (uint256(fillA1) * uint256(amountB) + uint256(amountA) - 1) / uint256(amountA);
+        vm.assume(bIn1 > 0 && bIn1 < amountB);
+
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: true
+            })
+        );
+
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, fillA1);
+        vm.stopPrank();
+
+        ISwapboard.Order memory afterFirst = _board.getOrder(orderId);
+        vm.assume(afterFirst.maker != address(0) && afterFirst.availableA > 0 && afterFirst.availableB > 0);
+
+        uint256 filledA1 = uint256(afterFirst.amountA) - uint256(afterFirst.availableA);
+        uint256 filledB1 = uint256(afterFirst.amountB) - uint256(afterFirst.availableB);
+        assertTrue(!(filledA1 < fillA1));
+        assertEq(filledB1, bIn1);
+        assertEq(afterFirst.amountA, amountA);
+        assertEq(afterFirst.amountB, amountB);
+
+        uint128 fillA2 = afterFirst.availableA;
+
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, fillA2);
+        vm.stopPrank();
+
+        ISwapboard.Order memory afterSecond = _board.getOrder(orderId);
+        if (afterSecond.maker == address(0)) {
+            return;
+        }
+
+        assertEq(afterSecond.amountA, amountA);
+        assertEq(afterSecond.amountB, amountB);
+        assertTrue(
+            !(afterSecond.availableA > afterFirst.availableA) && !(afterSecond.availableB > afterFirst.availableB)
+        );
+        uint256 filledA2 = uint256(afterSecond.amountA) - uint256(afterSecond.availableA);
+        assertTrue(!(filledA2 < filledA1));
+    }
+
+    /// @notice Property: After createOrder, _maker loses exactly amountA
+    function testFuzz_createOrder_makerBalanceDecrease(
+        uint256 amountASeed,
+        uint256 amountBSeed
+    ) public {
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
+
+        uint256 balanceBefore = _tokenA.balanceOf(_maker);
+
+        vm.prank(_maker);
+        _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
+
+        uint256 balanceAfter = _tokenA.balanceOf(_maker);
+        assertEq(balanceBefore - balanceAfter, amountA);
     }
 
     /// @notice Property: After createOrder, contract gains exactly amountA
     function testFuzz_createOrder_contractBalanceIncrease(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
-        uint256 balanceBefore = tokenA.balanceOf(address(board));
+        uint256 balanceBefore = _tokenA.balanceOf(address(_board));
 
-        vm.prank(maker);
-        board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        vm.prank(_maker);
+        _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
-        uint256 balanceAfter = tokenA.balanceOf(address(board));
-        assertEq(balanceAfter - balanceBefore, amountA, "Contract balance increase incorrect");
+        uint256 balanceAfter = _tokenA.balanceOf(address(_board));
+        assertEq(balanceAfter - balanceBefore, amountA);
     }
 
-    /// @notice Property: After fillOrder, taker gains exactly amountA
+    /// @notice Property: After fillOrder, _taker gains exactly amountA
     function testFuzz_fillOrder_takerGainsTokenA(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
-        vm.prank(maker);
-        uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
-
-        uint256 takerBalanceBefore = tokenA.balanceOf(taker);
-
-        vm.prank(taker);
-        board.fillOrder(orderId, 0);
-
-        uint256 takerBalanceAfter = tokenA.balanceOf(taker);
-        assertEq(
-            takerBalanceAfter - takerBalanceBefore, amountA, "Taker did not receive correct amountA"
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
         );
+
+        uint256 takerBalanceBefore = _tokenA.balanceOf(_taker);
+
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, amountA);
+        vm.stopPrank();
+
+        uint256 takerBalanceAfter = _tokenA.balanceOf(_taker);
+        assertEq(takerBalanceAfter - takerBalanceBefore, amountA);
     }
 
-    /// @notice Property: After fillOrder, maker gains exactly amountB
+    /// @notice Property: After fillOrder, _maker gains exactly amountB
     function testFuzz_fillOrder_makerGainsTokenB(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
-        vm.prank(maker);
-        uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
-
-        uint256 makerBalanceBefore = tokenB.balanceOf(maker);
-
-        vm.prank(taker);
-        board.fillOrder(orderId, 0);
-
-        uint256 makerBalanceAfter = tokenB.balanceOf(maker);
-        assertEq(
-            makerBalanceAfter - makerBalanceBefore, amountB, "Maker did not receive correct amountB"
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
         );
+
+        uint256 makerBalanceBefore = _tokenB.balanceOf(_maker);
+
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, amountA);
+        vm.stopPrank();
+
+        uint256 makerBalanceAfter = _tokenB.balanceOf(_maker);
+        assertEq(makerBalanceAfter - makerBalanceBefore, amountB);
     }
 
-    /// @notice Property: After cancelOrder, maker regains exactly amountA
+    /// @notice Property: After cancelOrder, _maker regains exactly amountA
     function testFuzz_cancelOrder_makerRegainsTokenA(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
-        uint256 balanceInitial = tokenA.balanceOf(maker);
+        uint256 balanceInitial = _tokenA.balanceOf(_maker);
 
-        vm.prank(maker);
-        uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
-        vm.prank(maker);
-        board.cancelOrder(orderId);
+        vm.prank(_maker);
+        _board.cancelOrder(orderId, address(0));
 
-        uint256 balanceFinal = tokenA.balanceOf(maker);
-        assertEq(balanceFinal, balanceInitial, "Maker did not regain full amountA after cancel");
+        uint256 balanceFinal = _tokenA.balanceOf(_maker);
+        assertEq(balanceFinal, balanceInitial);
     }
 
     /// @notice Property: Order state transitions are final
     function testFuzz_orderStateFinal_afterFill(
-        uint256 amountA,
-        uint256 amountB
+        uint256 amountASeed,
+        uint256 amountBSeed
     ) public {
-        amountA = bound(amountA, 1, 1e30);
-        amountB = bound(amountB, 1, 1e30);
+        // casting to 'uint128' is safe because bound is capped at uint128.max
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountA = uint128(bound(amountASeed, 1, type(uint128).max));
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 amountB = uint128(bound(amountBSeed, 1, type(uint128).max));
 
-        vm.prank(maker);
-        uint256 orderId = board.createOrder(address(tokenA), amountA, address(tokenB), amountB);
+        vm.prank(_maker);
+        uint256 orderId = _board.createOrder(
+            ISwapboard.CreateOrderParams({
+                tokenA: address(_tokenA),
+                amountA: amountA,
+                tokenB: address(_tokenB),
+                amountB: amountB,
+                partialFillAllowed: false
+            })
+        );
 
-        assertTrue(board.canFill(orderId), "Order should be fillable");
+        assertTrue(_board.canFill(orderId));
 
-        vm.prank(taker);
-        board.fillOrder(orderId, 0);
+        vm.startPrank(_taker);
+        FillTestLib.fill(_board, orderId, amountA);
+        vm.stopPrank();
 
-        assertFalse(board.canFill(orderId), "Order should not be fillable after fill");
+        assertFalse(_board.canFill(orderId));
 
-        ISwapboard.Order memory order = board.getOrder(orderId);
-        assertFalse(order.active, "Order should be inactive after fill");
+        ISwapboard.Order memory order = _board.getOrder(orderId);
+        assertEq(order.maker, address(0));
     }
 
     /// @notice Property: nextOrderId monotonically increases
@@ -163,14 +452,22 @@ contract SwapboardStatelessInvariantTest is Test {
     ) public {
         n = bound(n, 1, 50);
 
-        uint256 prevId = board.nextOrderId();
+        uint256 prevId = _board.getNextOrderId();
 
         for (uint256 i = 0; i < n; ++i) {
-            vm.prank(maker);
-            board.createOrder(address(tokenA), 1 ether, address(tokenB), 1 ether);
+            vm.prank(_maker);
+            _board.createOrder(
+                ISwapboard.CreateOrderParams({
+                    tokenA: address(_tokenA),
+                    amountA: 1 ether,
+                    tokenB: address(_tokenB),
+                    amountB: 1 ether,
+                    partialFillAllowed: false
+                })
+            );
 
-            uint256 currentId = board.nextOrderId();
-            assertGt(currentId, prevId, "nextOrderId did not increase");
+            uint256 currentId = _board.getNextOrderId();
+            assertGt(currentId, prevId);
             prevId = currentId;
         }
     }

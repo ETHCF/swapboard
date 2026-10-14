@@ -26,10 +26,21 @@ import { foundry } from "viem/chains";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Load config
+// Load config written by `pnpm setup` / `pnpm e2e`
 function loadConfig() {
   const envPath = join(__dirname, ".env.e2e");
-  const content = readFileSync(envPath, "utf-8");
+  let content;
+  try {
+    content = readFileSync(envPath, "utf-8");
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      console.error(
+        "Missing e2e/.env.e2e. Run `pnpm setup` first, or use `pnpm e2e` to setup, test, and teardown."
+      );
+      process.exit(1);
+    }
+    throw err;
+  }
   const config = {};
   for (const line of content.split("\n")) {
     const [key, value] = line.split("=");
@@ -73,7 +84,7 @@ const SWAPBOARD_ABI = [
   },
   {
     type: "function",
-    name: "nextOrderId",
+    name: "getNextOrderId",
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],
     stateMutability: "view",
@@ -386,20 +397,29 @@ async function runTests() {
 
   // Create test config for frontend
   const frontendDir = join(__dirname, "..", "frontend");
-  const appJsPath = join(frontendDir, "app.js");
-  const appJsOriginal = readFileSync(appJsPath, "utf-8");
+  // CONFIG lives in lib.js only; app.js imports it from there.
+  const libJsPath = join(frontendDir, "lib.js");
+  const libJsOriginal = readFileSync(libJsPath, "utf-8");
 
-  // Inject test config
-  const appJsTest = appJsOriginal
-    .replace(
-      /CONTRACT_ADDRESS:\s*"[^"]*"/,
-      `CONTRACT_ADDRESS: "${CONFIG.CONTRACT_ADDR}"`
-    )
-    .replace(
-      /SUBGRAPH_URL:\s*"[^"]*"/,
-      `SUBGRAPH_URL: "${CONFIG.SUBGRAPH_URL}"`
-    );
-  writeFileSync(appJsPath, appJsTest);
+  // Inject test config.
+  //
+  // lib.js holds a contract address and subgraph URL per protocol version, on
+  // VERSION_CAPS, each tagged with a `// deploy:<ver>:<key>` marker that deploy.sh
+  // also anchors on. This stack exercises v1 (see setup.sh), so it patches the v1
+  // slots. A regex that quietly matches nothing would leave the page pointed at
+  // mainnet and every assertion below would fail for the wrong reason, so a miss
+  // is a hard error.
+  const patchLib = (source, marker, value) => {
+    const pattern = new RegExp(`"[^"]*"(,? *// ${marker})`);
+    if (!pattern.test(source)) {
+      throw new Error(`Marker '// ${marker}' not found in ${libJsPath}`);
+    }
+    return source.replace(pattern, `"${value}"$1`);
+  };
+
+  let libJsTest = patchLib(libJsOriginal, "deploy:v1:contract", CONFIG.CONTRACT_ADDR);
+  libJsTest = patchLib(libJsTest, "deploy:v1:subgraph", CONFIG.SUBGRAPH_URL);
+  writeFileSync(libJsPath, libJsTest);
 
   try {
     // Allow file:// pages to fetch the local subgraph (CORS / opaque origin)
@@ -454,8 +474,8 @@ async function runTests() {
 
     await browser.close();
   } finally {
-    // Restore original app.js
-    writeFileSync(appJsPath, appJsOriginal);
+    // Restore original lib.js
+    writeFileSync(libJsPath, libJsOriginal);
   }
 
   // ========== Summary ==========

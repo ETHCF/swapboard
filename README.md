@@ -10,11 +10,15 @@ No admin. No fees. No upgrades. No keys. No backend.
 
 ```
 contracts/     Solidity smart contract (Foundry)
-subgraph/      The Graph indexer
+subgraph/v1/   The Graph indexer for the deployed v1 contract
+subgraph/v2/   The Graph indexer for the v2 contract, consumed by the v2 UI
 frontend/      Static HTML/CSS/JS
-e2e/           Full stack integration tests
+e2e/           Full stack integration tests (still on the v1 pipeline)
 docs/          API documentation
 ```
+
+Subgraph targets are versioned per contract release. `make` and `test.sh` build and
+test `subgraph/v2` by default; pass `SUBGRAPH=v1` to work on the v1 indexer instead.
 
 ## Quick Start
 
@@ -54,8 +58,10 @@ make lint
 ./test.sh --all
 
 # Make targets
-make test            # contract + subgraph + e2e package tests
+make test            # contract + subgraph tests (v2 subgraph)
+SUBGRAPH=v1 make test # same, against the v1 subgraph
 make test-contracts  # Foundry tests only
+make test-e2e        # full Docker e2e (setup + test + teardown)
 ```
 
 ### E2E Test Stack
@@ -70,11 +76,21 @@ The full E2E tests spin up:
 Then execute real transactions, wait for indexing, and verify the frontend displays correct data from the subgraph.
 
 ```bash
+# One-shot (recommended)
+cd e2e && pnpm e2e
+
+# Or via Make
+make test-e2e
+
+# Local Anvil (same host port as e2e: 18545)
+make anvil
+make deploy-local
+
 # Manual control
 cd e2e
-./setup.sh    # Start stack, deploy contract + subgraph
-node e2e.test.js  # Run tests
-./teardown.sh # Stop stack
+pnpm setup        # Start stack, deploy contract + subgraph, write .env.e2e
+pnpm test         # Requires .env.e2e from setup
+pnpm teardown     # Stop stack
 ```
 
 ### Deploy
@@ -86,17 +102,19 @@ Automated deployment script handles contract, subgraph, and frontend:
 cp .env.example .env
 # Edit .env with your private key, RPC URLs, and Graph auth token
 
-# 2. Deploy everything to Sepolia (testnet)
-./deploy.sh sepolia
+# 2. Deploy everything to Sepolia (testnet), from a testnet-only keystore account
+DEPLOYER_ACCOUNT=sepolia-deployer ./deploy.sh sepolia
 
 # Or deploy to mainnet
 ./deploy.sh mainnet
 ```
 
+Deployment aborts with `Permit2NotDeployed` when the target chain has no code at the canonical Permit2 address (`0x000000000022D473030F116dDEE9F6B43aC78BA3`), since the Permit2 overloads would revert with empty returndata there. A bare local Anvil has no Permit2: fork a chain that does (`anvil --fork-url …`) or seed the code with `cast rpc anvil_setCode` before `make deploy-local`.
+
 The script will:
 
 1. Deploy the contract and verify on Etherscan
-2. Update subgraph config with contract address and start block
+2. Update subgraph config with contract address and start block (`SUBGRAPH_VERSION`, default `v2`)
 3. Build and deploy subgraph to The Graph Studio
 4. Update frontend config with contract address and subgraph URL
 5. Upload frontend to IPFS (if ipfs CLI available)
@@ -111,6 +129,25 @@ SKIP_SUBGRAPH=true ./deploy.sh sepolia    # Skip subgraph deploy
 SKIP_FRONTEND=true ./deploy.sh sepolia    # Skip IPFS upload
 ```
 
+The subgraph manifest and the frontend's chain (`deploy:network` in `frontend/lib.js`)
+are pointed at the network being deployed to.
+
+**Mock mode:** `frontend/mock.js` serves simulated orders and a fake wallet, but only
+when a page is opened with `?mock=true` (the choice is remembered; `?mock=false` clears
+it). To ship a build with no mock at all, set `DISABLE_MOCK=1`: `deploy.sh` and the
+Vercel build read it from the environment, and the Pages workflow from the repository
+variable of the same name. The build then leaves out `mock.js` and its `<script>` tag.
+
+**Smoke test a testnet deployment:**
+
+```bash
+source .deploy.env   # CONTRACT_ADDRESS from the last deploy
+cd contracts && forge script script/Smoke.s.sol --rpc-url sepolia --account sepolia-deployer --broadcast
+```
+
+Runs every v2 entry point with two throwaway, freely mintable tokens (SMKA/SMKB), then
+leaves two orders open for the subgraph and UI.
+
 **Manual deployment:**
 
 See `deploy.sh` for the individual commands if you prefer manual control.
@@ -124,16 +161,24 @@ After IPFS deployment, update ENS contenthash via the ENS manager UI to `ipfs://
 The Swapboard contract allows:
 
 - **createOrder**: Deposit tokenA, specify tokenB amount wanted
-- **fillOrder**: Pay tokenB, receive tokenA
+- **fillOrder** / **fillOrders**: Send exact tokenB (`amountB`), with `minAmountA`
+- **modifyOrder** / **modifyOrders**: Maker updates remaining liquidity (cannot set remaining to 0 — cancel instead)
+- EIP-2612 `permit` and Permit2 SignatureTransfer overloads on create, fill, and modify set allowance / pull in the same transaction (existing signatures unchanged)
+- **setPartialFillAllowed**: Maker enables or disables partial fills (amounts unchanged)
 - **cancelOrder**: Maker reclaims tokenA
 
-All operations are atomic. No partial fills. No admin functions.
+All operations are atomic. Partial fills are opt-in via `partialFillAllowed`. No admin functions.
 
 ## Security
 
 - Reentrancy protection via OpenZeppelin
-- Fee-on-transfer token detection for tokenA
-- SafeERC20 for all transfers
+- Fee-on-transfer / mid-transfer rebase / phantom detection on tokenA deposits, ERC20 tokenA payouts to the taker, ERC20 tokenA refunds to the maker, and ERC20 tokenB payments to the maker (including multi-maker Permit2 board→maker distribution)
+- The maker cannot fill their own order (`SelfFill`): a self-`transferFrom` of tokenB does not increase the recipient, so supporting self-fill needed a board hop. Forbidding it keeps tokenB a one-hop pull to a distinct maker
+- Fill takes `taker` (tokenA; `address(0)` → `msg.sender`); tokenB always goes to the order maker. Cancel and modify take `maker` (tokenA refunds; `address(0)` → `msg.sender`); top-ups still pull from the caller. `ModifyOrderParams.maker` may reassign the order maker (`address(0)` leaves it unchanged)
+- Post-deposit rebase remains an accepted limitation: a negative rebase can lock fill/cancel, and a positive rebase can strand surplus or, when the payout rounds, revert fill and cancel (see `contracts/test/security-research/`)
+- Escrowed tokenA of a given address is commingled: that token is the real custodian. Admin seize/burn or a lying transfer can take all escrow of that token; makers of the same scam token race whatever balance remains after a rebase. Other tokens in escrow are not affected
+- The board does not check that token addresses have code. An EOA or empty address used as a token can make create, fill, or cancel fail. Makers must verify tokenA and tokenB before creating, and takers before filling
+- `Token` helpers for ERC20 and native ETH transfers (zero-amount no-op; ETH via `sendValue`)
 - No proxy, no upgrades, no owner
 
 ## Author

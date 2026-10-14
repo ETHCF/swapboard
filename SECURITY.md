@@ -6,9 +6,10 @@ If you discover a security vulnerability in Swapboard, please report it responsi
 
 **DO NOT** create a public GitHub issue for security vulnerabilities.
 
-Instead, please send an email to: zak@numbergroup.xyz
+Instead, please send an email to: <zak@numbergroup.xyz>
 
 Include:
+
 - Description of the vulnerability
 - Steps to reproduce
 - Potential impact
@@ -17,11 +18,13 @@ Include:
 ## Scope
 
 The following are in scope:
+
 - Smart contract vulnerabilities in `contracts/src/`
 - Frontend vulnerabilities that could lead to fund loss
 - Subgraph data integrity issues
 
 The following are explicitly out of scope:
+
 - Known behaviors documented in "Trust Assumptions" and "Known Limitations" sections
 - Third-party dependencies (OpenZeppelin, ethers.js) - report to upstream maintainers
 - Theoretical attacks without proof of concept or economic viability analysis
@@ -36,7 +39,7 @@ The following are explicitly out of scope:
 ## Response Timeline
 
 | Phase | Timeframe |
-|-------|-----------|
+| ------- | ----------- |
 | Acknowledgment | 48 hours |
 | Initial assessment | 7 days |
 | Resolution | Varies by severity |
@@ -45,7 +48,7 @@ The following are explicitly out of scope:
 ## Severity Levels
 
 | Severity | Description | Example |
-|----------|-------------|---------|
+| ---------- | ------------- | --------- |
 | Critical | Direct fund loss possible | Reentrancy, unauthorized withdrawals |
 | High | Funds at risk under conditions | Denial of service, griefing |
 | Medium | Data integrity issues | State inconsistency, UI manipulation |
@@ -57,7 +60,7 @@ The contract operates under these assumptions:
 
 1. **Token contracts are benign**: The contract trusts that ERC20 tokens behave correctly. Malicious tokens (e.g., tokens with transfer hooks, blacklists, or admin functions) can cause unexpected behavior or fund loss.
 
-2. **Users verify tokens**: Users are responsible for verifying token contract addresses and implementations before trading.
+2. **Users verify tokens**: The board does **not** check that token addresses have code. An EOA or empty address used as a token can make create, fill, or cancel fail. Makers must verify tokenA and tokenB before creating orders; takers must verify before filling. A malicious token can also cause fund loss.
 
 3. **Block timestamps are accurate**: Order creation time relies on block timestamps, which miners can manipulate within ~15 seconds.
 
@@ -71,17 +74,21 @@ The following are documented design decisions, not vulnerabilities:
 
 1. **Front-running**: Inherent to on-chain orderbooks. Orders can be front-run by MEV bots. Users should consider using private mempools for large orders.
 
-2. **Rebasing tokens**: May cause unexpected behavior. If tokenA rebases down after order creation, the contract may not have enough to fulfill the order. Users should not use rebasing tokens.
+2. **Rebasing tokens**: Inbound mid-transfer rebases are rejected via `BalanceMismatch`. Post-deposit rebases (while tokenA sits in escrow) are not: a negative rebase can leave the contract under-collateralized so fill and cancel fail; a positive rebase can strand surplus, and share rounding on the later payout can revert fill and cancel (`BalanceMismatch`), locking the expanded escrow. Users should not use rebasing tokens. See `contracts/test/security-research/`.
 
-3. **Fee-on-transfer tokens**: Blocked for tokenA (selling token) via balance checks. Allowed for tokenB at maker's risk (maker receives less than amountB).
+3. **No self-fill**: The maker cannot fill their own order (`SelfFill`). Typical ERC20 `transferFrom(self, self)` does not increase the recipient, so an exact-receive check would revert even for honest tokens. Supporting self-fill required routing tokenB through the board then back to the maker. Banning it keeps every fill payment a single pull to a distinct counterparty. Multi-maker Permit2 still hops through the board to split one pull across makers.
 
-4. **Malicious tokens**: The contract cannot detect malicious token implementations. Tokens with blacklists, pausability, or admin mint functions can disrupt trades.
+4. **Malicious tokenA is the real custodian of its escrow**: All orders selling the same ERC20 share one board balance of that token. Swapboard only tracks nominal `availableA`; it cannot stop the token from seizing, burning, or lying about that balance. Admin seize/burn or a lying `transfer` can take all escrow of that address. Makers of the same scam token therefore share one pool; after a rebase they race whatever balance remains. Other tokens in escrow are not affected. Blacklists, pausability, and admin mint can also disrupt fill/cancel. Users must verify token contracts.
 
-5. **No partial fills**: Orders must be filled entirely or not at all. This is by design for simplicity and gas efficiency.
+5. **Partial fills are opt-in**: Orders default to all-or-nothing. Makers can allow partial fills at create or later via `setPartialFillAllowed`. Partial `fillOrder` floors tokenA. Rounding dust stays in escrow until a later fill or cancel.
 
 6. **No expiration**: Orders remain active until filled or cancelled. There is no automatic expiration mechanism.
 
-7. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
+7. **Fill tokenA and cancel/modify refunds can be redirected; fill tokenB cannot**: Fill takes `taker` (tokenA; `address(0)` → `msg.sender`). TokenB always goes to the order maker. Cancel and modify take `maker` (tokenA refunds; `address(0)` → `msg.sender`); top-ups still pull from the caller. `ModifyOrderParams.maker` may reassign the order maker (`address(0)` leaves it unchanged), so only the current maker can hand ownership (and future tokenB receipt) to an address that can hold the asset. A maker that rejects ETH/tokens and never reassigns stays unfillable for that tokenB.
+
+8. **Recipients must be able to hold the ERC20 they are paid**: Every ERC20 transfer out of the board (tokenA to the taker, tokenA refunds to the maker, tokenB to the maker) is verified against the recipient's balance delta and reverts `BalanceMismatch` when it does not match. An outbound fee-on-transfer or a recipient that forwards, stakes, or burns the token in a transfer hook therefore reverts the whole call, and the escrow stays. ETH is not balance-checked: `sendValue` already reverts when the recipient rejects it, and a contract may forward ETH it just received.
+
+9. **Gas costs**: Users pay gas for all operations. Failed transactions (e.g., insufficient allowance) still cost gas.
 
 ## Bug Bounty
 
@@ -90,6 +97,7 @@ There is currently no formal bug bounty program. However, we may offer rewards f
 ## Contract Immutability
 
 The deployed contract is immutable. If a critical vulnerability is found:
+
 1. A new contract will be deployed
 2. Users will be notified to migrate
 3. Frontend will be updated to point to the new contract
@@ -98,6 +106,7 @@ The deployed contract is immutable. If a critical vulnerability is found:
 ## Security Tools
 
 The codebase is continuously scanned with:
+
 - **Slither**: Static analysis in CI pipeline
 - **Forge coverage**: Test coverage reporting
 - **Invariant testing**: Property-based testing with 8 invariants
@@ -106,7 +115,7 @@ The codebase is continuously scanned with:
 ## Audit Status
 
 | Status | Item |
-|--------|------|
+| -------- | ------ |
 | Complete | Internal review |
 | Complete | Slither analysis |
 | Complete | Invariant test suite |

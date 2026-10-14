@@ -1,80 +1,82 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-pragma solidity 0.8.33;
+pragma solidity 0.8.36;
 
 // solhint-disable use-natspec
 
+import {MockERC20} from "./MockERC20.sol";
 import {Swapboard} from "../../src/Swapboard.sol";
+import {ISwapboard} from "../../src/interfaces/ISwapboard.sol";
 
 /// @title ReentrantAttacker
 /// @notice Mock ERC20 that attempts reentrancy on transfer
-contract ReentrantAttacker {
-    string public name = "Reentrant Token";
-    string public symbol = "REENT";
-    uint8 public decimals = 18;
-    uint256 public totalSupply;
+contract ReentrantAttacker is MockERC20 {
+    error ZeroAddress();
 
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    Swapboard public immutable BOARD;
-    string public attackType;
-    uint256 public orderId;
-    address public attacker;
-    bool public attacking;
-
-    // solhint-disable-next-line gas-indexed-events
-    event Transfer(address indexed from, address indexed to, uint256 amount);
-
-    // solhint-disable-next-line gas-indexed-events
-    event Approval(address indexed owner, address indexed spender, uint256 amount);
+    Swapboard private immutable _BOARD;
+    string private _attackType;
+    uint256 private _orderId;
+    address private _attacker;
+    address private _tokenB;
+    bool private _attacking;
 
     constructor(
-        address _board,
-        string memory _attackType
-    ) {
-        BOARD = Swapboard(payable(_board));
-        attackType = _attackType;
+        address board,
+        string memory attackType
+    ) MockERC20("Reentrant Token", "REENT", 18) {
+        _BOARD = Swapboard(payable(board));
+        _attackType = attackType;
+    }
+
+    function getBoard() external view returns (Swapboard) {
+        return _BOARD;
+    }
+
+    function getAttackType() external view returns (string memory) {
+        return _attackType;
+    }
+
+    function getOrderId() external view returns (uint256) {
+        return _orderId;
+    }
+
+    function getAttacker() external view returns (address) {
+        return _attacker;
+    }
+
+    function getAttacking() external view returns (bool) {
+        return _attacking;
     }
 
     function setOrderId(
-        uint256 _orderId
+        uint256 orderId
     ) external {
-        orderId = _orderId;
+        _orderId = orderId;
     }
 
     function setAttacker(
-        address _attacker
+        address attacker
     ) external {
-        attacker = _attacker;
+        if (attacker == address(0)) {
+            revert ZeroAddress();
+        }
+        _attacker = attacker;
     }
 
-    function mint(
-        address to,
-        uint256 amount
+    function setTokenB(
+        address tokenB
     ) external {
-        totalSupply += amount;
-        balanceOf[to] += amount;
-        emit Transfer(address(0), to, amount);
-    }
-
-    function approve(
-        address spender,
-        uint256 amount
-    ) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
+        if (tokenB == address(0)) {
+            revert ZeroAddress();
+        }
+        _tokenB = tokenB;
     }
 
     function transfer(
         address to,
         uint256 amount
-    ) external returns (bool) {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(msg.sender, to, amount);
+    ) public override returns (bool) {
+        super.transfer(to, amount);
 
-        // Attempt reentrancy on transfer
         _attemptReentrancy();
 
         return true;
@@ -84,36 +86,60 @@ contract ReentrantAttacker {
         address from,
         address to,
         uint256 amount
-    ) external returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
-        if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
-        }
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(from, to, amount);
+    ) public override returns (bool) {
+        super.transferFrom(from, to, amount);
 
-        // Attempt reentrancy on transferFrom (during createOrder)
         _attemptReentrancy();
 
         return true;
     }
 
+    // forge-lint: disable-next-item(reentrancy-no-eth)
+    // forge-lint: disable-next-item(cyclomatic-complexity)
     function _attemptReentrancy() internal {
-        if (attacking) {
+        if (_attacking) {
             // Prevent infinite loop
             return;
         }
-        attacking = true;
 
-        if (keccak256(bytes(attackType)) == keccak256(bytes("fill"))) {
+        _attacking = true;
+
+        if (keccak256(bytes(_attackType)) == keccak256(bytes("fill"))) {
             // Try to fill the same order again
-            try BOARD.fillOrder(orderId, 0) {} catch {}
-        } else if (keccak256(bytes(attackType)) == keccak256(bytes("cancel"))) {
+            try _BOARD.fillOrder(_orderId, 1, 1, 0, address(0)) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("fillOrders"))) {
+            ISwapboard.FillOrderParams[] memory fills = new ISwapboard.FillOrderParams[](1);
+            fills[0] = ISwapboard.FillOrderParams({orderId: _orderId, amountB: 1, minAmountA: 1});
+            try _BOARD.fillOrders(fills, 0, address(0)) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("cancel"))) {
             // Try to cancel the same order again
-            try BOARD.cancelOrder(orderId) {} catch {}
+            try _BOARD.cancelOrder(_orderId, address(0)) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("cancelOrders"))) {
+            uint256[] memory ids = new uint256[](1);
+            ids[0] = _orderId;
+            try _BOARD.cancelOrders(ids, address(0)) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("createOrders"))) {
+            ISwapboard.CreateOrderParams[] memory orders = new ISwapboard.CreateOrderParams[](1);
+            orders[0] = ISwapboard.CreateOrderParams({
+                tokenA: address(this), amountA: 1, tokenB: _tokenB, amountB: 1, partialFillAllowed: false
+            });
+            try _BOARD.createOrders(orders) {} catch {}
+        } else if (keccak256(bytes(_attackType)) == keccak256(bytes("modifyOrders"))) {
+            ISwapboard.Order memory order = _BOARD.getOrder(_orderId);
+            ISwapboard.ModifyOrdersParams[] memory mods = new ISwapboard.ModifyOrdersParams[](1);
+            mods[0] = ISwapboard.ModifyOrdersParams({
+                orderId: _orderId,
+                previousAmounts: ISwapboard.OrderAmounts({
+                    amountA: order.amountA,
+                    amountB: order.amountB,
+                    availableA: order.availableA,
+                    availableB: order.availableB
+                }),
+                updatedOrder: ISwapboard.ModifyOrderParams({availableA: 1, availableB: 1, maker: address(0)})
+            });
+            try _BOARD.modifyOrders(mods, address(0)) {} catch {}
         }
 
-        attacking = false;
+        _attacking = false;
     }
 }

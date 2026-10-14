@@ -34,13 +34,10 @@ make fmt
 
 ## Code Style
 
-### Solidity
+See [STYLE.md](./STYLE.md) for naming conventions and style rules. Solidity is documented there today (based on the [Solidity Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html), plus project-specific differences).
 
-- Follow the [Solidity Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html)
-- Use `make fmt` to format code
-- Run `make lint` before opening a PR
-- Maximum line length: 100 characters
-- Use NatSpec comments for all public functions
+- Format with `make fmt`
+- Lint with `make lint` before opening a PR
 
 ### TypeScript
 

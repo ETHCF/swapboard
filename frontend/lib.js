@@ -10,19 +10,72 @@
 // Configuration
 // ============================================================================
 
+// Deployment coordinates are per-version and live on VERSION_CAPS below, not
+// here: v1 and v2 are served side by side, so a single CONTRACT_ADDRESS /
+// SUBGRAPH_URL would have to be wrong for one of them.
 const CONFIG = {
-  CONTRACT_ADDRESS: "0x000000fF3D7A2d373615141d7489Ca66683DbecF",
-  SUBGRAPH_URL:
-    "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn",
   PAGE_SIZE: 200,
   REQUEST_TIMEOUT: 30000,
   DEBOUNCE_DELAY: 500,
   SHOW_MARKET_DEVIATION: false,
+  // v2 batch limits: the most orders that fit in a single transaction.
+  // Seeded conservatively; retune once real gas numbers land.
+  MAX_BATCH_FILL: 15,
+  MAX_BATCH_CANCEL: 25,
+  MAX_BATCH_CREATE: 10,
 };
 
-const EXPECTED_CHAIN_ID = 1;
+/**
+ * Chains a build can target. The page talks to exactly one of them, picked by
+ * BUILD_TARGET below. `chain` is the EIP-3085 shape wallet_addEthereumChain takes.
+ * @constant {Object<string, Object>}
+ */
+const CHAINS = {
+  mainnet: {
+    id: 1,
+    label: "Ethereum mainnet",
+    chain: {
+      chainId: "0x1",
+      chainName: "Ethereum",
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q"],
+      blockExplorerUrls: ["https://etherscan.io"],
+    },
+  },
+  sepolia: {
+    id: 11155111,
+    label: "Sepolia",
+    chain: {
+      chainId: "0xaa36a7",
+      chainName: "Sepolia",
+      nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"],
+      blockExplorerUrls: ["https://sepolia.etherscan.io"],
+    },
+  },
+};
+
+/**
+ * The network this build points at. The trailing `deploy:network` marker is
+ * load-bearing: deploy.sh rewrites it to the network it just deployed to.
+ */
+const BUILD_TARGET = {
+  network: "mainnet", // deploy:network
+};
+
+const ACTIVE_CHAIN = CHAINS[BUILD_TARGET.network];
+
+const EXPECTED_CHAIN_ID = ACTIVE_CHAIN.id;
+
+/**
+ * Sentinel address representing native ETH in v2 orders.
+ * Native ETH has no contract, so orders carry this well-known placeholder.
+ * @constant {string}
+ */
+const NATIVE_ETH = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 
 const COINGECKO_ID_MAP = {
+  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "ethereum",
   "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "weth",
   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "usd-coin",
   "0xdac17f958d2ee523a2206206994597c13d831ec7": "tether",
@@ -135,7 +188,53 @@ function formatUsd(usdValue) {
   if (usdValue >= 0.01) {
     return "$" + usdValue.toFixed(4);
   }
-  return "$" + usdValue.toExponential(2);
+  if (usdValue >= 0.0001) {
+    return "$" + usdValue.toFixed(6).replace(/\.?0+$/, "");
+  }
+  return "$" + formatTinyDecimal(usdValue);
+}
+
+/**
+ * Formats a value below 0.0001 as a plain decimal with 4 significant digits,
+ * e.g. 0.0000017163 -> "0.000001716". Use setNumberText to display it with
+ * the zero run collapsed to a subscript count.
+ * @param {number} num - Value in (0, 0.0001)
+ * @returns {string}
+ */
+function formatTinyDecimal(num) {
+  if (!(num > 0)) return "0";
+  const zeros = -Math.floor(Math.log10(num)) - 1;
+  return num.toFixed(Math.min(100, zeros + 4)).replace(/\.?0+$/, "");
+}
+
+// "0." followed by 4+ zeros and then a significant digit
+const ZERO_RUN_RE = /(?<!\d)0\.(0{4,})(?=[1-9])/g;
+
+/**
+ * Sets an element's text, collapsing long zero runs after "0." into a
+ * subscript count (0.000001716 renders as 0.0₅1716). The zeros stay in the
+ * DOM, visually hidden, so textContent and copy/paste keep the real number;
+ * the count is drawn by CSS from data-n (see .zero-run in style.css).
+ * @param {HTMLElement} el
+ * @param {string} text
+ */
+function setNumberText(el, text) {
+  el.textContent = "";
+  let last = 0;
+  for (const match of text.matchAll(ZERO_RUN_RE)) {
+    const zeros = match[1];
+    el.appendChild(document.createTextNode(text.slice(last, match.index) + "0.0"));
+    const run = document.createElement("span");
+    run.className = "zero-run";
+    run.dataset.n = String(zeros.length);
+    const hidden = document.createElement("span");
+    hidden.className = "zero-run-digits";
+    hidden.textContent = zeros.slice(1);
+    run.appendChild(hidden);
+    el.appendChild(run);
+    last = match.index + match[0].length;
+  }
+  el.appendChild(document.createTextNode(text.slice(last)));
 }
 
 /**
@@ -162,25 +261,30 @@ function formatAmount(amount, decimals) {
  * @returns {string}
  */
 function formatNumber(num) {
-  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
 /**
- * Formats a timestamp as relative time.
- * @param {number} timestamp - Unix timestamp in seconds
- * @returns {string} Relative time string
+ * Formats a timestamp as relative time, staying relative rather than falling
+ * back to a date. Subgraph timestamps arrive as strings, so they are coerced here.
+ * @param {number|string} timestamp - Unix timestamp in seconds
+ * @returns {string} Relative time string, or "" when there is no timestamp
  */
 function formatTimeAgo(timestamp) {
-  const now = Math.floor(Date.now() / 1000);
-  const diff = now - timestamp;
+  if (!timestamp) return "";
 
-  if (diff < 60) return "just now";
+  const now = Math.floor(Date.now() / 1000);
+  const ts = typeof timestamp === "string" ? parseInt(timestamp) : timestamp;
+  const diff = now - ts;
+
+  if (diff < 0) return "just now"; // Clock skew, not the future
+
+  if (diff < 60) return diff + "s ago";
   if (diff < 3600) return Math.floor(diff / 60) + "m ago";
   if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
   if (diff < 604800) return Math.floor(diff / 86400) + "d ago";
-
-  const date = new Date(timestamp * 1000);
-  return date.toLocaleDateString();
+  if (diff < 2592000) return Math.floor(diff / 604800) + "w ago";
+  return Math.floor(diff / 2592000) + "mo ago";
 }
 
 /**
@@ -202,38 +306,42 @@ function formatRatio(num) {
   if (num >= 0.0001) {
     return num.toFixed(6).replace(/\.?0+$/, "");
   }
-  return num.toExponential(2);
+  return formatTinyDecimal(num);
 }
 
 /**
- * Parses a human-readable amount to base units.
- * @param {string} str - Human-readable amount
+ * Parses a human-readable amount string to base units.
+ * Excess decimals truncate silently unless that would zero the whole amount.
+ * @param {string} str - Amount string (e.g., "100.5", "1,000")
  * @param {number} decimals - Token decimals
- * @returns {bigint|null} Amount in base units or null if invalid
+ * @returns {bigint} Amount in base units; an empty or blank string is 0
+ * @throws {Error} On malformed input, or on dust that truncates away entirely
  */
 function parseAmount(str, decimals) {
-  if (!str || typeof str !== "string") return null;
-
-  const cleaned = str.trim().replace(/,/g, "");
-  if (!/^\d*\.?\d*$/.test(cleaned) || cleaned === "" || cleaned === ".") {
-    return null;
+  // Guard before .trim() so a non-string rejects rather than throwing TypeError
+  if (typeof str !== "string") {
+    throw new Error("Invalid amount format. Use numbers only.");
   }
-
+  str = str.trim();
+  if (!str) return BigInt(0);
+  const cleaned = str.replace(/,/g, "");
+  if (!/^\d+(\.\d+)?$/.test(cleaned)) {
+    throw new Error("Invalid amount format. Use numbers only.");
+  }
   const parts = cleaned.split(".");
-  const wholePart = parts[0] || "0";
-  let fracPart = parts[1] || "";
-
-  if (fracPart.length > decimals) {
-    fracPart = fracPart.slice(0, decimals);
+  const intPart = parts[0] || "0";
+  let decPart = parts[1] || "";
+  if (decPart.length > decimals) {
+    // Check if truncation would result in zero
+    const truncated = decPart.slice(0, decimals);
+    if (intPart === "0" && /^0*$/.test(truncated)) {
+      throw new Error(`Too many decimals. This token only supports ${decimals} decimal places.`);
+    }
+    decPart = truncated;
+  } else {
+    decPart = decPart.padEnd(decimals, "0");
   }
-
-  fracPart = fracPart.padEnd(decimals, "0");
-
-  try {
-    return BigInt(wholePart + fracPart);
-  } catch (e) {
-    return null;
-  }
+  return BigInt(intPart + decPart);
 }
 
 // ============================================================================
@@ -241,13 +349,25 @@ function parseAmount(str, decimals) {
 // ============================================================================
 
 /**
+ * Price cache with TTL tracking, shared by every price lookup in the app.
+ * @type {Map<string, {usd: number, fetchedAt: number}>}
+ */
+const priceCache = new Map();
+
+/** How long a fetched price stays usable. */
+const PRICE_CACHE_TTL_MS = 60000;
+
+/** In-flight fetch, so concurrent callers coalesce onto one request. */
+let priceFetchInProgress = null;
+
+/**
  * Returns cached price if valid, null otherwise.
  * @param {string} coinGeckoId - CoinGecko coin ID
- * @param {Map} cache - Price cache map
- * @param {number} ttlMs - Cache TTL in milliseconds
+ * @param {Map} [cache] - Price cache map
+ * @param {number} [ttlMs] - Cache TTL in milliseconds
  * @returns {{usd: number, fetchedAt: number}|null}
  */
-function getCachedPrice(coinGeckoId, cache, ttlMs) {
+function getCachedPrice(coinGeckoId, cache = priceCache, ttlMs = PRICE_CACHE_TTL_MS) {
   const cached = cache.get(coinGeckoId);
   if (!cached) return null;
   if (Date.now() - cached.fetchedAt > ttlMs) return null;
@@ -257,11 +377,11 @@ function getCachedPrice(coinGeckoId, cache, ttlMs) {
 /**
  * Gets USD price for a token address from cache.
  * @param {string} tokenAddress - Ethereum token address
- * @param {Map} cache - Price cache map
- * @param {number} ttlMs - Cache TTL in milliseconds
+ * @param {Map} [cache] - Price cache map
+ * @param {number} [ttlMs] - Cache TTL in milliseconds
  * @returns {number|null} USD price or null if unavailable
  */
-function getTokenPrice(tokenAddress, cache, ttlMs) {
+function getTokenPrice(tokenAddress, cache = priceCache, ttlMs = PRICE_CACHE_TTL_MS) {
   const id = COINGECKO_ID_MAP[tokenAddress.toLowerCase()];
   if (!id) return null;
   const cached = getCachedPrice(id, cache, ttlMs);
@@ -269,20 +389,467 @@ function getTokenPrice(tokenAddress, cache, ttlMs) {
 }
 
 /**
+ * Fetches prices for multiple CoinGecko IDs in a single request.
+ * Implements rate limiting via request coalescing.
+ * @param {string[]} coinGeckoIds - Array of CoinGecko coin IDs
+ * @param {Map} [cache] - Price cache map to populate
+ * @param {number} [ttlMs] - Cache TTL in milliseconds
+ * @returns {Promise<void>}
+ */
+async function fetchPrices(coinGeckoIds, cache = priceCache, ttlMs = PRICE_CACHE_TTL_MS) {
+  const idsToFetch = coinGeckoIds.filter((id) => !getCachedPrice(id, cache, ttlMs));
+  if (idsToFetch.length === 0) return;
+
+  if (priceFetchInProgress) {
+    await priceFetchInProgress;
+    return;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  priceFetchInProgress = (async () => {
+    try {
+      const url =
+        "https://api.coingecko.com/api/v3/simple/price?ids=" +
+        idsToFetch.join(",") +
+        "&vs_currencies=usd";
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        if (res.status === 429) {
+          console.warn("[Price] Rate limited by CoinGecko");
+        }
+        return;
+      }
+
+      const data = await res.json();
+      const now = Date.now();
+
+      for (const id of idsToFetch) {
+        if (data[id] && typeof data[id].usd === "number") {
+          cache.set(id, { usd: data[id].usd, fetchedAt: now });
+        }
+      }
+    } catch (e) {
+      clearTimeout(timeoutId);
+      if (e.name === "AbortError") {
+        console.warn("[Price] Request timed out");
+      } else {
+        console.warn("[Price] Fetch failed:", e.message);
+      }
+    }
+  })();
+
+  await priceFetchInProgress;
+  priceFetchInProgress = null;
+}
+
+/**
+ * CoinGecko coin page for a token, when one is known.
+ * Callers build their own anchor element; only the lookup and URL shape live here.
+ * @param {string} address - Token address
+ * @returns {string|null} Coin page URL, or null when the token is unlisted
+ */
+function coinGeckoUrl(address) {
+  if (typeof address !== "string") return null;
+  const id = COINGECKO_ID_MAP[address.toLowerCase()];
+  return id ? "https://www.coingecko.com/en/coins/" + id : null;
+}
+
+// ============================================================================
+// Permit registry
+// ============================================================================
+
+/**
+ * Generated permit-support data (see permit-tokens.js for how it was derived).
+ * Loaded from the preceding script tag in the browser and required under Jest.
+ * An absent file degrades to an empty registry rather than throwing: every
+ * lookup then answers "unknown", which callers already treat as "use approve".
+ * @constant {{GENERATED: string, CHAINS: Object<string, {TOKENS: Object<string,string>}>}}
+ */
+const PERMIT_DATA = (typeof module !== "undefined" && module.exports
+  ? require("./permit-tokens.js")
+  : typeof window !== "undefined" && window.SwapboardPermitTokens) || {
+  GENERATED: "",
+  CHAINS: {},
+};
+
+/**
+ * Permit flavour a token implements, or "unknown" when it is not in the registry.
+ *
+ * Verdicts are per chain, because an address that is a permit-capable token on
+ * mainnet is an unrelated contract (or nothing at all) on Sepolia. A chain the
+ * registry has no section for answers "unknown" for every address, which callers
+ * already treat as "use approve()".
+ *
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {string} "eip2612" | "dai" | "both" | "nonstandard" | "unverified" | "none" | "unknown"
+ */
+function permitKindFor(address, chainId = EXPECTED_CHAIN_ID) {
+  if (typeof address !== "string") return "unknown";
+  const section = (PERMIT_DATA.CHAINS || {})[String(chainId)];
+  if (!section) return "unknown";
+  return section.TOKENS[address.toLowerCase()] || "unknown";
+}
+
+/**
+ * Whether a token can be approved by signature instead of an approve() send.
+ *
+ * True only for the flavours a signature flow can actually drive, which here means
+ * the ones Swapboard's `Permit` struct can express: it is EIP-2612 shaped
+ * (value, deadline, v, r, s), so:
+ *
+ *   "dai"         false. DAI-style permit(holder,spender,nonce,expiry,allowed,...)
+ *                 takes a different argument list and there is no overload for it
+ *                 on chain, so signing one would revert the swap.
+ *   "both"        true -- those tokens do expose the 2612 entry point as well.
+ *   "nonstandard" false. Yearn-style permit(...,bytes) tokens answer
+ *                 DOMAIN_SEPARATOR() and nonces() like a 2612 token but revert
+ *                 when called as one.
+ *   "unverified"  false, and so is "unknown": an unrecognised token falls back to
+ *                 Permit2 or approve().
+ *
+ * The bias is deliberate -- a false negative costs one extra transaction, a false
+ * positive costs a failed swap.
+ *
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {boolean} True when an EIP-2612 signature can replace approve()
+ */
+function supportsPermit(address, chainId = EXPECTED_CHAIN_ID) {
+  return isSignablePermitKind(permitKindFor(address, chainId));
+}
+
+/**
+ * Whether a registry flavour maps onto Swapboard's EIP-2612 `Permit` struct.
+ * Split out so supportsPermit() and choosePullStrategy() cannot drift apart —
+ * one reads an address, the other an already-resolved kind.
+ * @param {string} kind - Flavour from permitKindFor()
+ * @returns {boolean} True when the 2612 entry point can be signed for
+ */
+function isSignablePermitKind(kind) {
+  return kind === "eip2612" || kind === "both";
+}
+
+// ============================================================================
+// Known-token registry
+// ============================================================================
+
+/**
+ * Generated token-list data (see known-tokens.js for its sources). Loaded the
+ * same way as PERMIT_DATA, and an absent file degrades the same way: to an empty
+ * registry, in which every token is unknown and so gets the warning.
+ * @constant {{GENERATED: string, CHAINS: Object<string, Object<string, Object>>}}
+ */
+const KNOWN_TOKEN_DATA = (typeof module !== "undefined" && module.exports
+  ? require("./known-tokens.js")
+  : typeof window !== "undefined" && window.SwapboardKnownTokens) || {
+  GENERATED: "",
+  CHAINS: {},
+};
+
+/**
+ * Token-list metadata for an address, or null when no list we ship carries it.
+ *
+ * Per chain for the same reason as permitKindFor: an address only means
+ * something on the chain it was deployed to.
+ *
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {{symbol: string, name: string, decimals: number}|null} Listed metadata
+ */
+function knownTokenInfo(address, chainId = EXPECTED_CHAIN_ID) {
+  if (typeof address !== "string") return null;
+  const section = (KNOWN_TOKEN_DATA.CHAINS || {})[String(chainId)];
+  if (!section) return null;
+  return section[address.toLowerCase()] || null;
+}
+
+/**
+ * Whether a token appears on one of the public token lists we ship.
+ * @param {*} address - Token address
+ * @param {number} [chainId] - Chain the address lives on; defaults to the build target
+ * @returns {boolean} True when the address is listed for that chain
+ */
+function isKnownToken(address, chainId = EXPECTED_CHAIN_ID) {
+  return knownTokenInfo(address, chainId) !== null;
+}
+
+// ============================================================================
+// Signature-based approvals
+// ============================================================================
+
+/**
+ * Canonical Permit2, identical on every chain it is deployed to.
+ * Mirrors `_PERMIT2` in contracts/src/Swapboard.sol — the board hardcodes it too,
+ * so a mismatch here means a signature no entry point can spend.
+ * @constant {string}
+ */
+const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+
+/**
+ * Longest a Permit2 batch can be, because the contract tracks which entries were
+ * used in a single uint256 bitmap and reverts `TooManyPermit2` past it.
+ * @constant {number}
+ */
+const MAX_PERMIT2_BATCH = 256;
+
+/**
+ * How long a fresh permit signature stays valid, in seconds.
+ * Long enough to survive a slow wallet confirmation and a congested block, short
+ * enough that an abandoned signature stops being spendable the same day.
+ * @constant {number}
+ */
+const PERMIT_TTL_SECONDS = 30 * 60;
+
+/**
+ * EIP-712 type definition for an EIP-2612 permit.
+ * Matches PERMIT_TYPEHASH in contracts/test/mocks/MockERC20Permit.sol.
+ * @constant {Object}
+ */
+const PERMIT_TYPES = {
+  Permit: [
+    { name: "owner", type: "address" },
+    { name: "spender", type: "address" },
+    { name: "value", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+};
+
+/**
+ * EIP-712 type definition for a Permit2 SignatureTransfer.
+ * Matches PERMIT_TRANSFER_FROM_TYPEHASH in contracts/test/mocks/MockPermit2.sol.
+ * @constant {Object}
+ */
+const PERMIT2_TYPES = {
+  PermitTransferFrom: [
+    { name: "permitted", type: "TokenPermissions" },
+    { name: "spender", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+  TokenPermissions: [
+    { name: "token", type: "address" },
+    { name: "amount", type: "uint256" },
+  ],
+};
+
+/**
+ * EIP-712 domain for Permit2.
+ *
+ * Deliberately has no `version` field — Permit2's own domain omits it, and adding
+ * one changes the separator, so every signature would be rejected.
+ *
+ * @param {number} chainId - Chain the signature is for
+ * @returns {{name: string, chainId: number, verifyingContract: string}}
+ */
+function permit2Domain(chainId) {
+  return { name: "Permit2", chainId, verifyingContract: PERMIT2_ADDRESS };
+}
+
+/**
+ * Builds the message half of an EIP-2612 permit signature.
+ * @param {Object} args
+ * @param {string} args.owner - Token holder signing
+ * @param {string} args.spender - Address being approved (the board)
+ * @param {bigint|string} args.value - Allowance being signed for
+ * @param {bigint|string} args.nonce - Current nonces(owner) on the token
+ * @param {number} args.deadline - Unix timestamp the signature expires at
+ * @returns {Object} EIP-712 message
+ */
+function buildPermitMessage({ owner, spender, value, nonce, deadline }) {
+  return {
+    owner,
+    spender,
+    value: BigInt(value).toString(),
+    nonce: BigInt(nonce).toString(),
+    deadline,
+  };
+}
+
+/**
+ * Builds the message half of a Permit2 SignatureTransfer signature.
+ * @param {Object} args
+ * @param {string} args.token - ERC20 being pulled
+ * @param {bigint|string} args.amount - Maximum the signature authorises
+ * @param {string} args.spender - Address allowed to spend it (the board)
+ * @param {bigint|string} args.nonce - Unordered nonce; see permit2Nonce
+ * @param {number} args.deadline - Unix timestamp the signature expires at
+ * @returns {Object} EIP-712 message
+ */
+function buildPermit2Message({ token, amount, spender, nonce, deadline }) {
+  return {
+    permitted: { token, amount: BigInt(amount).toString() },
+    spender,
+    nonce: BigInt(nonce).toString(),
+    deadline,
+  };
+}
+
+/**
+ * Picks a Permit2 nonce.
+ *
+ * Permit2 nonces are unordered — it stores a spent-bit per nonce rather than a
+ * counter — so a random draw is the right shape. A counter would collide as soon
+ * as two signatures were outstanding at once, which a batch does routinely.
+ *
+ * @param {Uint8Array|number[]} randomBytes - At least 32 bytes of randomness
+ * @returns {bigint} Nonce to sign
+ */
+function permit2Nonce(randomBytes) {
+  let nonce = 0n;
+  for (let i = 0; i < 32; i++) {
+    nonce = (nonce << 8n) | BigInt(randomBytes[i] & 0xff);
+  }
+  return nonce;
+}
+
+/**
+ * Expiry timestamp for a fresh signature.
+ * @param {number} nowSec - Current unix time in seconds
+ * @param {number} [ttlSec] - Lifetime
+ * @returns {number} Unix timestamp
+ */
+function permitDeadline(nowSec, ttlSec = PERMIT_TTL_SECONDS) {
+  return Math.floor(nowSec) + ttlSec;
+}
+
+/**
+ * Decides how one token's amount should reach the board.
+ *
+ * The single decision point for the whole approval story — if you are asking why
+ * a token took a given path, read this and nothing else. Order of preference:
+ *
+ *   "none"    native ETH (rides msg.value), a zero pull, or a standing allowance
+ *             that already covers it. Costs the user nothing and asks for nothing.
+ *   "permit"  the token implements EIP-2612, so one signature replaces the
+ *             approval transaction entirely.
+ *   "permit2" the token does not, but the user has already approved canonical
+ *             Permit2 for it, so a SignatureTransfer can pull it.
+ *   "approve" nothing else applies: send the approve() transaction, as before.
+ *
+ * @param {Object} args
+ * @param {boolean} args.isNative - Whether the token is the native-ETH sentinel
+ * @param {bigint|string} args.allowance - Current allowance granted to the board
+ * @param {bigint|string} args.amount - Amount this call needs to pull
+ * @param {string} args.permitKind - Flavour from permitKindFor()
+ * @param {bigint|string} args.permit2Allowance - Allowance granted to Permit2
+ * @returns {string} "none" | "permit" | "permit2" | "approve"
+ */
+function choosePullStrategy({ isNative, allowance, amount, permitKind, permit2Allowance }) {
+  if (isNative) return "none";
+
+  const needed = BigInt(amount);
+  if (needed <= 0n) return "none";
+  if (BigInt(allowance) >= needed) return "none";
+
+  if (isSignablePermitKind(permitKind)) return "permit";
+  if (BigInt(permit2Allowance) >= needed) return "permit2";
+  return "approve";
+}
+
+/**
+ * Plans the pulls for a batch call.
+ *
+ * Three constraints shape this. A call takes either `TokenPermit[]` or
+ * `TokenPermit2[]` and never both, so the batch commits to one signature flavour.
+ * The contract rejects a batch that carries a duplicate token
+ * (`DuplicatePermitToken`) or an entry nothing spends (`UnusedPermit` /
+ * `UnusedPermit2`), so entries are aggregated per token and emitted only for
+ * tokens actually pulled. And a Permit2 batch caps at MAX_PERMIT2_BATCH.
+ *
+ * Whichever signature group is larger wins the overload; the losing group falls
+ * back to approve() transactions, since that costs fewer transactions than
+ * splitting the call in two. A tie goes to EIP-2612, matching the single-token
+ * preference order.
+ *
+ * The two approve lists are kept apart because they are settled by different
+ * callers. `approvals` are tokens that could never be signed for; a batch is
+ * chunked into several transactions, and those want one approval covering the
+ * whole batch, sent once outside the chunk loop. `demoted` are tokens that could
+ * have been signed for but lost the vote in this chunk — which chunk they lose in
+ * depends on the chunk, so only the chunk can settle them.
+ *
+ * @param {Array<Object>} legs - {token, amount, isNative, allowance, permitKind, permit2Allowance}
+ * @returns {{strategy: string, entries: Array<Object>, approvals: Array<Object>, demoted: Array<Object>}}
+ *          `strategy` is "none" | "permit" | "permit2"; `entries` are the tokens
+ *          taking that signature path.
+ */
+function planBatchPulls(legs) {
+  const byToken = new Map();
+
+  for (const leg of legs) {
+    if (leg.isNative) continue;
+    const key = leg.token.toLowerCase();
+    const seen = byToken.get(key);
+    if (seen) {
+      seen.amount += BigInt(leg.amount);
+    } else {
+      byToken.set(key, { ...leg, token: leg.token, amount: BigInt(leg.amount) });
+    }
+  }
+
+  const permits = [];
+  const permit2s = [];
+  const approvals = [];
+
+  for (const leg of byToken.values()) {
+    const strategy = choosePullStrategy(leg);
+    if (strategy === "permit") permits.push(leg);
+    else if (strategy === "permit2") permit2s.push(leg);
+    else if (strategy === "approve") approvals.push(leg);
+  }
+
+  // Past the bitmap limit the contract reverts TooManyPermit2, so the tail
+  // approves instead of making the whole call unsendable.
+  const overflow = permit2s.splice(MAX_PERMIT2_BATCH);
+
+  if (permits.length === 0 && permit2s.length === 0) {
+    return { strategy: "none", entries: [], approvals, demoted: overflow };
+  }
+
+  if (permits.length >= permit2s.length) {
+    return { strategy: "permit", entries: permits, approvals, demoted: permit2s.concat(overflow) };
+  }
+
+  return { strategy: "permit2", entries: permit2s, approvals, demoted: permits.concat(overflow) };
+}
+
+/**
+ * Human-readable price of one denominator token in numerator tokens.
+ * Both sides are base units, so their decimals divide back out as one factor.
+ * @param {string|bigint} amountNum - Numerator amount, in base units
+ * @param {string|bigint} amountDen - Denominator amount, in base units
+ * @param {number} decNum - Decimals of the numerator token
+ * @param {number} decDen - Decimals of the denominator token
+ * @returns {number} Price, or 0 when the denominator is zero
+ */
+function priceRatio(amountNum, amountDen, decNum, decDen) {
+  const den = BigInt(amountDen);
+  if (den === 0n) return 0;
+  return (Number(BigInt(amountNum)) / Number(den)) * Math.pow(10, decDen - decNum);
+}
+
+/**
  * Calculates the market rate deviation for an order.
  * @param {Object} order - Order with tokenA/tokenB and amounts
- * @param {function} getPriceFn - Function to get token price
+ * @param {function} [getPriceFn] - Function to get token price
  * @returns {{deviation: number, label: string}|null} Deviation percentage and label
  */
-function calculateMarketDeviation(order, getPriceFn) {
+function calculateMarketDeviation(order, getPriceFn = getTokenPrice) {
   const priceA = getPriceFn(order.tokenA.address);
   const priceB = getPriceFn(order.tokenB.address);
 
   if (priceA === null || priceB === null) return null;
   if (priceA === 0 || priceB === 0) return null;
 
-  const amountA = BigInt(order.amountA);
-  const amountB = BigInt(order.amountB);
+  // Quoted off what is left, matching the Price column it sits beside.
+  const amountA = BigInt(order.availableA);
+  const amountB = BigInt(order.availableB);
 
   if (amountA === 0n || amountB === 0n) return null;
 
@@ -306,21 +873,65 @@ function calculateMarketDeviation(order, getPriceFn) {
 }
 
 // ============================================================================
+// CSV Export
+// ============================================================================
+
+/**
+ * Leading characters a spreadsheet may read as the start of a formula. Tab and
+ * carriage return are in the set because some importers strip them and then
+ * evaluate what follows.
+ * @constant {string[]}
+ */
+const CSV_FORMULA_PREFIXES = ["=", "+", "-", "@", "\t", "\r"];
+
+/**
+ * Renders one CSV cell so it is read back as the text it holds.
+ *
+ * Exported cells carry token symbols, which whoever deployed the token chose:
+ * a symbol like `=HYPERLINK(...)` would otherwise run as a formula when the
+ * file is opened. Such a cell is prefixed with a single quote, which the
+ * spreadsheet shows as text. A cell holding a comma, quote or line break is then
+ * quoted, so it cannot spill into the next column or row.
+ *
+ * @param {*} value - Cell value; null and undefined become empty
+ * @returns {string} Safe CSV cell
+ */
+function csvCell(value) {
+  let str = value === null || value === undefined ? "" : String(value);
+  if (CSV_FORMULA_PREFIXES.some((p) => str.startsWith(p))) str = "'" + str;
+  if (/[",\r\n]/.test(str)) str = '"' + str.replace(/"/g, '""') + '"';
+  return str;
+}
+
+/**
+ * Builds a CSV document, every cell (headers included) through csvCell().
+ * @param {string[]} headers - Column names
+ * @param {Array<Array<*>>} rows - Cell values, one array per row
+ * @returns {string} CSV text, newline-separated
+ */
+function toCsv(headers, rows) {
+  return [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+// ============================================================================
 // Token Search Functions
 // ============================================================================
 
 /**
  * Searches tokens by symbol or name.
+ * `prepend` seeds entries that are not in `tokenList` at all (the app uses it for
+ * native ETH); seeded entries count toward `limit` like any other result.
  * @param {string} query - Search query
  * @param {Array} tokenList - List of tokens to search
  * @param {number} limit - Max results
+ * @param {Array} [prepend] - Tokens to place ahead of the matches
  * @returns {Array} Matching tokens
  */
-function searchTokens(query, tokenList, limit = 10) {
+function searchTokens(query, tokenList, limit = 10, prepend = []) {
   if (!query || query.length < 1) return [];
 
   const q = query.toLowerCase();
-  const results = [];
+  const results = [...prepend];
 
   // Exact symbol matches first
   for (const t of tokenList) {
@@ -349,6 +960,51 @@ function searchTokens(query, tokenList, limit = 10) {
   }
 
   return results;
+}
+
+// ============================================================================
+// Order Helpers
+// ============================================================================
+
+/**
+ * Order lifecycle states, spelled as the v2 subgraph's `OrderStatus` enum.
+ *
+ * Normalized onto every order regardless of version, so nothing downstream has
+ * to reconstruct a state from `active` + `taker`. Note `CANCELED`, one `l` —
+ * the schema's spelling, kept verbatim so a value can be sent straight back in
+ * a `where` clause.
+ *
+ * @constant {Object<string, string>}
+ */
+const ORDER_STATUS = {
+  OPEN: "OPEN",
+  PARTIALLY_FILLED: "PARTIALLY_FILLED",
+  FILLED: "FILLED",
+  CANCELED: "CANCELED",
+};
+
+/**
+ * Display text for an order's lifecycle state.
+ *
+ * Reads the normalized `status`, which normalizeOrder guarantees on orders
+ * from either version — v2 indexes the enum directly, v1 has it derived from
+ * `active` + `taker`. The returned strings are UI copy, deliberately separate
+ * from the subgraph's enum spelling (`CANCELED`, one `l`).
+ *
+ * @param {Object} order - Order with a normalized `status`
+ * @returns {"Open"|"Partially Filled"|"Filled"|"Cancelled"}
+ */
+function orderStatus(order) {
+  switch (order.status) {
+    case ORDER_STATUS.PARTIALLY_FILLED:
+      return "Partially Filled";
+    case ORDER_STATUS.FILLED:
+      return "Filled";
+    case ORDER_STATUS.CANCELED:
+      return "Cancelled";
+    default:
+      return "Open";
+  }
 }
 
 // ============================================================================
@@ -419,9 +1075,8 @@ function getWatchedOrders(storage) {
  */
 function watchOrder(order, storage) {
   const watched = getWatchedOrders(storage);
-  const status = order.active ? "Open" : order.taker ? "Filled" : "Cancelled";
   watched[order.orderId] = {
-    status: status,
+    status: orderStatus(order),
     symbol: order.tokenA.symbol + "/" + order.tokenB.symbol,
   };
   try {
@@ -516,159 +1171,345 @@ function loadSortPreferences(storage) {
 // ============================================================================
 
 /**
+ * The price of an order in the direction the Price column quotes it.
+ * @param {Object} order - Order with tokenA/tokenB and amounts
+ * @param {function(string, string): ("A"|"B"|null)} quoteSideFn - Picks the quote side
+ * @returns {number} Price in the quoted direction, or 0 when a side is empty
+ */
+function quotedPrice(order, quoteSideFn) {
+  const { tokenA, tokenB, availableA, availableB } = order;
+  return quoteSideFn(tokenA.address, tokenB.address) === "A"
+    ? priceRatio(availableA, availableB, tokenA.decimals, tokenB.decimals)
+    : priceRatio(availableB, availableA, tokenB.decimals, tokenA.decimals);
+}
+
+/**
  * Sorts orders by the specified column and direction.
+ * Amounts compare in human units, since base units are not comparable across
+ * tokens of differing precision. The defaults for the two injected functions
+ * match what the app produces before prices load.
  * @param {Array} orders - Orders to sort
  * @param {string} column - Column to sort by
  * @param {string} direction - 'asc' or 'desc'
+ * @param {function(string): (number|null)} [getPriceFn] - USD price for a token
+ * @param {function(string, string): ("A"|"B"|null)} [quoteSideFn] - Quote side for a pair
  * @returns {Array} Sorted orders
  */
-function sortOrders(orders, column, direction) {
-  const sorted = [...orders];
+function sortOrders(orders, column, direction, getPriceFn = () => null, quoteSideFn = () => null) {
+  const dir = direction === "asc" ? 1 : -1;
 
-  sorted.sort((a, b) => {
-    let aVal, bVal;
+  /** Amount in human units, so tokens of differing precision compare. */
+  const human = (amount, decimals) => Number(BigInt(amount)) / Math.pow(10, decimals);
+
+  /** USD value of what is still on offer; -1 sinks orders whose price is unknown. */
+  const usdValue = (o) => {
+    const price = getPriceFn(o.tokenA.address);
+    return price !== null && price !== undefined
+      ? human(o.availableA, o.tokenA.decimals) * price
+      : -1;
+  };
+
+  return [...orders].sort((a, b) => {
+    let valA, valB;
 
     switch (column) {
       case "orderId":
-        aVal = parseInt(a.orderId);
-        bVal = parseInt(b.orderId);
+        valA = parseInt(a.orderId);
+        valB = parseInt(b.orderId);
         break;
       case "maker":
-        aVal = a.maker.toLowerCase();
-        bVal = b.maker.toLowerCase();
+        valA = a.maker.toLowerCase();
+        valB = b.maker.toLowerCase();
         break;
       case "tokenA":
-        aVal = (a.tokenA.symbol || "").toLowerCase();
-        bVal = (b.tokenA.symbol || "").toLowerCase();
+        valA = (a.tokenA.symbol || "").toLowerCase();
+        valB = (b.tokenA.symbol || "").toLowerCase();
         break;
       case "amountA":
-        aVal = BigInt(a.amountA);
-        bVal = BigInt(b.amountA);
-        if (aVal < bVal) return direction === "asc" ? -1 : 1;
-        if (aVal > bVal) return direction === "asc" ? 1 : -1;
-        return 0;
+        // The column shows what is left, so that is what it sorts on.
+        valA = human(a.availableA, a.tokenA.decimals);
+        valB = human(b.availableA, b.tokenA.decimals);
+        break;
       case "tokenB":
-        aVal = (a.tokenB.symbol || "").toLowerCase();
-        bVal = (b.tokenB.symbol || "").toLowerCase();
+        valA = (a.tokenB.symbol || "").toLowerCase();
+        valB = (b.tokenB.symbol || "").toLowerCase();
         break;
       case "amountB":
-        aVal = BigInt(a.amountB);
-        bVal = BigInt(b.amountB);
-        if (aVal < bVal) return direction === "asc" ? -1 : 1;
-        if (aVal > bVal) return direction === "asc" ? 1 : -1;
-        return 0;
+        valA = human(a.availableB, a.tokenB.decimals);
+        valB = human(b.availableB, b.tokenB.decimals);
+        break;
       case "usdVal":
-        aVal = a._usdValue || 0;
-        bVal = b._usdValue || 0;
+        valA = usdValue(a);
+        valB = usdValue(b);
         break;
       case "price":
-        aVal = a._price || 0;
-        bVal = b._price || 0;
+        valA = quotedPrice(a, quoteSideFn);
+        valB = quotedPrice(b, quoteSideFn);
         break;
       default:
         return 0;
     }
 
-    if (aVal < bVal) return direction === "asc" ? -1 : 1;
-    if (aVal > bVal) return direction === "asc" ? 1 : -1;
-    return 0;
+    if (typeof valA === "string") {
+      return valA.localeCompare(valB) * dir;
+    }
+    return (valA - valB) * dir;
   });
-
-  return sorted;
 }
 
 // ============================================================================
 // Error Parsing
 // ============================================================================
 
+/**
+ * Contract error selectors, across both protocol versions.
+ *
+ * Selectors are globally unique, so the two versions' errors share one table
+ * rather than being split per version: a revert carries no version tag, and
+ * matching against the union cannot produce a false hit.
+ *
+ * @constant {Object<string, string>}
+ */
 const ERROR_SIGNATURES = {
+  // Shared by v1 and v2
   "0xd92e233d": "ZeroAddress",
   "0x1f2a2005": "ZeroAmount",
   "0x201b580a": "SameToken",
-  "0x8a8b41ec": "NotAContract",
   "0x6e65ed84": "BalanceMismatch",
   "0x4e90badc": "OrderNotFound",
-  "0xd2c02610": "OrderNotActive",
   "0x98cd7222": "NotMaker",
+  "0x8230dc8f": "ETHAmountMismatch",
+  "0x1ab7da6b": "DeadlineExpired",
+
+  // v1 only: ETH is reached by wrapping, so the failures are WETH-shaped.
   "0x6bdafcae": "ZeroETH",
   "0xcfc02c6e": "NotWETH",
-  "0x8230dc8f": "ETHAmountMismatch",
   "0x1c988062": "ETHTransferFailed",
+
+  // v1 only: v2 dropped the code-size check on token addresses.
+  "0x8a8b41ec": "NotAContract",
+
+  // v1 only: v2 deletes an order when it closes, so a filled or canceled id
+  // reverts OrderNotFound instead.
+  "0xd2c02610": "OrderNotActive",
+
+  // v2 only: partial fills, slippage bounds, batch entry points, and maker edits.
+  "0x9d7a930f": "SelfFill",
+  "0xed38596f": "PartialFillNotAllowed",
+  "0x535a34f0": "FillAmountTooHigh",
+  "0x19113a72": "FillAmountMismatch",
+  "0x54b9c511": "DuplicateOrderId",
+
+  // v2 only: modifyOrder(s) and setPartialFillAllowed.
+  "0xa88ee577": "NoChange",
+  "0x457802f0": "OrderStateMismatch",
+
+  // v2 only, from OpenZeppelin. Address.sendValue and SafeERC20 replace v1's
+  // hand-rolled ETHTransferFailed, and the transient reentrancy guard has its
+  // own error rather than a require string.
+  "0xd6bda275": "FailedCall",
+  "0xcf479181": "InsufficientBalance",
+  "0x5274afe7": "SafeERC20FailedOperation",
+  "0x3ee5aeb5": "ReentrancyGuardReentrantCall",
+
+  // v2 only: EIP-2612 and Permit2 signature entry points.
+  "0x62898bac": "PermitOnNative",
+  "0xddafbaef": "InvalidPermit",
+  "0xb1df4e7e": "UnusedPermit",
+  "0xc87bfe90": "DuplicatePermitToken",
+  "0x32d1c8da": "InvalidPermit2",
+  "0xc1abc68b": "UnusedPermit2",
+  "0x35d2fb43": "TooManyPermit2",
 };
 
+/**
+ * User-facing text per contract error. A function receives the decoded
+ * arguments, so an error carrying an order id can name it.
+ * @constant {Object<string, string|function(bigint[]): string>}
+ */
 const ERROR_MESSAGES = {
-  ZeroAddress: "Token address cannot be zero",
-  ZeroAmount: "Amount cannot be zero",
-  SameToken: "Cannot swap token for itself",
-  NotAContract: "Address is not a contract",
-  BalanceMismatch: "Token transfer amount mismatch (fee-on-transfer tokens not supported)",
-  OrderNotFound: "Order does not exist",
-  OrderNotActive: "Order is not active",
-  NotMaker: "Only the order maker can cancel",
+  ZeroAddress: "Invalid token address",
+  ZeroAmount: "Amount too small (check decimal places)",
+  SameToken: "Offered and wanted tokens must be different",
+  BalanceMismatch:
+    "Token transfer amount mismatch (fee-on-transfer / mid-transfer rebase / phantom tokens not supported on deposits or tokenB payments)",
+  OrderNotFound: (args) => `Order #${args[0]} not found`,
+  OrderNotActive: (args) => `Order #${args[0]} is no longer active`,
+  OrderStateMismatch: (args) =>
+    `Order #${args[0]} changed while you were editing it. Refresh and try again.`,
+  NotMaker: "You are not the maker of this order",
+  SelfFill: "You cannot fill your own order",
+  NotAContract: "Token address is not a contract",
   ZeroETH: "ETH amount cannot be zero",
   NotWETH: "Token is not WETH",
   ETHAmountMismatch: "ETH amount does not match required amount",
   ETHTransferFailed: "ETH transfer to recipient failed",
+  DeadlineExpired: "Transaction deadline passed. Please try again.",
+
+  // v2. The two fill errors both mean the order moved between quote and
+  // submission, so each says what to do rather than restating the numbers.
+  PartialFillNotAllowed: (args) => `Order #${args[0]} must be filled in full`,
+  FillAmountTooHigh: (args) =>
+    `Order #${args[0]} has less left than you asked for. Refresh and try again.`,
+  FillAmountMismatch: (args) =>
+    `Order #${args[0]} repriced while you were confirming. Refresh and try again.`,
+  DuplicateOrderId: (args) => `Order #${args[0]} appears twice in this batch`,
+  NoChange: "Nothing to change: the order already has these settings",
+  FailedCall: "ETH transfer to recipient failed",
+  InsufficientBalance: "The contract holds less ETH than this transfer needs",
+  SafeERC20FailedOperation: "Token transfer failed",
+  ReentrancyGuardReentrantCall: "Reentrant call rejected",
+  PermitOnNative: "Cannot permit native ETH",
+  InvalidPermit: "Permit signature is invalid",
+  UnusedPermit: "Permit signature was not used in this transaction",
+  DuplicatePermitToken: "Duplicate permit token",
+  InvalidPermit2: "Permit2 signature is missing",
+  UnusedPermit2: "Permit2 signature was not used in this transaction",
+  TooManyPermit2: "Too many Permit2 entries (maximum 256)",
 };
 
 /**
- * Decodes a contract error from its data.
- * @param {string} data - Error data hex string
- * @returns {{name: string, message: string}|null}
+ * Splits ABI-encoded error arguments into 32-byte words. Every argument these
+ * errors carry is a uint256 or address, so words read positionally with no ABI coder.
+ * @param {string} data - Error data hex string, selector included
+ * @returns {bigint[]} One bigint per word; addresses come back as numbers too
  */
-function decodeContractError(data) {
-  if (!data || typeof data !== "string") return null;
-
-  const selector = data.slice(0, 10).toLowerCase();
-  const errorName = ERROR_SIGNATURES[selector];
-
-  if (errorName) {
-    return {
-      name: errorName,
-      message: ERROR_MESSAGES[errorName] || errorName,
-    };
+function decodeErrorArgs(data) {
+  const body = data.slice(10);
+  const args = [];
+  for (let i = 0; i + 64 <= body.length; i += 64) {
+    try {
+      args.push(BigInt("0x" + body.slice(i, i + 64)));
+    } catch {
+      break;
+    }
   }
-
-  return null;
+  return args;
 }
 
 /**
- * Parses a contract error from an exception.
+ * Decodes a contract error from its revert data.
+ * Matches the 4-byte selector rather than an ABI, so it needs no ethers.
+ * @param {string} data - Error data hex string
+ * @returns {{name: string, message: string}|null} Null when unrecognized
+ */
+function decodeContractError(data) {
+  if (!data || typeof data !== "string") return null;
+  if (data === "0x") return null;
+
+  const selector = data.slice(0, 10).toLowerCase();
+  const errorName = ERROR_SIGNATURES[selector];
+  if (!errorName) return null;
+
+  const template = ERROR_MESSAGES[errorName];
+  const message =
+    typeof template === "function" ? template(decodeErrorArgs(data)) : template || errorName;
+
+  return { name: errorName, message };
+}
+
+/**
+ * Revert data out of an exception, wherever the provider happened to put it.
+ * ethers v6 uses three different fields, and some providers only the message text.
+ * @param {Error} e - Exception object
+ * @returns {string|null} Hex revert data, or null when none is present
+ */
+function extractRevertData(e) {
+  const direct = e.data || e.error?.data || e.info?.error?.data;
+  if (typeof direct === "string" && direct.startsWith("0x")) return direct;
+
+  const match = (e.message || "").match(/data="(0x[a-fA-F0-9]+)"/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Provider and RPC failures with no revert data, matched on their text.
+ * Ordered most specific first: "allowance" must precede the bare "insufficient".
+ * @constant {Array<{test: function(string): boolean, message: string}>}
+ */
+const ERROR_PATTERNS = [
+  {
+    test: (m) => m.includes("allowance"),
+    message: "Token approval failed",
+  },
+  {
+    test: (m) => m.includes("insufficient funds") || m.includes("insufficient funds for gas"),
+    message: "Insufficient funds for transaction",
+  },
+  {
+    test: (m) =>
+      m.includes("insufficient") ||
+      m.includes("exceeds balance") ||
+      m.includes("transfer amount exceeds"),
+    message: "Insufficient token balance",
+  },
+  { test: (m) => m.includes("nonce"), message: "Transaction conflict, try again" },
+  {
+    test: (m) => m.includes("could not decode result data") || m.includes("bad_data"),
+    message: "Token contract not found on this network",
+  },
+  {
+    test: (m) => m.includes("missing revert data"),
+    message: "Transaction failed. Order may already be filled or cancelled.",
+  },
+  {
+    test: (m) => m.includes("gas") && m.includes("estimation"),
+    message: "Transaction would fail. Check order status and try again.",
+  },
+  {
+    test: (m) => m.includes("network") || m.includes("disconnected"),
+    message: "Network error. Check your connection.",
+  },
+  { test: (m) => m.includes("timeout"), message: "Request timed out. Please try again." },
+  {
+    test: (m) => m.includes("replacement") && m.includes("underpriced"),
+    message: "Gas price too low. Try again with higher gas.",
+  },
+];
+
+/** Longest technical message worth showing the user verbatim. */
+const MAX_SHORT_MESSAGE = 100;
+
+/**
+ * Turns a transaction exception into something worth showing a user, trying the
+ * most trustworthy signal first: revert data, then error codes, then a
+ * `reason="..."` string, then text patterns, then a short-enough `shortMessage`.
+ * Never falls through to the raw `message`, which is multi-line ethers noise.
  * @param {Error} e - Exception object
  * @returns {string} User-friendly error message
  */
 function parseContractError(e) {
-  // Check for revert data
-  if (e.data) {
-    const decoded = decodeContractError(e.data);
-    if (decoded) return decoded.message;
-  }
+  if (!e) return "Transaction failed. Please try again.";
 
-  // Check info.error for nested errors
-  if (e.info?.error?.data) {
-    const decoded = decodeContractError(e.info.error.data);
-    if (decoded) return decoded.message;
-  }
+  const decoded = decodeContractError(extractRevertData(e));
+  if (decoded) return decoded.message;
 
-  // User rejection
+  // Before any text matching: a terse code-4001 wallet is still a rejection
   if (e.code === 4001 || e.code === "ACTION_REJECTED") {
-    return "Transaction rejected by user";
+    return "Transaction cancelled";
   }
 
-  // Insufficient funds
-  if (e.code === -32000 || e.message?.includes("insufficient funds")) {
-    return "Insufficient funds for transaction";
+  const msg = (e.reason || e.message || "").toLowerCase();
+  if (msg.includes("user rejected") || msg.includes("user denied")) {
+    return "Transaction cancelled";
   }
 
-  // Gas estimation failures
-  if (e.message?.includes("execution reverted")) {
-    const match = e.message.match(/reason="([^"]+)"/);
-    if (match) return match[1];
-    return "Transaction would fail";
+  // A require() string from the chain beats anything matched below it
+  const reasonMatch = (e.message || "").match(/reason="([^"]+)"/);
+  if (reasonMatch) return reasonMatch[1];
+
+  for (const { test, message } of ERROR_PATTERNS) {
+    if (test(msg)) return message;
   }
 
-  // Default
-  return e.shortMessage || e.message || "Transaction failed";
+  if (msg.includes("execution reverted")) {
+    return "Transaction failed. The order may no longer be available.";
+  }
+
+  if (e.shortMessage && e.shortMessage.length < MAX_SHORT_MESSAGE) {
+    return e.shortMessage;
+  }
+  return "Transaction failed. Please try again.";
 }
 
 // ============================================================================
@@ -698,30 +1539,701 @@ function validateConfig(config, isLocal) {
 }
 
 // ============================================================================
+// Protocol Version
+// ============================================================================
+//
+// Swapboard v1 is deployed and live; v2 is not. The two differ in three ways
+// that reach all the way up into the UI, so the version is resolved once at
+// startup and everything downstream reads it through VERSION_CAPS:
+//
+//   1. Subgraph shape. The two schemas share almost no field names: v2 splits
+//      the original size (amountA/amountB) from the remainder
+//      (availableA/availableB), makes `maker` an Account relation, moves the
+//      taker onto a Fill entity, and indexes a status enum. graph-node rejects
+//      an entire query on one unknown field, so asking either version for the
+//      other's shape returns nothing at all, not a partial result.
+//      orderQuerySelection() and normalizeOrder() are the fix.
+//   2. Contract surface. v1 has no partial fills and no batch entry points.
+//   3. Native ETH. v1 has no NATIVE_ETH sentinel; it reaches ETH by treating
+//      a WETH-denominated side as a wrap/unwrap. v2 escrows ETH directly.
+//
+// ============================================================================
+
+/** localStorage key persisting the user's chosen protocol version. */
+const VERSION_STORAGE_KEY = "swapboard_version";
+
+/**
+ * Version used when nothing else selects one.
+ * v1, because it is the only version with deployed contracts and a subgraph
+ * that answers — v2 is opt-in preview until that changes.
+ * @constant {number}
+ */
+const DEFAULT_VERSION = 1;
+
+/** Versions this frontend knows how to speak. */
+const SUPPORTED_VERSIONS = [1, 2];
+
+/**
+ * What each protocol version can do. The UI gates on these rather than
+ * comparing version numbers inline, so adding v3 means adding a row here.
+ *
+ * @constant {Object<number, Object>}
+ */
+const VERSION_CAPS = {
+  1: {
+    version: 1,
+    label: "v1",
+    /**
+     * Deployed Swapboard v1, and the subgraph that indexes it.
+     *
+     * The trailing `deploy:` markers are load-bearing: deploy.sh anchors its
+     * rewrite on them so it patches the slot for the version it just shipped
+     * and leaves the other version alone.
+     */
+    contractAddress: "0x000000fF3D7A2d373615141d7489Ca66683DbecF", // deploy:v1:contract
+    subgraphUrl:
+      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn", // deploy:v1:subgraph
+    /** Orders are all-or-nothing; no fill-amount controls. */
+    partialFill: false,
+    /** No multicall entry points; one order per transaction. */
+    batch: false,
+    /** No NATIVE_ETH sentinel — ETH is reached through WETH wrap/unwrap. */
+    nativeEth: false,
+    /** Sell form creates exactly one order at a time. */
+    multiCreate: false,
+    /** Subgraph exposes no original-vs-remaining split. */
+    remainingAmounts: false,
+    /** Real contracts, so a gas estimate can be encoded and shown. */
+    gasEstimate: true,
+    /** Real subgraph, so post-transaction indexing can be polled. */
+    subgraphPolling: true,
+    /** The v1 contract has no permit overloads; approvals are always a transaction. */
+    permit: false,
+    /** Writes hit chain. */
+    live: true,
+  },
+  2: {
+    version: 2,
+    label: "v2",
+    /**
+     * Mainnet deployment of Swapboard v2, and the subgraph that indexes it.
+     * deploy.sh wrote both; being live, validateConfig now enforces them.
+     */
+    contractAddress: "0x0000000000119fc45829a3fc42e0fa4472BB9a28", // deploy:v2:contract
+    subgraphUrl:
+      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/swapboard-v2/2.0.0/gn", // deploy:v2:subgraph
+    partialFill: true,
+    batch: true,
+    nativeEth: true,
+    multiCreate: true,
+    remainingAmounts: true,
+    /** The connector encodes against the real v2 ABI, so a call can be priced. */
+    gasEstimate: true,
+    /** Real subgraph, so post-transaction indexing can be polled. */
+    subgraphPolling: true,
+    /** Every entry point has EIP-2612 and Permit2 overloads; see choosePullStrategy. */
+    permit: true,
+    /** Writes hit chain. */
+    live: true,
+  },
+};
+
+/**
+ * Coerces an arbitrary value to a supported version number.
+ * @param {*} value - Candidate version ("1", 2, "v2", ...)
+ * @returns {number|null} Supported version, or null when unrecognized
+ */
+function parseVersion(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toLowerCase().replace(/^v/, "");
+  const parsed = Number(normalized);
+  return SUPPORTED_VERSIONS.includes(parsed) ? parsed : null;
+}
+
+/**
+ * Resolves which protocol version to run, in precedence order:
+ *   1. `?v=` URL parameter — explicit, and wins so a link can pin a version
+ *   2. localStorage — the user's last choice from the header switcher
+ *   3. DEFAULT_VERSION
+ *
+ * Mirrors how mock.js resolves mock mode, so the two behave alike.
+ *
+ * @param {Object} [sources] - Resolution inputs
+ * @param {string} [sources.search] - location.search, e.g. "?v=2"
+ * @param {*} [sources.stored] - Persisted preference
+ * @returns {{version: number, pinned: boolean}} Resolved version, and whether
+ *   the URL pinned it (in which case the switcher must rewrite the URL)
+ */
+function resolveVersion(sources) {
+  const { search = "", stored = null } = sources || {};
+
+  let param = null;
+  try {
+    param = new URLSearchParams(search).get("v");
+  } catch {
+    param = null;
+  }
+
+  const fromParam = parseVersion(param);
+  if (fromParam !== null) return { version: fromParam, pinned: true };
+
+  const fromStore = parseVersion(stored);
+  if (fromStore !== null) return { version: fromStore, pinned: false };
+
+  return { version: DEFAULT_VERSION, pinned: false };
+}
+
+/**
+ * Capability set for a version, falling back to the default version's.
+ * @param {number} version - Protocol version
+ * @returns {Object} Capability descriptor
+ */
+function capsFor(version) {
+  return VERSION_CAPS[version] || VERSION_CAPS[DEFAULT_VERSION];
+}
+
+/**
+ * Deployment coordinates for a version, in the shape validateConfig expects.
+ *
+ * Read through this rather than off a module-level constant: which contract
+ * and which subgraph are correct depends entirely on the active version.
+ *
+ * @param {number} version - Protocol version
+ * @returns {{CONTRACT_ADDRESS: string, SUBGRAPH_URL: string}} Deployment coordinates
+ */
+function deploymentFor(version) {
+  const caps = capsFor(version);
+  return { CONTRACT_ADDRESS: caps.contractAddress, SUBGRAPH_URL: caps.subgraphUrl };
+}
+
+/**
+ * GraphQL selection set for an order, for the given version.
+ *
+ * A flat field list is not enough for v2: `maker` is an `Account` relation and
+ * the taker moved onto the `Fill` entity, so the selection is nested. It is
+ * built here rather than inlined at the call site because graph-node rejects an
+ * *entire* query on one unknown field — asking either version for the other's
+ * shape returns nothing at all, not a partial result — which makes the exact
+ * selection a property of the version rather than of the screen.
+ *
+ * Amount vocabulary, in both versions after normalizeOrder:
+ *   amountA / amountB       the original size, fixed for the life of the order
+ *   availableA / availableB what is still fillable
+ *
+ * @param {number} version - Protocol version
+ * @returns {string} Selection set, newline-separated, without enclosing braces
+ */
+function orderQuerySelection(version) {
+  const tokens = [
+    "tokenA {",
+    "  address",
+    "  symbol",
+    "  decimals",
+    "}",
+    "tokenB {",
+    "  address",
+    "  symbol",
+    "  decimals",
+    "}",
+  ];
+
+  if (!capsFor(version).remainingAmounts) {
+    // v1: maker and taker are plain Bytes, and amountA/amountB are the whole
+    // order, since a v1 order is all-or-nothing.
+    return [
+      "orderId",
+      "maker",
+      "amountA",
+      "amountB",
+      "active",
+      "taker",
+      "createdAt",
+      "filledAt",
+      ...tokens,
+    ].join("\n");
+  }
+
+  return [
+    "orderId",
+    "maker {",
+    "  id",
+    "}",
+    "amountA",
+    "amountB",
+    "availableA",
+    "availableB",
+    "partialFillAllowed",
+    "status",
+    "active",
+    "createdAt",
+    "filledAt",
+    // The taker of the fill that closed the order. Only meaningful once the
+    // order is FILLED — a partially filled order has many takers and no one of
+    // them owns it — so normalizeOrder drops it in every other state.
+    "fills(first: 1, orderBy: timestamp, orderDirection: desc) {",
+    "  taker {",
+    "    id",
+    "  }",
+    "}",
+    ...tokens,
+  ].join("\n");
+}
+
+/**
+ * `where` condition selecting orders by lifecycle state.
+ *
+ * v1 has to infer the state — an inactive order with a taker was filled,
+ * without one it was cancelled — while v2 indexes the enum and can be asked
+ * directly. "watched" and "all" are resolved client-side and select nothing here.
+ *
+ * @param {number} version - Protocol version
+ * @param {string} status - Filter value: "open", "filled", "cancelled", ...
+ * @returns {string|null} Condition text, or null when nothing should be added
+ */
+function statusFilterCondition(version, status) {
+  if (capsFor(version).remainingAmounts) {
+    switch (status) {
+      case "open":
+        return "active: true";
+      case "filled":
+        return `status: ${ORDER_STATUS.FILLED}`;
+      case "cancelled":
+        return `status: ${ORDER_STATUS.CANCELED}`;
+      default:
+        return null;
+    }
+  }
+
+  switch (status) {
+    case "open":
+      return "active: true";
+    case "filled":
+      return "active: false, taker_not: null";
+    case "cancelled":
+      return "active: false, taker: null";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Flattens a raw subgraph order onto one internal model, whichever version it
+ * came from.
+ *
+ * The model is the v2 vocabulary, because v2 is what the contract's own `Order`
+ * struct uses: `amountA`/`amountB` are the original size and
+ * `availableA`/`availableB` are what is left. A v1 order is all-or-nothing, so
+ * its remaining amount is by definition its original amount.
+ *
+ * @param {Object} order - Raw order from the subgraph, mutated in place
+ * @param {number} version - Protocol version the order came from
+ * @returns {Object} The same order, normalized
+ */
+function normalizeOrder(order, version) {
+  if (!order) return order;
+
+  if (!capsFor(version).remainingAmounts) {
+    order.availableA = order.amountA;
+    order.availableB = order.amountB;
+    order.partialFillAllowed = false;
+    order.status = order.active
+      ? ORDER_STATUS.OPEN
+      : order.taker
+        ? ORDER_STATUS.FILLED
+        : ORDER_STATUS.CANCELED;
+    return order;
+  }
+
+  // `maker` arrives as an Account, and the app only ever wants its address.
+  if (order.maker && typeof order.maker === "object") {
+    order.maker = order.maker.id;
+  }
+
+  // A missing flag means the order never opted in, so treat it as
+  // all-or-nothing rather than assuming partial fills are allowed.
+  order.partialFillAllowed = order.partialFillAllowed === true;
+
+  const lastFill = Array.isArray(order.fills) ? order.fills[0] : null;
+  order.taker =
+    order.status === ORDER_STATUS.FILLED && lastFill && lastFill.taker ? lastFill.taker.id : null;
+  delete order.fills;
+
+  return order;
+}
+
+/**
+ * GraphQL selection set for the board-wide statistics.
+ * @param {number} version - Protocol version
+ * @returns {string} Selection set, newline-separated, without enclosing braces
+ */
+function statsQuerySelection(version) {
+  if (!capsFor(version).remainingAmounts) {
+    return ["totalOrders", "activeOrders", "filledOrders", "cancelledOrders"].join("\n");
+  }
+  // v2 renamed two of these and added the partial-fill count. Note the single
+  // `l` in canceledOrders.
+  return [
+    "totalOrders",
+    "openOrders",
+    "partiallyFilledOrders",
+    "filledOrders",
+    "canceledOrders",
+  ].join("\n");
+}
+
+/**
+ * Flattens raw `globalStats` onto the four counters the stat tiles show.
+ *
+ * v2 counts a partially filled order as open, which is also how it renders —
+ * such an order is still fillable — so the two are summed into `open` rather
+ * than being reported separately.
+ *
+ * @param {Object|null} stats - Raw globalStats entity
+ * @param {number} version - Protocol version
+ * @returns {{total: string, open: string, filled: string, cancelled: string}|null}
+ */
+function normalizeStats(stats, version) {
+  if (!stats) return null;
+
+  if (!capsFor(version).remainingAmounts) {
+    return {
+      total: stats.totalOrders || "0",
+      open: stats.activeOrders || "0",
+      filled: stats.filledOrders || "0",
+      cancelled: stats.cancelledOrders || "0",
+    };
+  }
+
+  return {
+    total: stats.totalOrders || "0",
+    open: stats.openOrders || "0",
+    filled: stats.filledOrders || "0",
+    cancelled: stats.canceledOrders || "0",
+  };
+}
+
+/**
+ * Root field and ordering for the popular-pairs query.
+ *
+ * v1 indexes a `PairStats` entity — whose plural graph-node spells
+ * `pairStats_collection` — ranked by `tradeCount`. v2 renamed the entity to
+ * `Pair` and the counter to `fillCount`, since a partially filled order
+ * produces several fills.
+ *
+ * @param {number} version - Protocol version
+ * @returns {{root: string, orderBy: string}}
+ */
+function popularPairsQuery(version) {
+  return capsFor(version).remainingAmounts
+    ? { root: "pairs", orderBy: "fillCount" }
+    : { root: "pairStats_collection", orderBy: "tradeCount" };
+}
+
+/**
+ * Whether an offered token is settled as ETH via msg.value rather than an
+ * ERC20 transfer.
+ *
+ * The two versions disagree on what "offering ETH" means: v1 wraps a WETH
+ * side through createOrderWithEth, while v2 escrows native ETH under the
+ * NATIVE_ETH sentinel and treats WETH as an ordinary ERC20.
+ *
+ * @param {string} address - Offered token address
+ * @param {number} version - Protocol version
+ * @param {function(string): boolean} isWethFn - WETH predicate
+ * @returns {boolean}
+ */
+function offersEthDirectly(address, version, isWethFn) {
+  if (typeof address !== "string") return false;
+  if (capsFor(version).nativeEth) return isNativeEth(address);
+  return typeof isWethFn === "function" ? isWethFn(address) : false;
+}
+
+// ============================================================================
+// V2: Native ETH
+// ============================================================================
+
+/**
+ * Checks whether an address is the native ETH sentinel.
+ * @param {*} addr - Address to test
+ * @returns {boolean}
+ */
+function isNativeEth(addr) {
+  if (typeof addr !== "string") return false;
+  return addr.toLowerCase() === NATIVE_ETH.toLowerCase();
+}
+
+/**
+ * The `msg.value` a v2 call must carry: the sum of its native-ETH legs.
+ *
+ * v2 totals every sentinel-denominated leg of a call into a single exact
+ * `msg.value` check and reverts with ETHAmountMismatch on any difference, over
+ * or under. So this counts exactly the NATIVE_ETH legs and nothing else —
+ * not WETH, which v2 settles as an ordinary ERC20.
+ *
+ * @param {Array<{token: string, amount: (bigint|string)}>} legs - Token and amount per leg
+ * @returns {bigint} Total of the legs denominated in native ETH
+ */
+function nativeEthTotal(legs) {
+  if (!Array.isArray(legs)) return 0n;
+  let total = 0n;
+  for (const { token, amount } of legs) {
+    if (isNativeEth(token)) total += BigInt(amount);
+  }
+  return total;
+}
+
+// ============================================================================
+// V2: Batching
+// ============================================================================
+
+/**
+ * Splits a list into fixed-size chunks, one per transaction.
+ * @param {Array} items - Items to split
+ * @param {number} size - Maximum chunk size
+ * @returns {Array[]} Array of chunks (empty when input is unusable)
+ */
+function chunkArray(items, size) {
+  if (!Array.isArray(items)) return [];
+  if (!Number.isInteger(size) || size < 1) return [];
+
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+// ============================================================================
+// V2: Multi-select rules
+// ============================================================================
+
+/**
+ * Classifies an order relative to the connected wallet.
+ * A selection is either all the user's own orders (-> Cancel All) or all
+ * orders made by other people (-> Fill All); the two can never be mixed.
+ * @param {Object} order - Order object
+ * @param {string|null} userAddress - Connected wallet address
+ * @returns {"own"|"other"|null} Selection mode, or null for an unusable order
+ */
+function resolveSelectionMode(order, userAddress) {
+  if (!order || typeof order.maker !== "string") return null;
+  if (!userAddress) return "other";
+  return order.maker.toLowerCase() === userAddress.toLowerCase() ? "own" : "other";
+}
+
+/**
+ * Checks whether two orders trade the same token pair, in the same direction.
+ * @param {Object} a - First order
+ * @param {Object} b - Second order
+ * @returns {boolean}
+ */
+function isSamePair(a, b) {
+  if (!a || !b || !a.tokenA || !a.tokenB || !b.tokenA || !b.tokenB) return false;
+  return (
+    a.tokenA.address.toLowerCase() === b.tokenA.address.toLowerCase() &&
+    a.tokenB.address.toLowerCase() === b.tokenB.address.toLowerCase()
+  );
+}
+
+/**
+ * Decides whether an order may join the current selection.
+ *
+ * Rules, all anchored on the first selected order:
+ *  1. Only open orders are selectable.
+ *  2. Own orders and other people's orders cannot be mixed.
+ *  3. Selecting other people's orders locks the selection to a single pair.
+ *  4. Selecting your own orders allows any mix of pairs.
+ *
+ * @param {Object} candidate - Order being considered
+ * @param {Object|null} firstSelected - First order in the selection, if any
+ * @param {string|null} userAddress - Connected wallet address
+ * @returns {boolean}
+ */
+function canSelectOrder(candidate, firstSelected, userAddress) {
+  if (!candidate || !candidate.active) return false;
+  if (!firstSelected) return true;
+  if (candidate.orderId === firstSelected.orderId) return true;
+
+  const anchorMode = resolveSelectionMode(firstSelected, userAddress);
+  if (resolveSelectionMode(candidate, userAddress) !== anchorMode) return false;
+
+  // Own orders map to Cancel All, which is pair-agnostic.
+  if (anchorMode === "own") return true;
+
+  // Fill All batches a single pair, so every order must match the anchor.
+  return isSamePair(candidate, firstSelected);
+}
+
+/**
+ * Returns the IDs of every selectable order between two rows, inclusive.
+ * Backs shift-click range selection over the currently rendered order list.
+ * @param {Object[]} sortedOrders - Orders in display order
+ * @param {string} anchorId - Order ID of the previous plain click
+ * @param {string} targetId - Order ID of the shift-clicked row
+ * @param {Object|null} firstSelected - First order in the selection, if any
+ * @param {string|null} userAddress - Connected wallet address
+ * @returns {string[]} Selectable order IDs in the range
+ */
+function getShiftRangeIds(sortedOrders, anchorId, targetId, firstSelected, userAddress) {
+  if (!Array.isArray(sortedOrders)) return [];
+
+  const from = sortedOrders.findIndex((o) => o.orderId === anchorId);
+  const to = sortedOrders.findIndex((o) => o.orderId === targetId);
+  if (from === -1 || to === -1) return [];
+
+  return sortedOrders
+    .slice(Math.min(from, to), Math.max(from, to) + 1)
+    .filter((o) => canSelectOrder(o, firstSelected, userAddress))
+    .map((o) => o.orderId);
+}
+
+// ============================================================================
+// V2: Partial fill math
+// ============================================================================
+//
+// These mirror `Swapboard._quoteFill` exactly. They have to: v2 submits the
+// tokenA it quoted as `minAmountA`, so a formula that disagrees with the
+// contract by one base unit is a reverted transaction rather than a rounding
+// artifact.
+//
+// A fill is expressed as `amountB` — the exact wanted token the taker pays,
+// which is also the exact `msg.value` when that token is native ETH — and the
+// tokenA received is derived from it, floored in the maker's favour. The UI
+// fills by payment (computeFillFromPayment); computeFillFromReceive serves a
+// taker who thinks in what they receive instead.
+// ============================================================================
+
+/**
+ * The tokenA received for paying `amountB` of an order's wanted token.
+ *
+ * Mirrors `Swapboard._quoteFill`: paying the whole remainder takes exactly the
+ * remaining tokenA (no rounding at all), and anything less floors the
+ * proportion. Flooring is what keeps a sequence of small fills from draining
+ * the maker's tokenA faster than their tokenB is paid.
+ *
+ * A payment above the remainder quotes 0 rather than being clamped: the
+ * contract reverts it with FillAmountTooHigh, and so does a payment too small
+ * to earn a single base unit (ZeroAmount).
+ *
+ * @param {Object} order - Order with availableA/availableB in base units
+ * @param {string|bigint} amountB - Wanted token paid, in base units
+ * @returns {bigint} tokenA received, or 0 when the payment is unfillable
+ */
+function quoteFill(order, amountB) {
+  const availableA = BigInt(order.availableA);
+  const availableB = BigInt(order.availableB);
+  const pay = BigInt(amountB);
+
+  if (pay <= 0n || pay > availableB || availableA === 0n) return 0n;
+  if (pay === availableB) return availableA;
+
+  return (pay * availableA) / availableB;
+}
+
+/**
+ * Resolves a desired receive amount into the pair of values a fill is
+ * submitted with.
+ *
+ * The taker thinks in what they receive, but the contract takes an exact
+ * payment, so this finds the smallest `amountB` whose floored quote covers the
+ * request. That quote can land a base unit or so above the request; it is
+ * returned as `minAmountA` so the UI shows, and the fill bounds, exactly what
+ * the contract will pay out.
+ *
+ * Clamps to what is actually left rather than rejecting an over-large request:
+ * the fill controls open at 100% of the remainder, and an order shrinking
+ * underneath an open modal should scale the fill down, not fail it.
+ *
+ * @param {Object} order - Order with availableA/availableB in base units
+ * @param {string|bigint} receiveAmountA - Desired amount of the offered token
+ * @returns {{amountB: bigint, minAmountA: bigint}} Arguments for fillOrder
+ */
+function computeFillFromReceive(order, receiveAmountA) {
+  const availableA = BigInt(order.availableA);
+  const availableB = BigInt(order.availableB);
+  let want = BigInt(receiveAmountA);
+  if (want > availableA) want = availableA;
+
+  if (want <= 0n || availableB === 0n) return { amountB: 0n, minAmountA: 0n };
+
+  const amountB = (want * availableB + availableA - 1n) / availableA;
+  return { amountB, minAmountA: quoteFill(order, amountB) };
+}
+
+/**
+ * Resolves a payment into the pair of values a fill-by-payment is made of.
+ *
+ * Clamps to what is left, like computeFillFromReceive. An amountA of 0 means
+ * the payment cannot buy a single base unit, which the contract rejects with
+ * ZeroAmount, so callers treat it as no fill at all.
+ *
+ * @param {Object} order - Order with availableA/availableB in base units
+ * @param {string|bigint} payAmountB - Wanted token the taker pays
+ * @returns {{amountA: bigint, amountB: bigint}} The receive, sent as fillOrder's
+ *   minAmountA, and the exact payment, sent as its amountB
+ */
+function computeFillFromPayment(order, payAmountB) {
+  const availableB = BigInt(order.availableB);
+  let pay = BigInt(payAmountB);
+  if (pay < 0n) pay = 0n;
+  if (pay > availableB) pay = availableB;
+
+  return { amountA: quoteFill(order, pay), amountB: pay };
+}
+
+/**
+ * Whether an order accepts a fill smaller than its whole remainder.
+ *
+ * An order that opted out is all-or-nothing on chain — `PartialFillNotAllowed`
+ * — so the controls that would offer a smaller fill stay off for it.
+ *
+ * @param {Object} order - Normalized order
+ * @returns {boolean}
+ */
+function allowsPartialFill(order) {
+  return order ? order.partialFillAllowed === true : false;
+}
+
+/**
+ * Aggregates a batch of same-pair orders for the Fill All confirmation.
+ * @param {Object[]} orders - Orders to be filled, all sharing a token pair
+ * @returns {{count: number, totalSend: bigint, totalReceive: bigint, avgPrice: number|null}}
+ *          avgPrice is wanted-token per offered-token, matching the table's Price column
+ */
+function summarizeFillBatch(orders) {
+  if (!Array.isArray(orders) || orders.length === 0) {
+    return { count: 0, totalSend: 0n, totalReceive: 0n, avgPrice: null };
+  }
+
+  let totalSend = 0n;
+  let totalReceive = 0n;
+  for (const order of orders) {
+    totalSend += BigInt(order.availableB);
+    totalReceive += BigInt(order.availableA);
+  }
+
+  let avgPrice = null;
+  if (totalReceive > 0n) {
+    const decimalsA = orders[0].tokenA.decimals;
+    const decimalsB = orders[0].tokenB.decimals;
+    avgPrice = (Number(totalSend) / Number(totalReceive)) * Math.pow(10, decimalsA - decimalsB);
+  }
+
+  return { count: orders.length, totalSend, totalReceive, avgPrice };
+}
+
+// ============================================================================
 // Exports
 // ============================================================================
 
 // Browser: expose on window.SwapboardLib for use by app.js IIFE
 if (typeof window !== "undefined") {
   window.SwapboardLib = {
-    // Utility functions
-    escapeHtml,
-    isValidAddress,
-    truncateAddress,
-
-    // Formatting
-    formatUsd,
-    formatAmount,
-  };
-}
-
-// Node.js/Jest: CommonJS exports
-if (typeof module !== "undefined" && module.exports) {
-  module.exports = {
     // Config
     CONFIG,
     EXPECTED_CHAIN_ID,
-    COINGECKO_ID_MAP,
+    CHAINS,
+    ACTIVE_CHAIN,
 
     // Utility functions
     escapeHtml,
@@ -736,15 +2248,193 @@ if (typeof module !== "undefined" && module.exports) {
     formatNumber,
     formatTimeAgo,
     formatRatio,
+    formatTinyDecimal,
+    setNumberText,
     parseAmount,
 
-    // Price functions
+    // Price registry
+    COINGECKO_ID_MAP,
+    coinGeckoUrl,
+    priceRatio,
+    PRICE_CACHE_TTL_MS,
     getCachedPrice,
     getTokenPrice,
+
+    // Permit registry
+    permitKindFor,
+    supportsPermit,
+    isSignablePermitKind,
+
+    // Known-token registry
+    knownTokenInfo,
+    isKnownToken,
+
+    // Signature-based approvals
+    PERMIT2_ADDRESS,
+    MAX_PERMIT2_BATCH,
+    PERMIT_TTL_SECONDS,
+    PERMIT_TYPES,
+    PERMIT2_TYPES,
+    permit2Domain,
+    buildPermitMessage,
+    buildPermit2Message,
+    permit2Nonce,
+    permitDeadline,
+    choosePullStrategy,
+    planBatchPulls,
+    fetchPrices,
     calculateMarketDeviation,
+
+    // CSV export
+    CSV_FORMULA_PREFIXES,
+    csvCell,
+    toCsv,
 
     // Token search
     searchTokens,
+
+    // Order helpers
+    ORDER_STATUS,
+    orderStatus,
+
+    // Sorting
+    sortOrders,
+
+    // Error handling
+    decodeContractError,
+    parseContractError,
+
+    // localStorage
+    RECENT_TOKENS_KEY,
+    MAX_RECENT_TOKENS,
+    FILTERS_KEY,
+    SORT_KEY,
+    WATCHED_ORDERS_KEY,
+    getRecentTokens,
+    addRecentToken,
+    getWatchedOrders,
+    watchOrder,
+    unwatchOrder,
+    isOrderWatched,
+    saveFilterPreferences,
+    loadFilterPreferences,
+    saveSortPreferences,
+    loadSortPreferences,
+
+    // Config validation
+    validateConfig,
+
+    // Protocol version
+    VERSION_STORAGE_KEY,
+    DEFAULT_VERSION,
+    SUPPORTED_VERSIONS,
+    VERSION_CAPS,
+    parseVersion,
+    resolveVersion,
+    capsFor,
+    deploymentFor,
+    orderQuerySelection,
+    statusFilterCondition,
+    normalizeOrder,
+    statsQuerySelection,
+    normalizeStats,
+    popularPairsQuery,
+    offersEthDirectly,
+
+    // V2: native ETH
+    NATIVE_ETH,
+    isNativeEth,
+    nativeEthTotal,
+
+    // V2: batching
+    chunkArray,
+
+    // V2: multi-select rules
+    resolveSelectionMode,
+    isSamePair,
+    canSelectOrder,
+    getShiftRangeIds,
+
+    // V2: partial fill math
+    quoteFill,
+    computeFillFromReceive,
+    computeFillFromPayment,
+    allowsPartialFill,
+    summarizeFillBatch,
+  };
+}
+
+// Node.js/Jest: CommonJS exports
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    // Config
+    CONFIG,
+    EXPECTED_CHAIN_ID,
+    CHAINS,
+    ACTIVE_CHAIN,
+    COINGECKO_ID_MAP,
+    NATIVE_ETH,
+
+    // Utility functions
+    escapeHtml,
+    isValidAddress,
+    truncateAddress,
+    getOrderIdFromHash,
+    getOrderShareUrl,
+
+    // Formatting
+    formatUsd,
+    formatAmount,
+    formatNumber,
+    formatTimeAgo,
+    formatRatio,
+    formatTinyDecimal,
+    setNumberText,
+    parseAmount,
+
+    // Price functions
+    PRICE_CACHE_TTL_MS,
+    getCachedPrice,
+    getTokenPrice,
+    fetchPrices,
+    coinGeckoUrl,
+    priceRatio,
+    calculateMarketDeviation,
+
+    // Permit registry
+    permitKindFor,
+    supportsPermit,
+    isSignablePermitKind,
+
+    // Known-token registry
+    knownTokenInfo,
+    isKnownToken,
+
+    // Signature-based approvals
+    PERMIT2_ADDRESS,
+    MAX_PERMIT2_BATCH,
+    PERMIT_TTL_SECONDS,
+    PERMIT_TYPES,
+    PERMIT2_TYPES,
+    permit2Domain,
+    buildPermitMessage,
+    buildPermit2Message,
+    permit2Nonce,
+    permitDeadline,
+    choosePullStrategy,
+    planBatchPulls,
+
+    // CSV export
+    CSV_FORMULA_PREFIXES,
+    csvCell,
+    toCsv,
+
+    // Token search
+    searchTokens,
+
+    // Order helpers
+    ORDER_STATUS,
+    orderStatus,
 
     // localStorage functions
     RECENT_TOKENS_KEY,
@@ -769,10 +2459,49 @@ if (typeof module !== "undefined" && module.exports) {
     // Error handling
     ERROR_SIGNATURES,
     ERROR_MESSAGES,
+    ERROR_PATTERNS,
+    decodeErrorArgs,
     decodeContractError,
     parseContractError,
 
     // Config validation
     validateConfig,
+
+    // Protocol version
+    VERSION_STORAGE_KEY,
+    DEFAULT_VERSION,
+    SUPPORTED_VERSIONS,
+    VERSION_CAPS,
+    parseVersion,
+    resolveVersion,
+    capsFor,
+    deploymentFor,
+    orderQuerySelection,
+    statusFilterCondition,
+    normalizeOrder,
+    statsQuerySelection,
+    normalizeStats,
+    popularPairsQuery,
+    offersEthDirectly,
+
+    // V2: native ETH
+    isNativeEth,
+    nativeEthTotal,
+
+    // V2: batching
+    chunkArray,
+
+    // V2: multi-select rules
+    resolveSelectionMode,
+    isSamePair,
+    canSelectOrder,
+    getShiftRangeIds,
+
+    // V2: partial fill math
+    quoteFill,
+    computeFillFromReceive,
+    computeFillFromPayment,
+    allowsPartialFill,
+    summarizeFillBatch,
   };
 }

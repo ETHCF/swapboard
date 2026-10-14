@@ -10,49 +10,219 @@
  * - The Graph subgraph for order indexing
  *
  * Configuration:
- * - Update CONFIG.CONTRACT_ADDRESS and CONFIG.SUBGRAPH_URL before deployment
+ * - Update the active version's contractAddress/subgraphUrl in VERSION_CAPS
+ *   (lib.js) before deployment; deploy.sh patches them in place
  * - Local development skips config validation (localhost/file://)
  */
 
 (function () {
   "use strict";
 
-  // Import shared utilities from lib.js (loaded before app.js)
-  const { escapeHtml, isValidAddress, truncateAddress, formatUsd, formatAmount } =
-    window.SwapboardLib || {};
+  // Shared utilities from lib.js (loaded before app.js). `Lib` stays available as
+  // a namespace for the wrappers below that bind storage, caches and location.
+  const Lib = window.SwapboardLib || {};
+
+  const {
+    CONFIG,
+    EXPECTED_CHAIN_ID,
+    ACTIVE_CHAIN,
+    WATCHED_ORDERS_KEY,
+    escapeHtml,
+    isValidAddress,
+    truncateAddress,
+    formatUsd,
+    formatAmount,
+    formatNumber,
+    formatTimeAgo,
+    formatRatio,
+    formatTinyDecimal,
+    setNumberText,
+    parseAmount,
+    parseContractError,
+    orderStatus,
+    COINGECKO_ID_MAP,
+    coinGeckoUrl,
+    priceRatio,
+    getTokenPrice,
+    fetchPrices,
+    calculateMarketDeviation,
+    // Protocol version
+    VERSION_STORAGE_KEY,
+    SUPPORTED_VERSIONS,
+    resolveVersion,
+    capsFor,
+    deploymentFor,
+    orderQuerySelection,
+    statusFilterCondition,
+    normalizeOrder,
+    statsQuerySelection,
+    normalizeStats,
+    popularPairsQuery,
+    offersEthDirectly,
+    // V2 helpers
+    NATIVE_ETH,
+    isNativeEth,
+    nativeEthTotal,
+    chunkArray,
+    resolveSelectionMode,
+    canSelectOrder,
+    getShiftRangeIds,
+    computeFillFromPayment,
+    allowsPartialFill,
+    summarizeFillBatch,
+
+    // Signature-based approvals
+    PERMIT2_ADDRESS,
+    PERMIT_TYPES,
+    PERMIT2_TYPES,
+    permit2Domain,
+    permitKindFor,
+    isKnownToken,
+    toCsv,
+    buildPermitMessage,
+    buildPermit2Message,
+    permit2Nonce,
+    permitDeadline,
+    choosePullStrategy,
+    planBatchPulls,
+  } = Lib;
 
   // ============================================================================
   // Configuration
   // ============================================================================
 
+  // CONFIG, EXPECTED_CHAIN_ID and the chain this build targets come from lib.js.
+  // The per-version deployment coordinates live there too, on VERSION_CAPS, and
+  // are what deploy.sh patches; they are resolved to CONTRACT_ADDRESS /
+  // SUBGRAPH_URL below, once the active version is known.
+  const EXPECTED_CHAIN = ACTIVE_CHAIN.chain;
+  const EXPECTED_CHAIN_LABEL = ACTIVE_CHAIN.label;
+  const EXPLORER_URL = EXPECTED_CHAIN.blockExplorerUrls[0];
+
+  // ============================================================================
+  // Protocol Version
+  // ============================================================================
+
   /**
-   * Application configuration. Update these values before deployment.
-   * @constant {Object}
+   * Reads the persisted version preference.
+   * @returns {string|null} Stored value, or null when storage is unavailable
    */
-  const CONFIG = {
-    // Contract address on Ethereum mainnet
-    CONTRACT_ADDRESS: "0x000000fF3D7A2d373615141d7489Ca66683DbecF",
-    // Goldsky subgraph endpoint (Mainnet)
-    SUBGRAPH_URL:
-      "https://api.goldsky.com/api/public/project_cmmkvehnce9da01u17d657vdt/subgraphs/Swapboard/1.0.0/gn",
-    // Number of orders per page
-    PAGE_SIZE: 200,
-    // Request timeout in milliseconds
-    REQUEST_TIMEOUT: 30000,
-    // Debounce delay for token info fetch
-    DEBOUNCE_DELAY: 500,
-    // Show market deviation percentage (vs CoinGecko prices)
-    SHOW_MARKET_DEVIATION: false,
+  function readStoredVersion() {
+    try {
+      return localStorage.getItem(VERSION_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  const initialVersion = resolveVersion({
+    search: window.location.search,
+    stored: readStoredVersion(),
+  });
+
+  /**
+   * Protocol version the app is currently speaking.
+   * @type {number}
+   */
+  const ACTIVE_VERSION = initialVersion.version;
+
+  /**
+   * Capabilities of ACTIVE_VERSION. Every version-dependent branch in the app
+   * reads a named flag off this object rather than comparing version numbers,
+   * so what a branch is actually about stays legible at the call site.
+   * @type {Object}
+   */
+  const CAPS = capsFor(ACTIVE_VERSION);
+
+  /**
+   * Contract and subgraph the active version talks to.
+   *
+   * Resolved once, here, rather than read off CONFIG: v1 and v2 have different
+   * deployments, and reaching for a single global would silently point one
+   * version at the other's contract.
+   */
+  const { CONTRACT_ADDRESS, SUBGRAPH_URL } = deploymentFor(ACTIVE_VERSION);
+
+  /**
+   * Switches protocol version.
+   *
+   * A reload is the honest way to do this. The version decides the subgraph
+   * query shape, the connector, the table columns, and the shape of the sell
+   * form; rebuilding all of that in place would mean unwinding wallet state,
+   * in-flight requests, and the current selection, and any missed corner
+   * leaves the two versions' state mixed together. Reloading cannot.
+   *
+   * @param {number} version - Version to switch to
+   */
+  function setVersion(version) {
+    if (!SUPPORTED_VERSIONS.includes(version) || version === ACTIVE_VERSION) return;
+
+    try {
+      localStorage.setItem(VERSION_STORAGE_KEY, String(version));
+    } catch {
+      // Storage unavailable (private mode); the URL below still carries it.
+    }
+
+    // Keep ?v= in step with the choice, so the reload lands on the new version
+    // even if storage was refused, and so the URL stays shareable.
+    const url = new URL(window.location.href);
+    url.searchParams.set("v", String(version));
+    // The order hash addresses an order in the version being left behind.
+    url.hash = "";
+    window.location.href = url.toString();
+  }
+
+  /** Headline text and blurb for each version. */
+  const VERSION_COPY = {
+    1: {
+      title: "Welcome to SWAPBOARD v1",
+      note: "V1: no partial fills. Live on mainnet.",
+      hint: "Swapboard v1 — deployed and live on mainnet",
+    },
+    2: {
+      title: "Welcome to SWAPBOARD v2",
+      note: "V2: partial fills, batch fill/cancel/create, and native ETH. Preview — contracts are not deployed yet; add ?mock=true to try it against simulated data.",
+      hint: "Swapboard v2 — preview, contracts not yet deployed",
+    },
   };
 
-  const EXPECTED_CHAIN_ID = 1;
-  const EXPECTED_CHAIN = {
-    chainId: "0x1",
-    chainName: "Ethereum",
-    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: ["https://eth-mainnet.g.alchemy.com/v2/WLD-4NTd9zxSax2e5Oh2q"],
-    blockExplorerUrls: ["https://etherscan.io"],
-  };
+  /**
+   * Number of columns in the order table, which the select column changes.
+   * Used for the full-width "Loading" / "No orders" rows.
+   * @returns {number}
+   */
+  function orderColumnCount() {
+    return CAPS.batch ? 10 : 9;
+  }
+
+  /**
+   * Applies everything about the page that depends on the protocol version:
+   * the body attribute driving the CSS gates, the copy, and the switcher's
+   * pressed state.
+   *
+   * Feature chrome is hidden in CSS off `body[data-version]` rather than by
+   * toggling each node here, so a control added later is gated by matching a
+   * selector instead of by remembering to update this function.
+   */
+  function applyVersionUi() {
+    const copy = VERSION_COPY[ACTIVE_VERSION] || VERSION_COPY[1];
+
+    document.body.dataset.version = String(ACTIVE_VERSION);
+
+    const title = $("#app-title");
+    if (title) title.textContent = copy.title;
+
+    const note = $("#version-note-text");
+    if (note) note.textContent = copy.note;
+
+    document.querySelectorAll("#version-switch .version-option").forEach((btn) => {
+      const version = Number(btn.dataset.version);
+      const active = version === ACTIVE_VERSION;
+      btn.setAttribute("aria-pressed", String(active));
+      btn.classList.toggle("active", active);
+      btn.title = (VERSION_COPY[version] || {}).hint || "";
+    });
+  }
 
   // ============================================================================
   // Theme (Dark Mode)
@@ -112,18 +282,21 @@
       return;
     }
 
-    const errors = [];
-    if (CONFIG.CONTRACT_ADDRESS === "0x0000000000000000000000000000000000000000") {
-      errors.push("CONTRACT_ADDRESS is not configured");
+    // A version that is not live yet has nothing deployed to point at, so its
+    // placeholder coordinates are the expected state rather than a misconfiguration.
+    if (!CAPS.live) {
+      console.warn("Preview version " + CAPS.label + ": skipping deployment validation");
+      return;
     }
-    if (CONFIG.SUBGRAPH_URL.includes("YOUR_ID")) {
-      errors.push("SUBGRAPH_URL is not configured");
-    }
-    if (errors.length > 0) {
+
+    const { valid, errors } = Lib.validateConfig(deploymentFor(ACTIVE_VERSION), false);
+    if (!valid) {
       const msg =
         "Configuration error: " +
         errors.join(", ") +
-        ". Update CONFIG in app.js before deployment.";
+        ". Update VERSION_CAPS[" +
+        ACTIVE_VERSION +
+        "] in lib.js before deployment.";
       console.error(msg);
       document.body.innerHTML =
         '<div style="color:red;padding:20px;font-family:monospace;">' + msg + "</div>";
@@ -131,7 +304,7 @@
     }
   }
 
-  const CONTRACT_ABI = [
+  const CONTRACT_ABI_V1 = [
     "function createOrder(address tokenA, uint256 amountA, address tokenB, uint256 amountB) external returns (uint256 orderId)",
     "function createOrderWithEth(address tokenB, uint256 amountB) external payable returns (uint256 orderId)",
     "function fillOrder(uint256 orderId, uint256 deadline) external",
@@ -142,8 +315,8 @@
     "function getOrder(uint256 orderId) external view returns (tuple(address maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB, bool active))",
     "function getOrders(uint256[] orderIds) external view returns (tuple(address maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB, bool active)[])",
     "function canFill(uint256 orderId) external view returns (bool)",
-    "function nextOrderId() external view returns (uint256)",
-    "function weth() external view returns (address)",
+    "function getNextOrderId() external view returns (uint256)",
+    "function getWeth() external view returns (address)",
     "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint256 amountA, address tokenB, uint256 amountB)",
     "event OrderFilled(uint256 indexed orderId, address indexed taker)",
     "event OrderCanceled(uint256 indexed orderId)",
@@ -161,6 +334,81 @@
     "error NotMaker(uint256 orderId, address caller, address maker)",
   ];
 
+  /**
+   * Swapboard v2, transcribed from contracts/src/interfaces/ISwapboard.sol plus
+   * the OpenZeppelin errors the implementation can revert with. Must stay
+   * fragment-for-fragment equal to the compiled ABI (subgraph/v2/abis/Swapboard.json).
+   *
+   * Amounts are uint128, and create/fill-batch arguments are structs: an encoder
+   * built from v1's shapes would produce calldata v2 rejects outright.
+   */
+  const CONTRACT_ABI_V2 = [
+    "function createOrder(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed) order) external payable returns (uint256)",
+    "function createOrder(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed) order, tuple(uint256 amount, uint256 nonce, uint256 deadline, bytes signature) permit) external payable returns (uint256)",
+    "function createOrder(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed) order, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permit) external payable returns (uint256)",
+    "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders) external payable returns (uint256[])",
+    "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits) external payable returns (uint256[])",
+    "function createOrders(tuple(address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool partialFillAllowed)[] orders, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits) external payable returns (uint256[])",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, address taker) external payable",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, tuple(uint256 amount, uint256 nonce, uint256 deadline, bytes signature) permit, address taker) external payable",
+    "function fillOrder(uint256 orderId, uint128 amountB, uint128 minAmountA, uint256 deadline, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permit, address taker) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, address taker) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits, address taker) external payable",
+    "function fillOrders(tuple(uint256 orderId, uint128 amountB, uint128 minAmountA)[] fills, uint256 deadline, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits, address taker) external payable",
+    "function cancelOrder(uint256 orderId, address maker) external",
+    "function cancelOrders(uint256[] orderIds, address maker) external",
+    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder, address maker) external payable",
+    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder, tuple(uint256 amount, uint256 nonce, uint256 deadline, bytes signature) permit, address maker) external payable",
+    "function modifyOrder(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder, tuple(uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) permit, address maker) external payable",
+    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder)[] mods, address maker) external payable",
+    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder)[] mods, tuple(address token, uint256 amount, uint256 nonce, uint256 deadline, bytes signature)[] permits, address maker) external payable",
+    "function modifyOrders(tuple(uint256 orderId, tuple(uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB) previousAmounts, tuple(uint128 availableA, uint128 availableB, address maker) updatedOrder)[] mods, tuple(address token, uint8 v, uint256 value, uint256 deadline, bytes32 r, bytes32 s)[] permits, address maker) external payable",
+    "function setPartialFillAllowed(uint256 orderId, bool partialFillAllowed) external",
+    "function getEth() external pure returns (address)",
+    "function getNextOrderId() external view returns (uint256)",
+    "function getOrder(uint256 orderId) external view returns (tuple(address maker, bool partialFillAllowed, address tokenA, address tokenB, uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB))",
+    "function getOrders(uint256[] orderIds) external view returns (tuple(address maker, bool partialFillAllowed, address tokenA, address tokenB, uint128 amountA, uint128 amountB, uint128 availableA, uint128 availableB)[])",
+    "function canFill(uint256 orderId) external view returns (bool)",
+    "function version() external view returns (string)",
+    "event OrderCanceled(uint256 indexed orderId)",
+    "event OrderCreated(uint256 indexed orderId, address indexed maker, address tokenA, uint128 amountA, address tokenB, uint128 amountB, bool indexed partialFillAllowed)",
+    "event OrderFilled(uint256 indexed orderId, address indexed taker, uint128 amountA, uint128 amountB)",
+    "event OrderModified(uint256 indexed orderId, address indexed maker, uint128 availableA, uint128 availableB)",
+    "event OrderPartialFillUpdated(uint256 indexed orderId, bool indexed partialFillAllowed)",
+    "error BalanceMismatch(uint256 expected, uint256 received)",
+    "error DeadlineExpired()",
+    "error DuplicateOrderId(uint256 orderId)",
+    "error DuplicatePermitToken(address token)",
+    "error ETHAmountMismatch(uint256 required, uint256 sent)",
+    "error FailedCall()",
+    "error FillAmountMismatch(uint256 orderId, uint128 quoted, uint128 minimum)",
+    "error FillAmountTooHigh(uint256 orderId, uint128 requested, uint128 remaining)",
+    "error InsufficientBalance(uint256 balance, uint256 needed)",
+    "error InvalidPermit()",
+    "error InvalidPermit2()",
+    "error NoChange()",
+    "error NotMaker(uint256 orderId, address caller, address maker)",
+    "error OrderNotFound(uint256 orderId)",
+    "error OrderStateMismatch(uint256 orderId)",
+    "error PartialFillNotAllowed(uint256 orderId)",
+    "error PermitOnNative()",
+    "error ReentrancyGuardReentrantCall()",
+    "error SafeERC20FailedOperation(address token)",
+    "error SameToken()",
+    "error SelfFill()",
+    "error TooManyPermit2()",
+    "error UnusedPermit()",
+    "error UnusedPermit2()",
+    "error ZeroAddress()",
+    "error ZeroAmount()",
+  ];
+
+  /**
+   * ABI of the active version's contract. Picked once, like the deployment it
+   * encodes against: the two versions share no mutating function signature.
+   */
+  const CONTRACT_ABI = ACTIVE_VERSION === 1 ? CONTRACT_ABI_V1 : CONTRACT_ABI_V2;
+
   const ERC20_ABI = [
     "function name() view returns (string)",
     "function symbol() view returns (string)",
@@ -168,6 +416,12 @@
     "function balanceOf(address) view returns (uint256)",
     "function allowance(address owner, address spender) view returns (uint256)",
     "function approve(address spender, uint256 amount) returns (bool)",
+    // EIP-2612. `version` and `eip712Domain` are how the signing domain is
+    // recovered; neither is universal, so both are probed and allowed to fail.
+    "function nonces(address owner) view returns (uint256)",
+    "function DOMAIN_SEPARATOR() view returns (bytes32)",
+    "function version() view returns (string)",
+    "function eip712Domain() view returns (bytes1 fields, string name, string version, uint256 chainId, address verifyingContract, bytes32 salt, uint256[] extensions)",
   ];
 
   let provider = null;
@@ -181,11 +435,16 @@
     return addr.toLowerCase() === cachedWethAddress;
   }
 
-  // Create form state for validation
-  const createFormState = {
-    tokenA: { info: null, balance: null },
-    tokenB: { info: null, balance: null },
-  };
+  /**
+   * Order IDs currently ticked in the order table.
+   * Deliberately in-memory: unlike the watchlist, a selection is a transient
+   * intent to act, not a preference worth surviving a reload.
+   * @type {Set<string>}
+   */
+  const selectedOrderIds = new Set();
+
+  /** Order ID of the last plain (non-shift) checkbox click, for shift ranges. */
+  let selectionAnchorId = null;
 
   const tokenCache = new Map();
   const ensCache = new Map();
@@ -193,14 +452,15 @@
   let currentFilters = { selling: "", wanting: "", status: "open", myOrders: false };
   let currentSort = { column: "orderId", direction: "desc" };
   let cachedOrders = [];
+  /** True when the last order query errored, as opposed to returning nothing. */
+  let ordersQueryFailed = false;
   let highlightedOrderId = null;
   let notificationsEnabled = false;
-  const RECENT_TOKENS_KEY = "swapboard_recent_tokens";
-  const MAX_RECENT_TOKENS = 5;
-  const FILTERS_KEY = "swapboard_filters";
-  const SORT_KEY = "swapboard_sort";
-  const WATCHED_ORDERS_KEY = "swapboard_watched_orders";
   const UNISWAP_TOKEN_LIST_URL = "https://tokens.uniswap.org";
+  /** Hint on the warning icon beside a token missing from known-tokens.js. */
+  const UNKNOWN_TOKEN_WARNING =
+    "Unknown token: it may be a scam or an impersonation, so take extra caution and verify " +
+    "the contract address before trading.";
   let uniswapTokens = [];
   let autoRefreshInterval = null;
   const AUTO_REFRESH_MS = 30000;
@@ -235,29 +495,45 @@
     window.dispatchEvent(new Event("eip6963:requestProvider"));
   }
 
+  /** localStorage key remembering which wallet to reconnect on page load. */
+  const WALLET_STORAGE_KEY = "swapboard_wallet";
+
+  /** Stored when the wallet came from the legacy window.ethereum path. */
+  const WALLET_INJECTED = "injected";
+
+  /** Stored when the user pressed Disconnect, so a reload does not undo it. */
+  const WALLET_DISCONNECTED = "disconnected";
+
+  /**
+   * Reads the remembered wallet: an EIP-6963 rdns, WALLET_INJECTED or
+   * WALLET_DISCONNECTED.
+   * @returns {string|null} Stored value, or null when unset or storage is unavailable
+   */
+  function readStoredWallet() {
+    try {
+      return localStorage.getItem(WALLET_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  /** @param {string} walletId - Value to remember for the next page load */
+  function storeWallet(walletId) {
+    try {
+      localStorage.setItem(WALLET_STORAGE_KEY, walletId);
+    } catch {
+      // Storage unavailable (private mode); reload falls back to window.ethereum.
+    }
+  }
+
   // ============================================================================
   // Price Service (CoinGecko)
   // ============================================================================
 
-  /**
-   * Maps lowercase token addresses to CoinGecko coin IDs.
-   * Only tokens in this registry can have USD prices displayed.
-   * @constant {Object.<string, string>}
-   */
-  const COINGECKO_ID_MAP = {
-    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "weth",
-    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "usd-coin",
-    "0xdac17f958d2ee523a2206206994597c13d831ec7": "tether",
-    "0x6b175474e89094c44da98b954eedeac495271d0f": "dai",
-    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": "wrapped-bitcoin",
-    "0x514910771af9ca656af840dff83e8264ecf986ca": "chainlink",
-    "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": "aave",
-    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": "uniswap",
-    "0xae7ab96520de3a18e5e111b5eaab095312d7fe84": "staked-ether",
-    "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0": "matic-network",
-    "0x6982508145454ce325ddbe47a25d4ec3d2311933": "pepe",
-    "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce": "shiba-inu",
-  };
+  // COINGECKO_ID_MAP comes from lib.js. It used to be duplicated here, and the
+  // copy silently fell behind when lib.js gained the native-ETH sentinel — the
+  // local one shadowed it, so every v2 ETH order priced as "N/A" while the
+  // identical WETH order priced fine. One definition, no drift.
 
   const STABLE_ADDRESSES = new Set([
     "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // USDC
@@ -284,140 +560,15 @@
     return null;
   }
 
-  /**
-   * Price cache with TTL tracking.
-   * @type {Map<string, {usd: number, fetchedAt: number}>}
-   */
-  const priceCache = new Map();
-  const PRICE_CACHE_TTL_MS = 60000;
-  let priceFetchInProgress = null;
-
-  /**
-   * Returns cached price if valid, null otherwise.
-   * @param {string} coinGeckoId - CoinGecko coin ID
-   * @returns {{usd: number, fetchedAt: number}|null}
-   */
-  function getCachedPrice(coinGeckoId) {
-    const cached = priceCache.get(coinGeckoId);
-    if (!cached) return null;
-    if (Date.now() - cached.fetchedAt > PRICE_CACHE_TTL_MS) return null;
-    return cached;
-  }
-
-  /**
-   * Fetches prices for multiple CoinGecko IDs in a single request.
-   * Implements rate limiting via request coalescing.
-   * @param {string[]} coinGeckoIds - Array of CoinGecko coin IDs
-   * @returns {Promise<void>}
-   */
-  async function fetchPrices(coinGeckoIds) {
-    const idsToFetch = coinGeckoIds.filter((id) => !getCachedPrice(id));
-    if (idsToFetch.length === 0) return;
-
-    if (priceFetchInProgress) {
-      await priceFetchInProgress;
-      return;
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-    priceFetchInProgress = (async () => {
-      try {
-        const url =
-          "https://api.coingecko.com/api/v3/simple/price?ids=" +
-          idsToFetch.join(",") +
-          "&vs_currencies=usd";
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-
-        if (!res.ok) {
-          if (res.status === 429) {
-            console.warn("[Price] Rate limited by CoinGecko");
-          }
-          return;
-        }
-
-        const data = await res.json();
-        const now = Date.now();
-
-        for (const id of idsToFetch) {
-          if (data[id] && typeof data[id].usd === "number") {
-            priceCache.set(id, { usd: data[id].usd, fetchedAt: now });
-          }
-        }
-      } catch (e) {
-        clearTimeout(timeoutId);
-        if (e.name === "AbortError") {
-          console.warn("[Price] Request timed out");
-        } else {
-          console.warn("[Price] Fetch failed:", e.message);
-        }
-      }
-    })();
-
-    await priceFetchInProgress;
-    priceFetchInProgress = null;
-  }
-
-  /**
-   * Gets USD price for a token address.
-   * @param {string} tokenAddress - Ethereum token address
-   * @returns {number|null} USD price or null if unavailable
-   */
-  function getTokenPrice(tokenAddress) {
-    const id = COINGECKO_ID_MAP[tokenAddress.toLowerCase()];
-    if (!id) return null;
-    const cached = getCachedPrice(id);
-    return cached ? cached.usd : null;
-  }
-
-  /**
-   * Calculates the market rate deviation for an order.
-   * @param {Object} order - Order with tokenA/tokenB and amounts
-   * @returns {{deviation: number, label: string}|null} Deviation percentage and label, or null if unavailable
-   */
-  function calculateMarketDeviation(order) {
-    const priceA = getTokenPrice(order.tokenA.address);
-    const priceB = getTokenPrice(order.tokenB.address);
-
-    if (priceA === null || priceB === null) return null;
-    if (priceA === 0 || priceB === 0) return null;
-
-    const amountA = BigInt(order.amountA);
-    const amountB = BigInt(order.amountB);
-
-    if (amountA === 0n || amountB === 0n) return null;
-
-    // Market rate: how many tokenB per tokenA at market prices
-    const marketRate = priceA / priceB;
-
-    // Order rate: how many tokenB per tokenA this order offers
-    const humanAmountA = Number(amountA) / Math.pow(10, order.tokenA.decimals);
-    const humanAmountB = Number(amountB) / Math.pow(10, order.tokenB.decimals);
-    const orderRate = humanAmountB / humanAmountA;
-
-    // Deviation: positive = seller asking more (bad for buyer), negative = discount (good for buyer)
-    const deviation = ((orderRate - marketRate) / marketRate) * 100;
-
-    let label;
-    if (Math.abs(deviation) < 0.5) {
-      label = "~market";
-    } else if (deviation > 0) {
-      label = "+" + deviation.toFixed(1) + "%";
-    } else {
-      label = deviation.toFixed(1) + "%";
-    }
-
-    return { deviation, label };
-  }
-
   // ============================================================================
   // Utility Functions
   // ============================================================================
 
   /** @param {string} sel - CSS selector */
   const $ = (sel) => document.querySelector(sel);
+
+  /** @param {string} sel - CSS selector */
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
   /**
    * Resolves an address to its ENS name if available.
@@ -477,22 +628,7 @@
    * @returns {string|null} Order ID or null
    */
   function getOrderIdFromHash() {
-    const hash = window.location.hash;
-    if (!hash) return null;
-
-    // Format: #order-123 (new format)
-    const dashMatch = hash.match(/^#order-(\d+)$/);
-    if (dashMatch) return dashMatch[1];
-
-    // Format: #order=123
-    const orderMatch = hash.match(/^#order=(\d+)$/);
-    if (orderMatch) return orderMatch[1];
-
-    // Format: #123
-    const simpleMatch = hash.match(/^#(\d+)$/);
-    if (simpleMatch) return simpleMatch[1];
-
-    return null;
+    return Lib.getOrderIdFromHash(window.location.hash);
   }
 
   /**
@@ -501,9 +637,7 @@
    * @returns {string} Full URL with hash
    */
   function getOrderShareUrl(orderId) {
-    const url = new URL(window.location.href);
-    url.hash = "order-" + orderId;
-    return url.toString();
+    return Lib.getOrderShareUrl(orderId, window.location.href);
   }
 
   /**
@@ -566,9 +700,13 @@
   }
 
   /**
-   * Estimates gas cost for a transaction and formats it for display.
-   * @param {Object} txParams - Transaction parameters for estimation
-   * @returns {Promise<{gas: string, eth: string, usd: string}|null>} Formatted gas costs or null on error
+   * Estimates what a transaction will cost, in gas, ETH, and USD.
+   *
+   * Only reachable in v1 mode (CAPS.gasEstimate) — estimating requires a
+   * deployed contract to encode against and simulate the call on.
+   *
+   * @param {Object} txParams - {from, to, data, value?}
+   * @returns {Promise<Object|null>} {gas, eth, usd}, or null if unavailable
    */
   async function estimateGasCost(txParams) {
     if (!provider) return null;
@@ -585,13 +723,12 @@
       const gasCostWei = gasEstimate * gasPrice;
       const gasCostEth = Number(gasCostWei) / 1e18;
 
-      // Get ETH price for USD estimate
       const ethPrice = getTokenPrice("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
       const gasCostUsd = ethPrice ? gasCostEth * ethPrice : null;
 
       return {
         gas: gasEstimate.toString(),
-        eth: gasCostEth < 0.0001 ? gasCostEth.toExponential(2) : gasCostEth.toFixed(6),
+        eth: gasCostEth < 0.0001 ? formatTinyDecimal(gasCostEth) : gasCostEth.toFixed(6),
         usd: gasCostUsd ? formatUsd(gasCostUsd) : "$--",
       };
     } catch (e) {
@@ -631,9 +768,9 @@
       if (!res.ok) return;
 
       const data = await res.json();
-      // Filter to Ethereum mainnet (chainId: 1)
+      // Filter to the chain this build targets
       uniswapTokens = (data.tokens || [])
-        .filter((t) => t.chainId === 1)
+        .filter((t) => t.chainId === EXPECTED_CHAIN_ID)
         .map((t) => ({
           address: t.address.toLowerCase(),
           symbol: t.symbol,
@@ -647,15 +784,23 @@
   }
 
   /**
-   * Searches tokens by symbol or name.
-   * @param {string} query - Search query
-   * @param {number} limit - Max results
-   * @returns {Array} Matching tokens
+   * The "ETH" entry offered by the token autocomplete, or null when there
+   * isn't one to offer yet.
+   *
+   * The address depends on the version: v2 has a NATIVE_ETH sentinel and the
+   * create path recognizes it, but v1 has no sentinel and reaches ETH by
+   * wrapping into WETH. Handing v1 the sentinel makes `offersEthDirectly`
+   * false, so the order takes the ERC20 path and builds a contract on an
+   * address with no code. Before WETH is known, v1 has no address to offer.
+   *
+   * @returns {{address: string, symbol: string, name: string,
+   *   decimals: number, logoURI: null}|null} Token entry, or null
    */
   function getEthToken() {
-    if (!cachedWethAddress) return null;
+    const address = CAPS.nativeEth ? NATIVE_ETH : cachedWethAddress;
+    if (!address) return null;
     return {
-      address: cachedWethAddress,
+      address,
       symbol: "ETH",
       name: "Ether",
       decimals: 18,
@@ -663,45 +808,21 @@
     };
   }
 
+  /**
+   * Searches tokens by symbol or name.
+   * @param {string} query - Search query
+   * @param {number} limit - Max results
+   * @returns {Array} Matching tokens
+   */
+
   function searchTokens(query, limit = 10) {
     if (!query || query.length < 1) return [];
 
-    const q = query.toLowerCase();
-    const results = [];
-
-    // Inject native ETH when query matches
+    // Native ETH has no ERC20 entry, so it is seeded rather than matched
     const eth = getEthToken();
-    if (eth && "eth".startsWith(q)) {
-      results.push(eth);
-    }
+    const prepend = eth && "eth".startsWith(query.toLowerCase()) ? [eth] : [];
 
-    // Exact symbol matches first
-    for (const t of uniswapTokens) {
-      if (t.symbol.toLowerCase() === q) {
-        results.push(t);
-      }
-    }
-
-    // Symbol starts with query
-    for (const t of uniswapTokens) {
-      if (t.symbol.toLowerCase().startsWith(q) && !results.includes(t)) {
-        results.push(t);
-        if (results.length >= limit) return results;
-      }
-    }
-
-    // Symbol or name contains query
-    for (const t of uniswapTokens) {
-      if (
-        (t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)) &&
-        !results.includes(t)
-      ) {
-        results.push(t);
-        if (results.length >= limit) return results;
-      }
-    }
-
-    return results;
+    return Lib.searchTokens(query, uniswapTokens, limit, prepend);
   }
 
   /**
@@ -890,12 +1011,7 @@
    * @returns {Array<{address: string, symbol: string}>} Recent tokens array
    */
   function getRecentTokens() {
-    try {
-      const stored = localStorage.getItem(RECENT_TOKENS_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch (e) {
-      return [];
-    }
+    return Lib.getRecentTokens(localStorage);
   }
 
   /**
@@ -904,80 +1020,42 @@
    * @param {string} symbol - Token symbol
    */
   function addRecentToken(address, symbol) {
-    if (!address || !symbol) return;
-
-    const recent = getRecentTokens();
-    const lowerAddr = address.toLowerCase();
-
-    // Remove if already exists
-    const filtered = recent.filter((t) => t.address.toLowerCase() !== lowerAddr);
-
-    // Add to front
-    filtered.unshift({ address, symbol });
-
-    // Limit to max
-    const trimmed = filtered.slice(0, MAX_RECENT_TOKENS);
-
-    try {
-      localStorage.setItem(RECENT_TOKENS_KEY, JSON.stringify(trimmed));
-    } catch (e) {
-      console.error("Failed to save recent tokens:", e);
-    }
+    Lib.addRecentToken(address, symbol, localStorage);
   }
 
   /**
    * Saves current filter preferences to localStorage.
    */
   function saveFilterPreferences() {
-    try {
-      localStorage.setItem(FILTERS_KEY, JSON.stringify(currentFilters));
-    } catch (e) {
-      console.error("Failed to save filter preferences:", e);
-    }
+    Lib.saveFilterPreferences(currentFilters, localStorage);
   }
 
   /**
    * Saves current sort preferences to localStorage.
    */
   function saveSortPreferences() {
-    try {
-      localStorage.setItem(SORT_KEY, JSON.stringify(currentSort));
-    } catch (e) {
-      console.error("Failed to save sort preferences:", e);
-    }
+    Lib.saveSortPreferences(currentSort, localStorage);
   }
 
   /**
    * Loads filter preferences from localStorage.
    */
   function loadFilterPreferences() {
-    try {
-      const stored = localStorage.getItem(FILTERS_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.status) currentFilters.status = parsed.status;
-        if (parsed.selling) currentFilters.selling = parsed.selling;
-        if (parsed.wanting) currentFilters.wanting = parsed.wanting;
-      }
-    } catch (e) {
-      console.error("Failed to load filter preferences:", e);
-    }
+    const parsed = Lib.loadFilterPreferences(localStorage);
+    if (!parsed) return;
+    if (parsed.status) currentFilters.status = parsed.status;
+    if (parsed.selling) currentFilters.selling = parsed.selling;
+    if (parsed.wanting) currentFilters.wanting = parsed.wanting;
   }
 
   /**
    * Loads sort preferences from localStorage.
    */
   function loadSortPreferences() {
-    try {
-      const stored = localStorage.getItem(SORT_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.column) currentSort.column = parsed.column;
-        if (parsed.direction) currentSort.direction = parsed.direction;
-      }
-    } catch (e) {
-      console.error("Failed to load sort preferences:", e);
-    }
+    const parsed = Lib.loadSortPreferences(localStorage);
+    if (!parsed) return;
+    if (parsed.column) currentSort.column = parsed.column;
+    if (parsed.direction) currentSort.direction = parsed.direction;
   }
 
   /**
@@ -986,12 +1064,7 @@
    * @returns {Object}
    */
   function getWatchedOrders() {
-    try {
-      const stored = localStorage.getItem(WATCHED_ORDERS_KEY);
-      return stored ? JSON.parse(stored) : {};
-    } catch (e) {
-      return {};
-    }
+    return Lib.getWatchedOrders(localStorage);
   }
 
   /**
@@ -999,17 +1072,7 @@
    * @param {Object} order - Order object
    */
   function watchOrder(order) {
-    const watched = getWatchedOrders();
-    const status = order.active ? "Open" : order.taker ? "Filled" : "Cancelled";
-    watched[order.orderId] = {
-      status: status,
-      symbol: order.tokenA.symbol + "/" + order.tokenB.symbol,
-    };
-    try {
-      localStorage.setItem(WATCHED_ORDERS_KEY, JSON.stringify(watched));
-    } catch (e) {
-      console.error("Failed to save watched order:", e);
-    }
+    Lib.watchOrder(order, localStorage);
   }
 
   /**
@@ -1017,13 +1080,7 @@
    * @param {string} orderId - Order ID
    */
   function unwatchOrder(orderId) {
-    const watched = getWatchedOrders();
-    delete watched[orderId];
-    try {
-      localStorage.setItem(WATCHED_ORDERS_KEY, JSON.stringify(watched));
-    } catch (e) {
-      console.error("Failed to remove watched order:", e);
-    }
+    Lib.unwatchOrder(orderId, localStorage);
   }
 
   /**
@@ -1032,8 +1089,7 @@
    * @returns {boolean}
    */
   function isOrderWatched(orderId) {
-    const watched = getWatchedOrders();
-    return orderId in watched;
+    return Lib.isOrderWatched(orderId, localStorage);
   }
 
   /**
@@ -1048,7 +1104,7 @@
       const savedInfo = watched[order.orderId];
       if (!savedInfo) continue;
 
-      const currentStatus = order.active ? "Open" : order.taker ? "Filled" : "Cancelled";
+      const currentStatus = orderStatus(order);
       if (savedInfo.status !== currentStatus) {
         // Status changed, send notification
         if (currentStatus === "Filled") {
@@ -1077,59 +1133,6 @@
   }
 
   /**
-   * Creates a recent tokens dropdown for a token input field.
-   * @param {HTMLInputElement} input - Token input element
-   * @param {string} infoId - Info element selector
-   */
-  function createRecentTokensDropdown(input, infoId) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "recent-tokens-wrapper";
-    wrapper.style.position = "relative";
-
-    input.parentNode.insertBefore(wrapper, input);
-    wrapper.appendChild(input);
-
-    const dropdown = document.createElement("div");
-    dropdown.className = "recent-tokens-dropdown hidden";
-    wrapper.appendChild(dropdown);
-
-    function showDropdown() {
-      const recent = getRecentTokens();
-      if (recent.length === 0) return;
-
-      dropdown.textContent = "";
-      const title = document.createElement("div");
-      title.className = "recent-tokens-title";
-      title.textContent = "Recent:";
-      dropdown.appendChild(title);
-
-      recent.forEach((token) => {
-        const item = document.createElement("div");
-        item.className = "recent-token-item";
-        item.textContent = token.symbol;
-        item.title = token.address;
-        item.addEventListener("click", () => {
-          input.value = token.address;
-          input.dispatchEvent(new Event("input"));
-          dropdown.classList.add("hidden");
-        });
-        dropdown.appendChild(item);
-      });
-
-      dropdown.classList.remove("hidden");
-    }
-
-    function hideDropdown() {
-      setTimeout(() => {
-        dropdown.classList.add("hidden");
-      }, 200);
-    }
-
-    input.addEventListener("focus", showDropdown);
-    input.addEventListener("blur", hideDropdown);
-  }
-
-  /**
    * Creates a copy button that copies text to clipboard.
    * @param {string} text - Text to copy
    * @returns {HTMLElement} Copy button element
@@ -1155,71 +1158,20 @@
     return btn;
   }
 
-  function formatNumber(num) {
-    return String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  }
-
   /**
-   * Formats a timestamp as relative time (e.g., "2h ago", "3d ago").
-   * @param {number|string} timestamp - Unix timestamp in seconds
-   * @returns {string} Relative time string
-   */
-  function formatTimeAgo(timestamp) {
-    if (!timestamp) return "";
-
-    const now = Math.floor(Date.now() / 1000);
-    const ts = typeof timestamp === "string" ? parseInt(timestamp) : timestamp;
-    const diff = now - ts;
-
-    if (diff < 0) return "just now";
-    if (diff < 60) return diff + "s ago";
-    if (diff < 3600) return Math.floor(diff / 60) + "m ago";
-    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
-    if (diff < 604800) return Math.floor(diff / 86400) + "d ago";
-    if (diff < 2592000) return Math.floor(diff / 604800) + "w ago";
-    return Math.floor(diff / 2592000) + "mo ago";
-  }
-
-  function formatRatio(num) {
-    if (num >= 1000) {
-      return num.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    } else if (num >= 1) {
-      return num.toFixed(2);
-    } else if (num >= 0.0001) {
-      return num.toFixed(6);
-    } else {
-      return num.toExponential(2);
-    }
-  }
-
-  /**
-   * Parses a human-readable amount string to base units.
-   * @param {string} str - Amount string (e.g., "100.5")
+   * `parseAmount` that reports a rejection instead of throwing, for input
+   * listeners and form collectors where an escaped throw means a dead control.
+   * @param {string} str - User-entered amount
    * @param {number} decimals - Token decimals
-   * @returns {bigint} Amount in base units
-   * @throws {Error} If format is invalid
+   * @returns {{amount: bigint|null, error: string|null}} Parsed amount, or the
+   *   rejection message with a null amount
    */
-  function parseAmount(str, decimals) {
-    str = str.trim();
-    if (!str) return BigInt(0);
-    const cleaned = str.replace(/,/g, "");
-    if (!/^\d+(\.\d+)?$/.test(cleaned)) {
-      throw new Error("Invalid amount format. Use numbers only.");
+  function tryParseAmount(str, decimals) {
+    try {
+      return { amount: parseAmount(str, decimals), error: null };
+    } catch (e) {
+      return { amount: null, error: e.message };
     }
-    const parts = cleaned.split(".");
-    const intPart = parts[0] || "0";
-    let decPart = parts[1] || "";
-    if (decPart.length > decimals) {
-      // Check if truncation would result in zero
-      const truncated = decPart.slice(0, decimals);
-      if (intPart === "0" && /^0*$/.test(truncated)) {
-        throw new Error(`Too many decimals. This token only supports ${decimals} decimal places.`);
-      }
-      decPart = truncated;
-    } else {
-      decPart = decPart.padEnd(decimals, "0");
-    }
-    return BigInt(intPart + decPart);
   }
 
   let toastTimeout = null;
@@ -1263,193 +1215,20 @@
     }
   }
 
-  function decodeContractError(data) {
-    if (!data || data === "0x") return null;
-    try {
-      const iface = new ethers.Interface(CONTRACT_ABI);
-      const decoded = iface.parseError(data);
-      if (!decoded) return null;
-      switch (decoded.name) {
-        case "OrderNotActive":
-          return `Order #${decoded.args[0]} is no longer active`;
-        case "OrderNotFound":
-          return `Order #${decoded.args[0]} not found`;
-        case "NotMaker":
-          return "You are not the maker of this order";
-        case "ZeroAddress":
-          return "Invalid token address";
-        case "ZeroAmount":
-          return "Amount too small (check decimal places)";
-        case "SameToken":
-          return "Offered and wanted tokens must be different";
-        case "NotAContract":
-          return "Token address is not a contract";
-        case "BalanceMismatch":
-          return "Token balance mismatch during transfer";
-        case "ZeroETH":
-          return "ETH amount cannot be zero";
-        case "NotWETH":
-          return "Token is not WETH";
-        case "ETHAmountMismatch":
-          return "ETH amount does not match required amount";
-        case "ETHTransferFailed":
-          return "ETH transfer to recipient failed";
-        default:
-          return "Transaction rejected by contract";
-      }
-    } catch {
-      return null;
-    }
-  }
-
-  function parseContractError(e) {
-    // Try to decode custom contract errors from error data
-    // ethers v6 puts data in different places depending on error type
-    const errorData = e.data || e.error?.data || e.info?.error?.data;
-    const decoded = decodeContractError(errorData);
-    if (decoded) return decoded;
-
-    // Check for data in error message (ethers v6 format)
-    const msgMatch = (e.message || "").match(/data="(0x[a-fA-F0-9]+)"/);
-    if (msgMatch) {
-      const decoded2 = decodeContractError(msgMatch[1]);
-      if (decoded2) return decoded2;
-    }
-
-    const msg = (e.reason || e.message || "").toLowerCase();
-    if (msg.includes("user rejected") || msg.includes("user denied")) {
-      return "Transaction cancelled";
-    }
-    if (
-      msg.includes("insufficient") ||
-      msg.includes("exceeds balance") ||
-      msg.includes("transfer amount exceeds") ||
-      msg.includes("erc20: transfer amount")
-    ) {
-      return "Insufficient token balance";
-    }
-    if (msg.includes("allowance") || msg.includes("erc20: insufficient allowance")) {
-      return "Token approval failed";
-    }
-    if (msg.includes("nonce")) {
-      return "Transaction conflict, try again";
-    }
-    if (msg.includes("could not decode result data") || msg.includes("bad_data")) {
-      return "Token contract not found on this network";
-    }
-    if (msg.includes("missing revert data")) {
-      return "Transaction failed. Order may already be filled or cancelled.";
-    }
-    if (msg.includes("gas") && msg.includes("estimation")) {
-      return "Transaction would fail. Check order status and try again.";
-    }
-    if (msg.includes("network") || msg.includes("disconnected")) {
-      return "Network error. Check your connection.";
-    }
-    if (msg.includes("timeout")) {
-      return "Request timed out. Please try again.";
-    }
-    if (msg.includes("replacement") && msg.includes("underpriced")) {
-      return "Gas price too low. Try again with higher gas.";
-    }
-    if (msg.includes("execution reverted")) {
-      return "Transaction failed. The order may no longer be available.";
-    }
-    // Avoid showing raw technical messages - use short message if available
-    if (e.shortMessage && e.shortMessage.length < 100) {
-      return e.shortMessage;
-    }
-    return "Transaction failed. Please try again.";
-  }
-
   /**
-   * Sorts orders array based on current sort state.
+   * Sorts orders array based on current sort state. lib.js owns the comparator;
+   * live prices and the quote-side rule are passed in.
    * @param {Array} orders - Orders array from subgraph
    * @returns {Array} Sorted orders array
    */
   function sortOrders(orders) {
-    const col = currentSort.column;
-    const dir = currentSort.direction === "asc" ? 1 : -1;
-
-    return [...orders].sort((a, b) => {
-      let valA, valB;
-
-      switch (col) {
-        case "orderId":
-          valA = parseInt(a.orderId);
-          valB = parseInt(b.orderId);
-          break;
-        case "maker":
-          valA = a.maker.toLowerCase();
-          valB = b.maker.toLowerCase();
-          break;
-        case "tokenA":
-          valA = (a.tokenA.symbol || "").toLowerCase();
-          valB = (b.tokenA.symbol || "").toLowerCase();
-          break;
-        case "amountA":
-          valA = Number(BigInt(a.amountA)) / Math.pow(10, a.tokenA.decimals);
-          valB = Number(BigInt(b.amountA)) / Math.pow(10, b.tokenA.decimals);
-          break;
-        case "tokenB":
-          valA = (a.tokenB.symbol || "").toLowerCase();
-          valB = (b.tokenB.symbol || "").toLowerCase();
-          break;
-        case "amountB":
-          valA = Number(BigInt(a.amountB)) / Math.pow(10, a.tokenB.decimals);
-          valB = Number(BigInt(b.amountB)) / Math.pow(10, b.tokenB.decimals);
-          break;
-        case "usdVal":
-          const priceA = getTokenPrice(a.tokenA.address);
-          const priceB = getTokenPrice(b.tokenA.address);
-          const humanA = Number(BigInt(a.amountA)) / Math.pow(10, a.tokenA.decimals);
-          const humanB = Number(BigInt(b.amountA)) / Math.pow(10, b.tokenA.decimals);
-          valA = priceA !== null ? humanA * priceA : -1;
-          valB = priceB !== null ? humanB * priceB : -1;
-          break;
-        case "price":
-          const amtA1 = BigInt(a.amountA);
-          const amtB1 = BigInt(a.amountB);
-          const amtA2 = BigInt(b.amountA);
-          const amtB2 = BigInt(b.amountB);
-          const qsA = preferredQuoteSide(a.tokenA.address, a.tokenB.address);
-          if (qsA === "A") {
-            valA =
-              amtB1 > 0n
-                ? (Number(amtA1) / Number(amtB1)) *
-                  Math.pow(10, a.tokenB.decimals - a.tokenA.decimals)
-                : 0;
-          } else {
-            valA =
-              amtA1 > 0n
-                ? (Number(amtB1) / Number(amtA1)) *
-                  Math.pow(10, a.tokenA.decimals - a.tokenB.decimals)
-                : 0;
-          }
-          const qsB = preferredQuoteSide(b.tokenA.address, b.tokenB.address);
-          if (qsB === "A") {
-            valB =
-              amtB2 > 0n
-                ? (Number(amtA2) / Number(amtB2)) *
-                  Math.pow(10, b.tokenB.decimals - b.tokenA.decimals)
-                : 0;
-          } else {
-            valB =
-              amtA2 > 0n
-                ? (Number(amtB2) / Number(amtA2)) *
-                  Math.pow(10, b.tokenA.decimals - b.tokenB.decimals)
-                : 0;
-          }
-          break;
-        default:
-          return 0;
-      }
-
-      if (typeof valA === "string") {
-        return valA.localeCompare(valB) * dir;
-      }
-      return (valA - valB) * dir;
-    });
+    return Lib.sortOrders(
+      orders,
+      currentSort.column,
+      currentSort.direction,
+      getTokenPrice,
+      preferredQuoteSide
+    );
   }
 
   /**
@@ -1496,12 +1275,20 @@
     for (let i = 0; i < count; i++) {
       const tr = document.createElement("tr");
 
-      // Column 0: Action (empty)
+      // Column 0: Select (empty). Absent when the table has no select column.
+      if (CAPS.batch) {
+        const tdSelect = document.createElement("td");
+        tdSelect.className = "select-col";
+        tdSelect.dataset.label = "";
+        tr.appendChild(tdSelect);
+      }
+
+      // Column 1: Action (empty)
       const tdAction = document.createElement("td");
       tdAction.dataset.label = "";
       tr.appendChild(tdAction);
 
-      // Column 1: Trade ID
+      // Column 2: Trade ID
       const tdId = document.createElement("td");
       tdId.dataset.label = "Trade ID";
       const skelId = document.createElement("span");
@@ -1573,19 +1360,33 @@
     const modal = $("#modal");
     $("#modal-title").textContent = title;
 
+    // Body may be a plain string or a built-up DOM node (batch summaries and
+    // the partial-fill controls need structure, not just text).
     const bodyEl = $("#modal-body");
-    bodyEl.textContent = body;
+    bodyEl.textContent = "";
+    if (body instanceof Node) {
+      bodyEl.appendChild(body);
+    } else {
+      bodyEl.textContent = body;
+    }
 
     // Add gas estimate if available
     if (gasEstimate) {
       const gasDiv = document.createElement("div");
       gasDiv.className = "gas-estimate";
       gasDiv.appendChild(document.createElement("br"));
-      gasDiv.appendChild(
-        document.createTextNode(
-          "Estimated gas: " + gasEstimate.gas + " (~" + gasEstimate.eth + " ETH / " + gasEstimate.usd + ")"
-        )
+      const gasText = document.createElement("span");
+      setNumberText(
+        gasText,
+        "Estimated gas: " +
+          gasEstimate.gas +
+          " (~" +
+          gasEstimate.eth +
+          " ETH / " +
+          gasEstimate.usd +
+          ")"
       );
+      gasDiv.appendChild(gasText);
       bodyEl.appendChild(gasDiv);
     }
 
@@ -1609,6 +1410,94 @@
   }
 
   /**
+   * Gives the fill button of an order that can be filled in parts a hover/focus
+   * hint explaining the asterisk in its label ("[Fill*]", "Fill Order*").
+   *
+   * The hint is drawn in CSS (data-tooltip) rather than with `title`, which
+   * shows only after a delay and never on touch.
+   *
+   * @param {HTMLElement} btn - The fill link or button
+   */
+  function hintPartialFill(btn) {
+    btn.classList.add("partial-fill-hint");
+    btn.dataset.tooltip = "Partial fills allowed";
+  }
+
+  /**
+   * Warning icon for a token that is not on any token list we ship, with a
+   * hover/focus hint drawn from data-tooltip (see hintPartialFill for why not
+   * `title`). The empty `title` keeps an ancestor's native tooltip -- the token
+   * cell's address -- from stacking on top of it.
+   *
+   * @returns {HTMLSpanElement}
+   */
+  function createUnknownTokenBadge() {
+    const badge = document.createElement("span");
+    badge.className = "unknown-token";
+    badge.tabIndex = 0;
+    badge.title = "";
+    badge.dataset.tooltip = UNKNOWN_TOKEN_WARNING;
+    badge.setAttribute("aria-label", UNKNOWN_TOKEN_WARNING);
+
+    const img = document.createElement("img");
+    img.src = "warning.svg";
+    img.alt = "";
+    badge.appendChild(img);
+    return badge;
+  }
+
+  /**
+   * Appends the unknown-token badge when `address` is an unlisted contract.
+   * Native ETH has no contract to impersonate, so it never gets one.
+   * @param {HTMLElement} el - Element to append to
+   * @param {string} address - Token address
+   */
+  function appendUnknownTokenBadge(el, address) {
+    if (isNativeEth(address) || isKnownToken(address)) return;
+    el.appendChild(createUnknownTokenBadge());
+  }
+
+  /**
+   * Renders "<amount> <symbol>" into an order-modal row.
+   *
+   * Links to CoinGecko and offers the contract address where there is one;
+   * native ETH gets neither. When the order is partly filled, the original
+   * amount is appended so the remaining figure has context.
+   *
+   * @param {HTMLElement} el - Row value element to populate
+   * @param {Object} token - Token with {address, symbol, decimals}
+   * @param {bigint} amount - Remaining amount in base units
+   * @param {string|undefined} original - Original amount in base units
+   */
+  function fillOrderModalAmount(el, token, amount, original) {
+    el.textContent = "";
+    const decimals = token.decimals || 18;
+    const text = formatAmount(amount, decimals) + " " + token.symbol;
+
+    const native = isNativeEth(token.address);
+    const cgUrl = native ? null : coinGeckoUrl(token.address);
+    let amountNode = document.createTextNode(text);
+    if (cgUrl) {
+      const link = document.createElement("a");
+      link.href = cgUrl;
+      link.target = "_blank";
+      link.textContent = text;
+      amountNode = link;
+    }
+
+    el.appendChild(amountNode);
+    appendUnknownTokenBadge(el, token.address);
+    if (!native) el.appendChild(createCopyButton(token.address));
+
+    if (original !== null && original !== undefined && BigInt(original) > amount) {
+      const hint = document.createElement("span");
+      hint.className = "partial-progress";
+      hint.textContent = "of " + formatAmount(original, decimals) + " left";
+      el.appendChild(hint);
+    }
+  }
+
+  /**
    * Opens the order detail modal for a specific order.
    * @param {Object} order - Order object with all metadata
    */
@@ -1623,14 +1512,13 @@
     statusEl.textContent = "";
     const statusSpan = document.createElement("span");
     statusSpan.className = "order-modal-status";
+    const statusText = orderStatus(order);
+    statusSpan.textContent = statusText;
     if (order.active) {
-      statusSpan.textContent = "Open";
       statusSpan.classList.add("status-open");
-    } else if (order.taker) {
-      statusSpan.textContent = "Filled";
+    } else if (statusText === "Filled") {
       statusSpan.classList.add("status-filled");
     } else {
-      statusSpan.textContent = "Cancelled";
       statusSpan.classList.add("status-cancelled");
     }
     statusEl.appendChild(statusSpan);
@@ -1648,7 +1536,7 @@
     const makerEl = $("#order-modal-maker");
     makerEl.textContent = "";
     const makerLink = document.createElement("a");
-    makerLink.href = "https://etherscan.io/address/" + order.maker;
+    makerLink.href = EXPLORER_URL + "/address/" + order.maker;
     makerLink.target = "_blank";
     makerLink.rel = "noopener noreferrer";
     const ensName = getCachedEns(order.maker);
@@ -1657,48 +1545,29 @@
     makerEl.appendChild(makerLink);
     makerEl.appendChild(createCopyButton(order.maker));
 
+    // "of X left" is the maker's view of their own order's progress. To anyone
+    // else the remaining amount simply is the order, so only the maker sees it.
+    const showFillProgress =
+      Boolean(userAddress) && order.maker.toLowerCase() === userAddress.toLowerCase();
+
     // Offered
     const offeredEl = $("#order-modal-offered");
-    offeredEl.textContent = "";
     const tokenADecimals = order.tokenA.decimals || 18;
-    const amountA = BigInt(order.amountA);
-    const formattedAmountA = formatAmount(amountA, tokenADecimals);
-    const tokenAId = COINGECKO_ID_MAP[order.tokenA.address.toLowerCase()];
-    if (tokenAId) {
-      const tokenALink = document.createElement("a");
-      tokenALink.href = "https://www.coingecko.com/en/coins/" + tokenAId;
-      tokenALink.target = "_blank";
-      tokenALink.textContent = formattedAmountA + " " + order.tokenA.symbol;
-      offeredEl.appendChild(tokenALink);
-    } else {
-      offeredEl.textContent = formattedAmountA + " " + order.tokenA.symbol;
-    }
-    offeredEl.appendChild(createCopyButton(order.tokenA.address));
+    const amountA = BigInt(order.availableA);
+    fillOrderModalAmount(offeredEl, order.tokenA, amountA, showFillProgress ? order.amountA : null);
 
     // Wanted
     const wantedEl = $("#order-modal-wanted");
-    wantedEl.textContent = "";
     const tokenBDecimals = order.tokenB.decimals || 18;
-    const amountB = BigInt(order.amountB);
-    const formattedAmountB = formatAmount(amountB, tokenBDecimals);
-    const tokenBId = COINGECKO_ID_MAP[order.tokenB.address.toLowerCase()];
-    if (tokenBId) {
-      const tokenBLink = document.createElement("a");
-      tokenBLink.href = "https://www.coingecko.com/en/coins/" + tokenBId;
-      tokenBLink.target = "_blank";
-      tokenBLink.textContent = formattedAmountB + " " + order.tokenB.symbol;
-      wantedEl.appendChild(tokenBLink);
-    } else {
-      wantedEl.textContent = formattedAmountB + " " + order.tokenB.symbol;
-    }
-    wantedEl.appendChild(createCopyButton(order.tokenB.address));
+    const amountB = BigInt(order.availableB);
+    fillOrderModalAmount(wantedEl, order.tokenB, amountB, showFillProgress ? order.amountB : null);
 
     // USD Value
     const usdEl = $("#order-modal-usd");
     const tokenAPrice = getTokenPrice(order.tokenA.address);
     if (tokenAPrice !== null && amountA > 0n) {
       const humanAmountA = Number(amountA) / Math.pow(10, tokenADecimals);
-      usdEl.textContent = formatUsd(humanAmountA * tokenAPrice);
+      setNumberText(usdEl, formatUsd(humanAmountA * tokenAPrice));
     } else {
       usdEl.textContent = "$ --";
     }
@@ -1757,7 +1626,7 @@
       takerRow.style.display = "flex";
       takerEl.textContent = "";
       const takerLink = document.createElement("a");
-      takerLink.href = "https://etherscan.io/address/" + order.taker;
+      takerLink.href = EXPLORER_URL + "/address/" + order.taker;
       takerLink.target = "_blank";
       takerLink.rel = "noopener noreferrer";
       const takerEns = getCachedEns(order.taker);
@@ -1798,7 +1667,9 @@
         actionsEl.appendChild(cancelBtn);
       } else {
         const fillBtn = document.createElement("button");
-        fillBtn.textContent = "Fill Order";
+        const partial = CAPS.partialFill && allowsPartialFill(order);
+        fillBtn.textContent = partial ? "Fill Order*" : "Fill Order";
+        if (partial) hintPartialFill(fillBtn);
         fillBtn.addEventListener("click", async () => {
           modal.classList.add("hidden");
           if (!userAddress) {
@@ -1885,6 +1756,11 @@
    * @returns {Promise<{address: string, symbol: string, name: string, decimals: number|null}>}
    */
   async function fetchTokenInfo(address) {
+    // Native ETH has no contract to read from.
+    if (isNativeEth(address)) {
+      return { address: NATIVE_ETH, symbol: "ETH", name: "Ether", decimals: 18 };
+    }
+
     const lowerAddr = address.toLowerCase();
     if (tokenCache.has(lowerAddr)) {
       return tokenCache.get(lowerAddr);
@@ -1900,9 +1776,7 @@
       const safeName = String(name).slice(0, 100);
       const decimalsNum = Number(decimals);
       const safeDecimals =
-        Number.isInteger(decimalsNum) && decimalsNum >= 0 && decimalsNum <= 77
-          ? decimalsNum
-          : null;
+        Number.isInteger(decimalsNum) && decimalsNum >= 0 && decimalsNum <= 77 ? decimalsNum : null;
       const info = { address, symbol: safeSymbol, name: safeName, decimals: safeDecimals };
       if (safeDecimals !== null) {
         tokenCache.set(lowerAddr, info);
@@ -1918,6 +1792,24 @@
   // ============================================================================
 
   /**
+   * Re-indents a multi-line GraphQL selection to sit correctly inside a query.
+   *
+   * The selection sets come from lib.js unindented, since the depth they land
+   * at depends on the query embedding them.
+   *
+   * @param {string} block - Newline-separated selection set
+   * @param {number} spaces - Leading spaces to apply to every line
+   * @returns {string} Indented block
+   */
+  function indent(block, spaces) {
+    const pad = " ".repeat(spaces);
+    return block
+      .split("\n")
+      .map((line) => pad + line)
+      .join("\n");
+  }
+
+  /**
    * Executes a GraphQL query against The Graph subgraph.
    * @param {string} query - GraphQL query string
    * @param {Object} variables - Query variables
@@ -1927,7 +1819,7 @@
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT);
     try {
-      const res = await fetch(CONFIG.SUBGRAPH_URL, {
+      const res = await fetch(SUBGRAPH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query, variables }),
@@ -1959,15 +1851,22 @@
   }
 
   /**
-   * Polls the subgraph until an order's active status changes.
-   * Used after fill/cancel to wait for indexing before refreshing UI.
-   * @param {string} orderId - The order ID to check
-   * @param {boolean} expectedActive - The expected active status after the change
-   * @param {number} maxAttempts - Maximum polling attempts (default 10)
-   * @param {number} interval - Polling interval in ms (default 1500)
+   * Polls the subgraph until an order reaches an expected state.
+   *
+   * Indexing lags the chain by a few seconds, so reloading straight after a
+   * confirmed transaction would show the pre-transaction row. Only reachable
+   * in v1 mode (CAPS.subgraphPolling); nothing indexes v2 yet.
+   *
+   * @param {string} orderId - Order to watch
+   * @param {boolean} expectedActive - Active flag to wait for
+   * @param {number} [maxAttempts=10] - Polls before giving up
+   * @param {number} [interval=1500] - Milliseconds between polls
+   * @returns {Promise<boolean>} True if the state was observed
    */
   async function waitForOrderUpdate(orderId, expectedActive, maxAttempts = 10, interval = 1500) {
     for (let i = 0; i < maxAttempts; i++) {
+      // Silent: transient errors while polling are expected and must not
+      // raise a toast on every attempt.
       const data = await querySubgraph(
         `
         query {
@@ -1978,7 +1877,7 @@
       `,
         {},
         true
-      ); // silent mode - don't show error toasts during polling
+      );
       if (data && data.order && data.order.active === expectedActive) {
         return true;
       }
@@ -1992,10 +1891,7 @@
       querySubgraph(`
         query {
           globalStats(id: "global") {
-            totalOrders
-            activeOrders
-            filledOrders
-            cancelledOrders
+            ${statsQuerySelection(ACTIVE_VERSION)}
           }
         }
       `),
@@ -2010,12 +1906,14 @@
       `),
     ]);
 
-    if (statsData && statsData.globalStats) {
-      const s = statsData.globalStats;
-      $("#stat-total").textContent = formatNumber(s.totalOrders || "0");
-      $("#stat-active").textContent = formatNumber(s.activeOrders || "0");
-      $("#stat-filled").textContent = formatNumber(s.filledOrders || "0");
-      $("#stat-cancelled").textContent = formatNumber(s.cancelledOrders || "0");
+    // v2 renamed two of these counters and splits partially filled orders out;
+    // normalizeStats folds both shapes onto the four tiles the header shows.
+    const stats = normalizeStats(statsData && statsData.globalStats, ACTIVE_VERSION);
+    if (stats) {
+      $("#stat-total").textContent = formatNumber(stats.total);
+      $("#stat-active").textContent = formatNumber(stats.open);
+      $("#stat-filled").textContent = formatNumber(stats.filled);
+      $("#stat-cancelled").textContent = formatNumber(stats.cancelled);
     }
 
     if (tokenData && tokenData.tokens && tokenData.tokens.length > 0) {
@@ -2037,18 +1935,19 @@
         totalUsd += volume * price;
       }
 
-      $("#stat-volume").textContent = hasPrice
-        ? "$" + formatNumber(Math.round(totalUsd))
-        : "N/A";
+      $("#stat-volume").textContent = hasPrice ? "$" + formatNumber(Math.round(totalUsd)) : "N/A";
     } else {
       $("#stat-volume").textContent = "N/A";
     }
   }
 
   async function loadPopularPairs() {
+    // v1 indexes PairStats ranked by tradeCount; v2 renamed both the entity and
+    // the counter, since one order can now produce several fills.
+    const { root, orderBy } = popularPairsQuery(ACTIVE_VERSION);
     const data = await querySubgraph(`
       query {
-        pairStats_collection(first: 10, orderBy: tradeCount, orderDirection: desc) {
+        ${root}(first: 10, orderBy: ${orderBy}, orderDirection: desc) {
           tokenA {
             address
             symbol
@@ -2062,9 +1961,10 @@
     `);
 
     const pairsList = $("#pairs-list");
-    if (data && data.pairStats_collection && data.pairStats_collection.length > 0) {
+    const pairs = data ? data[root] : null;
+    if (pairs && pairs.length > 0) {
       pairsList.textContent = "";
-      data.pairStats_collection.forEach((p, i) => {
+      pairs.forEach((p, i) => {
         if (i > 0) pairsList.appendChild(document.createTextNode(" "));
         const link = document.createElement("a");
         link.href = "#";
@@ -2151,14 +2051,12 @@
     const skip = (currentPage - 1) * CONFIG.PAGE_SIZE;
     const conditions = [];
 
-    if (currentFilters.status === "open") {
-      conditions.push("active: true");
-    } else if (currentFilters.status === "filled") {
-      conditions.push("active: false, taker_not: null");
-    } else if (currentFilters.status === "cancelled") {
-      conditions.push("active: false, taker: null");
+    // v1 infers the state from active + taker; v2 indexes a status enum and is
+    // asked directly. "watched" and "all" add nothing and are handled client-side.
+    const statusCondition = statusFilterCondition(ACTIVE_VERSION, currentFilters.status);
+    if (statusCondition) {
+      conditions.push(statusCondition);
     }
-    // "watched" and "all" have no status condition - handled client-side
 
     if (currentFilters.selling && isValidAddress(currentFilters.selling)) {
       conditions.push(`tokenA_: { address: "${currentFilters.selling.toLowerCase()}" }`);
@@ -2172,40 +2070,50 @@
 
     const where = conditions.length > 0 ? `where: { ${conditions.join(", ")} }` : "";
 
+    // The two subgraphs share almost no field names, and graph-node rejects the
+    // whole query on a single unknown field — asking either version for the
+    // other's shape returns nothing at all, not a partial result.
+    const orderFields = indent(orderQuerySelection(ACTIVE_VERSION), 10);
+
     const data = await querySubgraph(`
       query {
         orders(first: ${CONFIG.PAGE_SIZE}, skip: ${skip}, orderBy: orderId, orderDirection: desc, ${where}) {
-          orderId
-          maker
-          amountA
-          amountB
-          active
-          taker
-          createdAt
-          filledAt
-          tokenA {
-            address
-            symbol
-            decimals
-          }
-          tokenB {
-            address
-            symbol
-            decimals
-          }
+${orderFields}
         }
       }
     `);
 
     if (!data || !data.orders) {
       cachedOrders = [];
+      // "No orders found" would be a lie when the query never came back —
+      // and in v2 against the live subgraph it never can, because no deployed
+      // subgraph indexes v2 yet. renderOrders says which of the two it is.
+      ordersQueryFailed = true;
     } else {
+      ordersQueryFailed = false;
       cachedOrders = data.orders;
-      // Display WETH as ETH
       for (const o of cachedOrders) {
-        if (isWeth(o.tokenA.address)) o.tokenA.symbol = "ETH";
-        if (isWeth(o.tokenB.address)) o.tokenB.symbol = "ETH";
+        // v1 only: display WETH as ETH, because wrapping is the only way a v1
+        // order can involve ETH at all. v2 escrows native ETH under its own
+        // sentinel and treats WETH as an ordinary ERC20, so relabelling there
+        // would merge two genuinely different assets into one row.
+        if (!CAPS.nativeEth) {
+          if (isWeth(o.tokenA.address)) o.tokenA.symbol = "ETH";
+          if (isWeth(o.tokenB.address)) o.tokenB.symbol = "ETH";
+        }
+        // Folds either subgraph's shape onto one internal model, so rendering
+        // and fill math stay on a single code path.
+        normalizeOrder(o, ACTIVE_VERSION);
       }
+    }
+
+    // A background auto-refresh keeps the selection (only stale IDs are
+    // dropped); any deliberate reload — filter, page, wallet, post-transaction
+    // — resets it, since the user is looking at a different set of orders.
+    if (silent) {
+      pruneSelection();
+    } else {
+      clearSelection(false);
     }
 
     // Check watched orders for status changes
@@ -2258,6 +2166,213 @@
     return cachedOrders.find((o) => o.orderId === orderId) || null;
   }
 
+  // ============================================================================
+  // Selection (multi-select)
+  // ============================================================================
+
+  /**
+   * Returns the selected orders, in display order.
+   * @returns {Object[]}
+   */
+  function getSelectedOrders() {
+    return sortOrders(cachedOrders).filter((o) => selectedOrderIds.has(o.orderId));
+  }
+
+  /**
+   * The order that anchors the selection rules — the first one still selected,
+   * in display order. Every other order must be compatible with it.
+   * @returns {Object|null}
+   */
+  function getSelectionAnchor() {
+    return getSelectedOrders()[0] || null;
+  }
+
+  /**
+   * Empties the selection and refreshes the table.
+   * @param {boolean} [rerender=true] - Whether to re-render rows
+   */
+  function clearSelection(rerender = true) {
+    if (selectedOrderIds.size === 0 && !selectionAnchorId) return;
+    selectedOrderIds.clear();
+    selectionAnchorId = null;
+    if (rerender) renderOrders();
+  }
+
+  /**
+   * Drops selected IDs that are no longer on screen (page change, refresh,
+   * filter change) so the selection never references invisible orders.
+   */
+  function pruneSelection() {
+    const visible = new Set(cachedOrders.map((o) => o.orderId));
+    for (const id of [...selectedOrderIds]) {
+      if (!visible.has(id)) selectedOrderIds.delete(id);
+    }
+    if (selectionAnchorId && !visible.has(selectionAnchorId)) {
+      selectionAnchorId = null;
+    }
+  }
+
+  /**
+   * Handles a checkbox click, including shift-click range selection.
+   * @param {Object} order - Order whose row was clicked
+   * @param {boolean} shiftKey - Whether shift was held
+   */
+  function toggleOrderSelection(order, shiftKey) {
+    const sorted = sortOrders(cachedOrders);
+
+    if (shiftKey && selectionAnchorId && selectionAnchorId !== order.orderId) {
+      const ids = getShiftRangeIds(
+        sorted,
+        selectionAnchorId,
+        order.orderId,
+        getSelectionAnchor(),
+        userAddress
+      );
+      for (const id of ids) selectedOrderIds.add(id);
+    } else if (selectedOrderIds.has(order.orderId)) {
+      selectedOrderIds.delete(order.orderId);
+      if (selectionAnchorId === order.orderId) selectionAnchorId = null;
+    } else {
+      selectedOrderIds.add(order.orderId);
+      selectionAnchorId = order.orderId;
+    }
+
+    renderOrders();
+  }
+
+  /**
+   * Selects every open order the connected wallet made on this page,
+   * surfacing [Cancel All]. Only reachable from the My Orders filter.
+   */
+  function selectAllOwnOrders() {
+    if (!userAddress) return;
+
+    selectedOrderIds.clear();
+    for (const order of sortOrders(cachedOrders)) {
+      if (order.active && resolveSelectionMode(order, userAddress) === "own") {
+        selectedOrderIds.add(order.orderId);
+      }
+    }
+    selectionAnchorId = null;
+    renderOrders();
+  }
+
+  /**
+   * Syncs the selection bar to the current selection.
+   *
+   * Shown from one order onward rather than two: ticking a single box and
+   * seeing nothing appear reads as broken, and both batch actions work fine
+   * with a single order.
+   */
+  function renderSelectionBar() {
+    const bar = $("#selection-bar");
+
+    // Without batch entry points there is nothing to select for, so the bar
+    // stays down regardless of what is in selectedOrderIds.
+    if (!CAPS.batch) {
+      bar.classList.add("hidden");
+      return;
+    }
+
+    const selectAllBtn = $("#select-all-orders");
+    const fillBtn = $("#batch-fill-btn");
+    const cancelBtn = $("#batch-cancel-btn");
+
+    // [Select All] belongs to the My Orders view, where Cancel All is the point.
+    selectAllBtn.classList.toggle("hidden", !(currentFilters.myOrders && userAddress));
+
+    const count = selectedOrderIds.size;
+    if (count === 0) {
+      bar.classList.toggle("hidden", !(currentFilters.myOrders && userAddress));
+      $("#selection-count").textContent = "0 selected";
+      fillBtn.classList.add("hidden");
+      cancelBtn.classList.add("hidden");
+      return;
+    }
+
+    bar.classList.remove("hidden");
+    $("#selection-count").textContent = count + (count === 1 ? " order" : " orders") + " selected";
+
+    const isOwn = resolveSelectionMode(getSelectionAnchor(), userAddress) === "own";
+    fillBtn.classList.toggle("hidden", isOwn);
+    cancelBtn.classList.toggle("hidden", !isOwn);
+  }
+
+  /**
+   * Builds a token cell for the order table.
+   *
+   * Native ETH has no contract, so it renders as bare text with no CoinGecko
+   * link, copy button, or address tooltip. That absence is also what tells a
+   * native-ETH order apart from a WETH order, which still shows its address.
+   *
+   * @param {Object} token - Token with {address, symbol}
+   * @param {string} label - Mobile card label
+   * @returns {HTMLTableCellElement}
+   */
+  function buildTokenCell(token, label) {
+    const td = document.createElement("td");
+    td.dataset.label = label;
+
+    if (isNativeEth(token.address)) {
+      const span = document.createElement("span");
+      span.textContent = token.symbol;
+      span.title = "Native ETH";
+      td.appendChild(span);
+      return td;
+    }
+
+    const wrap = document.createElement("span");
+    wrap.style.whiteSpace = "nowrap";
+
+    const cgUrl = coinGeckoUrl(token.address);
+    if (cgUrl) {
+      const link = document.createElement("a");
+      link.href = cgUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = token.symbol;
+      wrap.appendChild(link);
+    } else {
+      const span = document.createElement("span");
+      span.textContent = token.symbol;
+      wrap.appendChild(span);
+    }
+
+    appendUnknownTokenBadge(wrap, token.address);
+    wrap.appendChild(createCopyButton(token.address));
+    td.appendChild(wrap);
+    td.title = token.address;
+    return td;
+  }
+
+  /**
+   * Builds an amount cell for the order table.
+   *
+   * v2 amounts are what is *left* to fill, so a partially filled order also
+   * shows what it started at.
+   *
+   * @param {string} remaining - Remaining amount in base units
+   * @param {string|undefined} original - Original amount in base units
+   * @param {number} decimals - Token decimals
+   * @param {string} label - Mobile card label
+   * @returns {HTMLTableCellElement}
+   */
+  function buildAmountCell(remaining, original, decimals, label) {
+    const td = document.createElement("td");
+    td.dataset.label = label;
+    td.appendChild(document.createTextNode(formatAmount(remaining, decimals)));
+
+    if (original !== null && original !== undefined && BigInt(original) > BigInt(remaining)) {
+      const hint = document.createElement("span");
+      hint.className = "partial-progress";
+      hint.textContent = "of " + formatAmount(original, decimals) + " left";
+      hint.title = "Partially filled";
+      td.appendChild(hint);
+    }
+
+    return td;
+  }
+
   function renderOrders() {
     const tbody = $("#order-table");
     tbody.textContent = "";
@@ -2265,15 +2380,27 @@
     if (cachedOrders.length === 0) {
       const tr = document.createElement("tr");
       const td = document.createElement("td");
-      td.colSpan = 9;
-      td.textContent = "No orders found";
+      td.colSpan = orderColumnCount();
+      if (!ordersQueryFailed) {
+        td.textContent = "No orders found";
+      } else if (!CAPS.live) {
+        // The usual reason a v2 query fails: it asks for fields no deployed
+        // subgraph has. Say so, rather than implying the board is empty.
+        td.textContent =
+          "Swapboard v2 is not deployed yet, so there are no orders to index. " +
+          "Switch to v1 for live orders, or add ?mock=true to preview v2 with simulated data.";
+      } else {
+        td.textContent = "Could not load orders. Check your connection and try again.";
+      }
       tr.appendChild(td);
       tbody.appendChild(tr);
       updatePagination(0);
+      renderSelectionBar();
       return;
     }
 
     const sortedOrders = sortOrders(cachedOrders);
+    const selectionAnchor = getSelectionAnchor();
 
     for (const order of sortedOrders) {
       const tr = document.createElement("tr");
@@ -2285,8 +2412,9 @@
 
       const tokenADecimals = order.tokenA.decimals;
       const tokenBDecimals = order.tokenB.decimals;
-      const amountA = BigInt(order.amountA);
-      const amountB = BigInt(order.amountB);
+      // The row quotes what is still fillable, so price and USD value do too.
+      const amountA = BigInt(order.availableA);
+      const amountB = BigInt(order.availableB);
 
       // Price: calculate both directions for toggle.
       // priceNormal is the side shown by default; priceInverted is shown after click.
@@ -2296,10 +2424,8 @@
       let priceNormal = "N/A";
       let priceInverted = "N/A";
       if (amountA > 0n && amountB > 0n) {
-        const priceBPerA =
-          (Number(amountB) / Number(amountA)) * Math.pow(10, tokenADecimals - tokenBDecimals);
-        const priceAPerB =
-          (Number(amountA) / Number(amountB)) * Math.pow(10, tokenBDecimals - tokenADecimals);
+        const priceBPerA = priceRatio(amountB, amountA, tokenBDecimals, tokenADecimals);
+        const priceAPerB = priceRatio(amountA, amountB, tokenADecimals, tokenBDecimals);
         const bQuoted = isStable(order.tokenB.address)
           ? formatUsd(priceBPerA) + " / " + escapeHtml(order.tokenA.symbol)
           : formatRatio(priceBPerA) +
@@ -2333,7 +2459,34 @@
       }
 
       // Build row with links
-      // Column 0: Action button (Fill for others, Cancel for own) or status
+      // Column 0: Selection checkbox. Disabled when the order can't join the
+      // current selection (closed, or it would mix own/other orders or pairs).
+      // Omitted entirely without batch entry points to select orders *for*.
+      if (CAPS.batch) {
+        const tdSelect = document.createElement("td");
+        tdSelect.className = "select-col";
+        tdSelect.dataset.label = "";
+        const selectBox = document.createElement("input");
+        selectBox.type = "checkbox";
+        selectBox.checked = selectedOrderIds.has(order.orderId);
+        selectBox.disabled =
+          !selectBox.checked && !canSelectOrder(order, selectionAnchor, userAddress);
+        selectBox.title = selectBox.disabled
+          ? "Can't mix your own orders with other makers' orders, or different pairs when filling"
+          : "Select order #" + order.orderId;
+        // Suppress the browser's shift-click text selection across rows.
+        selectBox.addEventListener("mousedown", (e) => {
+          if (e.shiftKey) e.preventDefault();
+        });
+        selectBox.addEventListener("click", (e) => {
+          e.stopPropagation();
+          toggleOrderSelection(order, e.shiftKey);
+        });
+        tdSelect.appendChild(selectBox);
+        tr.appendChild(tdSelect);
+      }
+
+      // Column 1: Action button (Fill for others, Cancel for own) or status
       const tdAction = document.createElement("td");
       tdAction.dataset.label = "";
       if (order.active) {
@@ -2351,8 +2504,10 @@
         } else {
           const fillBtn = document.createElement("a");
           fillBtn.href = "#";
-          fillBtn.textContent = "[Fill]";
+          const partial = CAPS.partialFill && allowsPartialFill(order);
+          fillBtn.textContent = partial ? "[Fill*]" : "[Fill]";
           fillBtn.classList.add("buy-btn");
+          if (partial) hintPartialFill(fillBtn);
           fillBtn.addEventListener("click", async (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -2367,7 +2522,8 @@
         }
       } else {
         const statusSpan = document.createElement("span");
-        if (order.taker) {
+        const closedAsFilled = orderStatus(order) === "Filled";
+        if (closedAsFilled) {
           statusSpan.textContent = "[FILLED]";
           statusSpan.classList.add("status-filled-label");
         } else {
@@ -2375,7 +2531,7 @@
           statusSpan.classList.add("status-canceled-label");
         }
         tdAction.appendChild(statusSpan);
-        if (order.taker && order.filledAt) {
+        if (closedAsFilled && order.filledAt) {
           const filledDateSpan = document.createElement("span");
           filledDateSpan.className = "order-age";
           filledDateSpan.textContent = formatTimeAgo(parseInt(order.filledAt));
@@ -2385,7 +2541,7 @@
       }
       tr.appendChild(tdAction);
 
-      // Column 1: Trade ID (clickable to open detail modal)
+      // Column 2: Trade ID (clickable to open detail modal)
       const tdId = document.createElement("td");
       tdId.dataset.label = "Trade ID";
       const idLink = document.createElement("a");
@@ -2405,13 +2561,13 @@
         tr.id = "order-" + order.orderId;
       }
 
-      // Column 2: Maker (link to Etherscan + copy, show ENS if available)
+      // Column 3: Maker (link to Etherscan + copy, show ENS if available)
       const tdSeller = document.createElement("td");
       tdSeller.dataset.label = "Maker";
       const sellerWrap = document.createElement("span");
       sellerWrap.style.whiteSpace = "nowrap";
       const sellerLink = document.createElement("a");
-      sellerLink.href = "https://etherscan.io/address/" + order.maker;
+      sellerLink.href = EXPLORER_URL + "/address/" + order.maker;
       sellerLink.target = "_blank";
       sellerLink.rel = "noopener noreferrer";
       const ensName = getCachedEns(order.maker);
@@ -2422,76 +2578,46 @@
       tdSeller.appendChild(sellerWrap);
       tr.appendChild(tdSeller);
 
-      // Column 3: Offered Token (link to CoinGecko + copy)
-      const tdTokenA = document.createElement("td");
-      tdTokenA.dataset.label = "Offered";
-      const tokenAWrap = document.createElement("span");
-      tokenAWrap.style.whiteSpace = "nowrap";
-      const tokenAId = COINGECKO_ID_MAP[order.tokenA.address.toLowerCase()];
-      if (tokenAId) {
-        const tokenALink = document.createElement("a");
-        tokenALink.href = "https://www.coingecko.com/en/coins/" + tokenAId;
-        tokenALink.target = "_blank";
-        tokenALink.rel = "noopener noreferrer";
-        tokenALink.textContent = order.tokenA.symbol;
-        tokenAWrap.appendChild(tokenALink);
-      } else {
-        const tokenASpan = document.createElement("span");
-        tokenASpan.textContent = order.tokenA.symbol;
-        tokenAWrap.appendChild(tokenASpan);
-      }
-      tokenAWrap.appendChild(createCopyButton(order.tokenA.address));
-      tdTokenA.appendChild(tokenAWrap);
-      tdTokenA.title = order.tokenA.address;
-      tr.appendChild(tdTokenA);
+      // Column 4: Offered Token (link to CoinGecko + copy; bare text for ETH)
+      tr.appendChild(buildTokenCell(order.tokenA, "Offered"));
 
-      // Column 4: Sell Size
-      const tdAmountA = document.createElement("td");
-      tdAmountA.dataset.label = "Offered Size";
-      tdAmountA.textContent = formatAmount(order.amountA, tokenADecimals);
-      tr.appendChild(tdAmountA);
+      // Column 5: Offered Size (remaining, for v2 partial fills). The original
+      // size ("of X left") is shown to the maker only: to anyone else the
+      // remaining amount simply is the order.
+      tr.appendChild(
+        buildAmountCell(
+          order.availableA,
+          isMaker ? order.amountA : null,
+          tokenADecimals,
+          "Offered Size"
+        )
+      );
 
-      // Column 5: Wanted Token (link to CoinGecko + copy)
-      const tdTokenB = document.createElement("td");
-      tdTokenB.dataset.label = "Wanted";
-      const tokenBWrap = document.createElement("span");
-      tokenBWrap.style.whiteSpace = "nowrap";
-      const tokenBId = COINGECKO_ID_MAP[order.tokenB.address.toLowerCase()];
-      if (tokenBId) {
-        const tokenBLink = document.createElement("a");
-        tokenBLink.href = "https://www.coingecko.com/en/coins/" + tokenBId;
-        tokenBLink.target = "_blank";
-        tokenBLink.rel = "noopener noreferrer";
-        tokenBLink.textContent = order.tokenB.symbol;
-        tokenBWrap.appendChild(tokenBLink);
-      } else {
-        const tokenBSpan = document.createElement("span");
-        tokenBSpan.textContent = order.tokenB.symbol;
-        tokenBWrap.appendChild(tokenBSpan);
-      }
-      tokenBWrap.appendChild(createCopyButton(order.tokenB.address));
-      tdTokenB.appendChild(tokenBWrap);
-      tdTokenB.title = order.tokenB.address;
-      tr.appendChild(tdTokenB);
+      // Column 6: Wanted Token (link to CoinGecko + copy; bare text for ETH)
+      tr.appendChild(buildTokenCell(order.tokenB, "Wanted"));
 
-      // Column 6: Wanted Size
-      const tdAmountB = document.createElement("td");
-      tdAmountB.dataset.label = "Wanted Size";
-      tdAmountB.textContent = formatAmount(order.amountB, tokenBDecimals);
-      tr.appendChild(tdAmountB);
+      // Column 7: Wanted Size (remaining, for v2 partial fills; original for the maker only)
+      tr.appendChild(
+        buildAmountCell(
+          order.availableB,
+          isMaker ? order.amountB : null,
+          tokenBDecimals,
+          "Wanted Size"
+        )
+      );
 
-      // Column 7: USD Val (nowrap to keep $ and value on same line)
+      // Column 8: USD Val (nowrap to keep $ and value on same line)
       const tdUsd = document.createElement("td");
       tdUsd.dataset.label = "USD Val";
-      tdUsd.textContent = usdVal;
+      setNumberText(tdUsd, usdVal);
       tdUsd.style.whiteSpace = "nowrap";
       tr.appendChild(tdUsd);
 
-      // Column 8: Price (clickable to invert ratio) + market deviation
+      // Column 9: Price (clickable to invert ratio) + market deviation
       const tdPrice = document.createElement("td");
       tdPrice.dataset.label = "Price";
       const priceSpan = document.createElement("span");
-      priceSpan.textContent = priceNormal;
+      setNumberText(priceSpan, priceNormal);
       tdPrice.appendChild(priceSpan);
 
       // Add market deviation indicator
@@ -2520,7 +2646,10 @@
         tdPrice.addEventListener("click", function (e) {
           e.stopPropagation();
           const isNormal = this.dataset.showingNormal === "true";
-          priceSpan.textContent = isNormal ? this.dataset.priceInverted : this.dataset.priceNormal;
+          setNumberText(
+            priceSpan,
+            isNormal ? this.dataset.priceInverted : this.dataset.priceNormal
+          );
           this.dataset.showingNormal = isNormal ? "false" : "true";
         });
       }
@@ -2529,6 +2658,7 @@
       tbody.appendChild(tr);
     }
     updatePagination(sortedOrders.length);
+    renderSelectionBar();
 
     // Scroll to highlighted order if present
     if (highlightedOrderId) {
@@ -2548,6 +2678,856 @@
   }
 
   // ============================================================================
+  // Connectors
+  // ============================================================================
+  //
+  // One adapter per protocol version, both exposing the same surface, so the
+  // call sites above and below never branch on version — they call
+  // SB.<method> and the adapter decides what that means on its contract:
+  //
+  //   createOrder / createOrders    open orders
+  //   fillCall + send               fill one order; fillCall describes the call
+  //                                 so the same description can be estimated
+  //   fillOrders                    take several orders whole
+  //   cancelOrder / cancelOrders    close orders and refund escrow
+  //   resolvePull / resolveBatchPull / pullStrategy
+  //                                 settle how a token reaches the board:
+  //                                 nothing, an EIP-2612 or Permit2 signature,
+  //                                 or the classic approve() transaction
+  //   ensureAllowance / estimateFor / syncAfter
+  //
+  // v1 additionally has createOrderWithEth and cancelOrderUnwrap. The call
+  // sites reach those only for WETH-denominated sides, which on v2 never occur:
+  // v2 escrows native ETH under the NATIVE_ETH sentinel on its ordinary payable
+  // calls and treats WETH as a plain ERC20 (isWeth() is always false there).
+  // ============================================================================
+
+  /** The placeholder a version's contractAddress holds until it ships. */
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+  /** Set once the chain has been seen to hold code at CONTRACT_ADDRESS. */
+  let deploymentVerified = false;
+
+  /**
+   * An Error whose text parseContractError shows verbatim. It surfaces a short
+   * `shortMessage` as-is, the way it does for ethers' own errors.
+   * @param {string} message - User-facing text
+   * @returns {Error}
+   */
+  function connectorError(message) {
+    const err = new Error(message);
+    err.shortMessage = message;
+    return err;
+  }
+
+  /**
+   * Refuses to send to a contract that is not there.
+   *
+   * ethers does not look before it sends, and a call to an address with no
+   * code succeeds as a plain transfer — so a payable v2 call against the zero
+   * placeholder would burn the ETH it carries rather than revert. The address
+   * must not be the placeholder, and the chain must hold code at it, which also
+   * catches a deployment written into lib.js for the wrong network. Only a
+   * positive answer is cached, so a flaky RPC is asked again next time.
+   *
+   * Mock mode answers every call itself and never broadcasts, so the
+   * placeholder is expected there.
+   *
+   * @returns {Promise<void>} Rejects when there is no contract to call
+   */
+  async function requireDeployed() {
+    if (deploymentVerified) return;
+    if (CONTRACT_ADDRESS === ZERO_ADDRESS && !window.SWAPBOARD_MOCK) {
+      throw connectorError(`Swapboard ${CAPS.label} is not deployed yet`);
+    }
+    const code = await provider.getCode(CONTRACT_ADDRESS);
+    if (!code || code === "0x") {
+      throw connectorError(`No Swapboard ${CAPS.label} contract found at ${CONTRACT_ADDRESS}`);
+    }
+    deploymentVerified = true;
+  }
+
+  /**
+   * Invokes a contract method, attaching msg.value only when ETH rides along:
+   * ethers rejects a value override on a non-payable function.
+   * @param {string} method - Contract method name
+   * @param {Array} args - Positional arguments
+   * @param {bigint} [value] - msg.value; 0 or absent means none
+   * @returns {Promise<Object>} ethers TransactionResponse
+   */
+  function invokeContract(method, args, value) {
+    return value ? contract[method](...args, { value }) : contract[method](...args);
+  }
+
+  /**
+   * Sends a v2 call once the deployment has been confirmed.
+   * @param {string} method - Contract method name
+   * @param {Array} args - Positional arguments
+   * @param {bigint} [value] - Exact msg.value (see nativeEthTotal)
+   * @returns {Promise<Object>} ethers TransactionResponse
+   */
+  async function v2Send(method, args, value) {
+    await requireDeployed();
+    return invokeContract(method, args, value);
+  }
+
+  /**
+   * Shapes a sell-form row as a v2 CreateOrderParams struct. Built explicitly
+   * rather than passing the row through: the row also carries display fields,
+   * and the amounts must reach the encoder as integers.
+   * @param {Object} p - Row params from collectCreateParams
+   * @returns {{tokenA: string, amountA: bigint, tokenB: string, amountB: bigint, partialFillAllowed: boolean}}
+   */
+  function toCreateParams(p) {
+    return {
+      tokenA: p.tokenA,
+      amountA: BigInt(p.amountA),
+      tokenB: p.tokenB,
+      amountB: BigInt(p.amountB),
+      partialFillAllowed: p.partialFillAllowed === true,
+    };
+  }
+
+  // ==========================================================================
+  // SIGNATURE-BASED APPROVALS
+  // ==========================================================================
+  //
+  // Swapboard v2 overloads every entry point three ways — plain, EIP-2612 and
+  // Permit2 SignatureTransfer — so an approval can be a signature instead of a
+  // transaction. lib.js choosePullStrategy() decides which; everything here is
+  // the I/O that decision needs, and the overload dispatch that follows from it.
+  //
+  // ethers v6 refuses an overloaded method by bare name, so every path — the
+  // plain one included — addresses the contract by full signature.
+  // invokeContract() already indexes `contract[method]`, which accepts a
+  // signature string unchanged.
+  // ==========================================================================
+
+  /**
+   * Full signatures of the three overloads, by entry point and strategy:
+   * `plain` takes no permit and serves both "none" and "approve" pulls.
+   *
+   * Transcribed from CONTRACT_ABI_V2 above with the argument names dropped. Note
+   * the batch tuples are NOT the single ones with a token bolted on: `TokenPermit`
+   * orders its fields (token, v, value, deadline, r, s) while the single `Permit`
+   * is (value, deadline, v, r, s) — `v` moves to second. Getting that wrong
+   * encodes cleanly and reverts on chain.
+   *
+   * @constant {Object<string, {plain: string, permit: string, permit2: string}>}
+   */
+  const PERMIT_OVERLOADS = {
+    createOrder: {
+      plain: "createOrder((address,uint128,address,uint128,bool))",
+      permit:
+        "createOrder((address,uint128,address,uint128,bool),(uint256,uint256,uint8,bytes32,bytes32))",
+      permit2:
+        "createOrder((address,uint128,address,uint128,bool),(uint256,uint256,uint256,bytes))",
+    },
+    createOrders: {
+      plain: "createOrders((address,uint128,address,uint128,bool)[])",
+      permit:
+        "createOrders((address,uint128,address,uint128,bool)[],(address,uint8,uint256,uint256,bytes32,bytes32)[])",
+      permit2:
+        "createOrders((address,uint128,address,uint128,bool)[],(address,uint256,uint256,uint256,bytes)[])",
+    },
+    fillOrder: {
+      plain: "fillOrder(uint256,uint128,uint128,uint256,address)",
+      permit:
+        "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint8,bytes32,bytes32),address)",
+      permit2: "fillOrder(uint256,uint128,uint128,uint256,(uint256,uint256,uint256,bytes),address)",
+    },
+    fillOrders: {
+      plain: "fillOrders((uint256,uint128,uint128)[],uint256,address)",
+      permit:
+        "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint8,uint256,uint256,bytes32,bytes32)[],address)",
+      permit2:
+        "fillOrders((uint256,uint128,uint128)[],uint256,(address,uint256,uint256,uint256,bytes)[],address)",
+    },
+  };
+
+  /** A pull that needs nothing signed and nothing sent. */
+  const NO_PULL = { kind: "none" };
+
+  /**
+   * Reads a contract getter that is allowed not to exist.
+   * @param {Object} contractInstance - ethers Contract
+   * @param {string} method - Getter name
+   * @param {...*} args - Arguments
+   * @returns {Promise<*|null>} The value, or null when the call reverts
+   */
+  async function tryRead(contractInstance, method, ...args) {
+    try {
+      return await contractInstance[method](...args);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolves the EIP-712 domain a token signs permits under, or null when it
+   * cannot be established.
+   *
+   * Tokens disagree about this more than the standard suggests: USDC is version
+   * "2", most are "1", and some expose no `version()` at all. Where the token
+   * publishes ERC-5267 `eip712Domain()` that answer is authoritative and used
+   * directly. Otherwise each plausible version is hashed and compared against the
+   * token's own `DOMAIN_SEPARATOR()`, and only an exact match is signed.
+   *
+   * Returning null when nothing matches is the point: a signature under the wrong
+   * domain is not rejected by the wallet, it is accepted and then reverts the
+   * swap. Falling back to Permit2 or approve() costs one transaction instead.
+   *
+   * UNI, AAVE and GRT compute their separator inline and expose no getter, so
+   * there is nothing to compare against; those take the first candidate.
+   *
+   * @param {Object} token - ethers Contract for the ERC20
+   * @param {string} tokenAddress - Its address
+   * @returns {Promise<Object|null>} EIP-712 domain
+   */
+  async function resolvePermitDomain(token, tokenAddress) {
+    const declared = await tryRead(token, "eip712Domain");
+    if (declared && declared.name) {
+      return {
+        name: declared.name,
+        version: declared.version,
+        chainId: Number(declared.chainId),
+        verifyingContract: declared.verifyingContract,
+      };
+    }
+
+    const name = await tryRead(token, "name");
+    if (name === null) return null;
+
+    const declaredVersion = await tryRead(token, "version");
+    const candidates = [
+      ...new Set([declaredVersion, "1", "2"].filter((v) => typeof v === "string")),
+    ];
+
+    const separator = await tryRead(token, "DOMAIN_SEPARATOR");
+    const base = { name, chainId: EXPECTED_CHAIN_ID, verifyingContract: tokenAddress };
+
+    if (separator === null) return { ...base, version: candidates[0] };
+
+    for (const version of candidates) {
+      const domain = { ...base, version };
+      if (ethers.TypedDataEncoder.hashDomain(domain) === separator) return domain;
+    }
+    return null;
+  }
+
+  /**
+   * Signs an EIP-2612 permit letting the board spend `total` of the token.
+   * @param {Object} token - ethers Contract for the ERC20
+   * @param {string} tokenAddress - Its address
+   * @param {bigint} total - Allowance to sign for
+   * @returns {Promise<Object|null>} A `Permit` struct, or null when the domain is unusable
+   */
+  async function signTokenPermit(token, tokenAddress, total) {
+    const domain = await resolvePermitDomain(token, tokenAddress);
+    if (!domain) return null;
+
+    const nonce = await token.nonces(userAddress);
+    const deadline = permitDeadline(Date.now() / 1000);
+    const message = buildPermitMessage({
+      owner: userAddress,
+      spender: CONTRACT_ADDRESS,
+      value: total,
+      nonce,
+      deadline,
+    });
+
+    showToast("Sign approval in wallet...", "info", true);
+    const signature = await signer.signTypedData(domain, PERMIT_TYPES, message);
+    const { v, r, s } = ethers.Signature.from(signature);
+
+    return { value: total, deadline, v, r, s };
+  }
+
+  /**
+   * 32 bytes of randomness for a Permit2 nonce.
+   *
+   * Web Crypto is preferred, but it is not reachable everywhere the page runs —
+   * `crypto` is absent from some embedded webviews and from jsdom. The fallback
+   * is adequate here because a Permit2 nonce has to be *unused*, not secret: the
+   * signature is bound to the nonce, so knowing one buys an attacker nothing,
+   * and the only cost of a collision is a revert. Mixing the clock in keeps two
+   * draws in the same session apart even if Math.random repeats.
+   *
+   * @returns {Uint8Array} 32 bytes
+   */
+  function randomBytes32() {
+    const bytes = new Uint8Array(32);
+    const webcrypto = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+
+    if (webcrypto && typeof webcrypto.getRandomValues === "function") {
+      return webcrypto.getRandomValues(bytes);
+    }
+
+    let clock = BigInt(Date.now());
+    for (let i = 31; i >= 0; i--) {
+      bytes[i] = i >= 24 ? Number(clock & 0xffn) : Math.floor(Math.random() * 256);
+      if (i >= 24) clock >>= 8n;
+    }
+    return bytes;
+  }
+
+  /**
+   * Signs a Permit2 SignatureTransfer authorising the board to pull `total`.
+   *
+   * The nonce is drawn at random rather than counted: Permit2 stores a spent-bit
+   * per nonce instead of a sequence, and a batch has several signatures in flight
+   * at once, which a counter would collide on.
+   *
+   * @param {string} tokenAddress - ERC20 to pull
+   * @param {bigint} total - Maximum the signature authorises
+   * @returns {Promise<Object>} A `Permit2Permit` struct
+   */
+  async function signPermit2(tokenAddress, total) {
+    const nonce = permit2Nonce(randomBytes32());
+    const deadline = permitDeadline(Date.now() / 1000);
+    const message = buildPermit2Message({
+      token: tokenAddress,
+      amount: total,
+      spender: CONTRACT_ADDRESS,
+      nonce,
+      deadline,
+    });
+
+    showToast("Sign approval in wallet...", "info", true);
+    const signature = await signer.signTypedData(
+      permit2Domain(EXPECTED_CHAIN_ID),
+      PERMIT2_TYPES,
+      message
+    );
+
+    return { amount: total, nonce, deadline, signature };
+  }
+
+  /**
+   * Gathers what choosePullStrategy() needs to decide about one token.
+   * @param {string} tokenAddress - ERC20 address
+   * @param {bigint} total - Amount the call will pull
+   * @returns {Promise<Object>} A leg, with its ethers Contract attached
+   */
+  async function readPullLeg(tokenAddress, total) {
+    const token = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
+    const permitKind = permitKindFor(tokenAddress, EXPECTED_CHAIN_ID);
+    const allowance = await token.allowance(userAddress, CONTRACT_ADDRESS);
+
+    // Only worth asking when a Permit2 pull is actually on the table: it is the
+    // one input that costs a call the classic path never makes.
+    const permit2Allowance =
+      BigInt(allowance) >= BigInt(total) || permitKind === "eip2612" || permitKind === "both"
+        ? 0n
+        : await token.allowance(userAddress, PERMIT2_ADDRESS);
+
+    return {
+      token: tokenAddress,
+      amount: BigInt(total),
+      isNative: isNativeEth(tokenAddress),
+      allowance: BigInt(allowance),
+      permitKind,
+      permit2Allowance: BigInt(permit2Allowance),
+      contract: token,
+    };
+  }
+
+  /**
+   * Decides how one token reaches the board, signing or approving as needed.
+   *
+   * Replaces the bare ensureAllowance() call the v2 flows used to make. A token
+   * that needs nothing, or that only needs the old approve() transaction, comes
+   * back as `none` / `approve` and the caller sends the plain overload exactly as
+   * before — the signature paths are additive.
+   *
+   * @param {string} tokenAddress - ERC20 (or the native sentinel)
+   * @param {bigint} total - Amount the call will pull
+   * @returns {Promise<{kind: string, permit?: Object, permit2?: Object}>}
+   */
+  async function resolvePull(tokenAddress, total) {
+    if (isNativeEth(tokenAddress)) return NO_PULL;
+
+    const leg = await readPullLeg(tokenAddress, total);
+    const strategy = choosePullStrategy(leg);
+
+    if (strategy === "none") return NO_PULL;
+
+    if (strategy === "permit") {
+      const permit = await signTokenPermit(leg.contract, tokenAddress, leg.amount);
+      // An unusable domain is not fatal: fall through to whatever the token
+      // could do without a 2612 signature.
+      if (permit) return { kind: "permit", permit };
+
+      // readPullLeg skips the Permit2 allowance for a permit-capable token,
+      // since it was not expected to need one. Ask now that the permit has
+      // fallen through, rather than approving something Permit2 could pull.
+      const permit2Allowance = await leg.contract.allowance(userAddress, PERMIT2_ADDRESS);
+      if (BigInt(permit2Allowance) >= leg.amount) {
+        return { kind: "permit2", permit2: await signPermit2(tokenAddress, leg.amount) };
+      }
+
+      await ensureAllowance(tokenAddress, leg.amount);
+      return { kind: "approve" };
+    }
+
+    if (strategy === "permit2") {
+      return { kind: "permit2", permit2: await signPermit2(tokenAddress, leg.amount) };
+    }
+
+    await ensureAllowance(tokenAddress, leg.amount);
+    return { kind: "approve" };
+  }
+
+  /**
+   * Decides how a whole batch reaches the board.
+   *
+   * A call carries either `TokenPermit[]` or `TokenPermit2[]`, never both, so
+   * planBatchPulls() commits the batch to one flavour and hands back the tokens
+   * that have to approve the old way instead. Those approvals are sent first, so
+   * that by the time the batch call goes out every leg is spendable.
+   *
+   * @param {Array<{token: string, amount: bigint|string}>} legs - Pulls the call will make
+   * @returns {Promise<{kind: string, entries: Array<Object>}>}
+   */
+  async function resolveBatchPull(legs) {
+    const read = [];
+    for (const leg of legs) {
+      if (isNativeEth(leg.token)) continue;
+      read.push(await readPullLeg(leg.token, leg.amount));
+    }
+
+    const plan = planBatchPulls(read);
+
+    // Only the tokens that lost this chunk's vote are approved here. The ones
+    // that could never be signed for were already approved once for the whole
+    // batch, before the chunk loop, so approving them again would be a second
+    // transaction for an allowance that already stands.
+    for (const leg of plan.demoted) {
+      showToast("Checking allowance...", "info", true);
+      await ensureAllowance(leg.token, leg.amount);
+    }
+
+    if (plan.strategy === "none") return { kind: "none", entries: [] };
+
+    const entries = [];
+    for (const leg of plan.entries) {
+      if (plan.strategy === "permit") {
+        const permit = await signTokenPermit(leg.contract, leg.token, leg.amount);
+        // Same fallback as the single path, but the batch cannot mix flavours,
+        // so a token whose domain will not resolve approves instead.
+        if (!permit) {
+          await ensureAllowance(leg.token, leg.amount);
+          continue;
+        }
+        entries.push({ token: leg.token, ...permit });
+      } else {
+        const permit2 = await signPermit2(leg.token, leg.amount);
+        entries.push({ token: leg.token, ...permit2 });
+      }
+    }
+
+    // Every entry in a batch must be spent or the contract reverts UnusedPermit /
+    // UnusedPermit2, so an empty list has to go back to the plain overload.
+    if (entries.length === 0) return { kind: "none", entries: [] };
+    return { kind: plan.strategy, entries };
+  }
+
+  /**
+   * Picks the entry point for a resolved pull, and the permit argument it takes.
+   * @param {string} method - Plain method name, e.g. "fillOrder"
+   * @param {Object} pull - Descriptor from resolvePull / resolveBatchPull
+   * @param {Array} args - Arguments that precede the permit
+   * @param {Array} [tail] - Arguments that follow the permit (e.g. fill's `taker`)
+   * @returns {{method: string, args: Array}} Method and args to send
+   */
+  function withPermit(method, pull, args, tail = []) {
+    const overloads = PERMIT_OVERLOADS[method];
+    if (!pull || pull.kind === "none" || pull.kind === "approve") {
+      return { method: overloads.plain, args: args.concat(tail) };
+    }
+
+    const overload = overloads[pull.kind];
+    const extra = pull.entries
+      ? [pull.entries.map((e) => permitTuple(pull.kind, e))]
+      : [permitTuple(pull.kind, pull.kind === "permit" ? pull.permit : pull.permit2)];
+
+    return { method: overload, args: args.concat(extra, tail) };
+  }
+
+  /**
+   * Shapes a permit as the positional tuple its overload expects.
+   *
+   * Written out per flavour rather than passing the object through, because the
+   * batch and single field orders differ and ethers encodes tuples positionally:
+   * an object with the right keys in the wrong order still encodes, silently.
+   *
+   * @param {string} kind - "permit" or "permit2"
+   * @param {Object} p - Signed permit, with `token` set for batch entries
+   * @returns {Array} Positional tuple
+   */
+  function permitTuple(kind, p) {
+    if (kind === "permit") {
+      // Permit(value, deadline, v, r, s) / TokenPermit(token, v, value, deadline, r, s)
+      return p.token === undefined
+        ? [p.value, p.deadline, p.v, p.r, p.s]
+        : [p.token, p.v, p.value, p.deadline, p.r, p.s];
+    }
+    // Permit2Permit(amount, nonce, deadline, signature) / TokenPermit2(token, ...)
+    return p.token === undefined
+      ? [p.amount, p.nonce, p.deadline, p.signature]
+      : [p.token, p.amount, p.nonce, p.deadline, p.signature];
+  }
+
+  /**
+   * Approves the Swapboard contract for `total` of `tokenAddress` when the
+   * existing allowance falls short.
+   * @param {string} tokenAddress - ERC20 address
+   * @param {bigint} total - Amount the transaction will move
+   * @returns {Promise<boolean>} True if an approval transaction was sent
+   */
+  async function ensureAllowance(tokenAddress, total) {
+    const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
+    const allowance = await tokenContract.allowance(userAddress, CONTRACT_ADDRESS);
+    if (allowance >= BigInt(total)) return false;
+
+    showToast("Approve tokens in wallet...", "info", true);
+    const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, total);
+    showToast("Waiting for approval tx...", "info", true);
+    await approveTx.wait();
+    showToast("Approval confirmed");
+    return true;
+  }
+
+  /**
+   * Estimates the gas cost of a call before showing the confirmation modal.
+   * Returns null on any failure — a missing estimate is not worth blocking a
+   * transaction over.
+   *
+   * @param {string} method - Contract method name
+   * @param {Array} args - Arguments to encode
+   * @param {bigint} [value] - msg.value for payable calls
+   * @returns {Promise<Object|null>} {gas, eth, usd} or null
+   */
+  async function estimateCall(method, args, value) {
+    if (!provider || !contract) return null;
+    try {
+      const txParams = {
+        from: userAddress,
+        to: CONTRACT_ADDRESS,
+        data: contract.interface.encodeFunctionData(method, args),
+      };
+      if (value !== undefined && value !== null) txParams.value = BigInt(value);
+      return await estimateGasCost(txParams);
+    } catch (e) {
+      console.error("Gas estimation failed:", e);
+      return null;
+    }
+  }
+
+  /**
+   * Waits for the subgraph to catch up with a transaction before reloading,
+   * so the table does not flash the pre-transaction state.
+   * @param {string} orderId - Order that changed
+   * @param {boolean} expectedActive - Active flag to wait for
+   */
+  async function syncAfter(orderId, expectedActive) {
+    // Mock orders are generated, not indexed — their state never changes, so
+    // polling would only burn the full timeout before giving up. Neither is
+    // there anything to wait on for a version with no subgraph deployed.
+    if (window.SWAPBOARD_MOCK || !CAPS.subgraphPolling) return;
+    await waitForOrderUpdate(orderId, expectedActive);
+  }
+
+  // ============================================================================
+  // V2 CONNECTOR
+  // ============================================================================
+  //
+  // Swapboard v2 per contracts/src/interfaces/ISwapboard.sol. What shapes the
+  // adapter:
+  //
+  //   * Native ETH rides the ordinary payable calls with an EXACT msg.value,
+  //     summed over every sentinel leg of the call (nativeEthTotal). The
+  //     contract refunds nothing; over or under reverts ETHAmountMismatch.
+  //   * createOrders nets ETH and ERC20 orders in one call, so a mixed batch is
+  //     one transaction, not one per settlement type.
+  //   * A fill is keyed on `amountB` — the payment — through fillOrder, so the
+  //     taker's spend is exact: an ERC20 is pulled for exactly that much
+  //     whatever allowance stands, and ETH is the exact msg.value. The tokenA
+  //     out is floored on chain and must reach `minAmountA`, the receive the
+  //     modal quoted (lib.js computeFillFromPayment() mirrors _quoteFill), so a
+  //     maker repricing between quote and fill reverts it rather than shorting
+  //     it. Paying the whole remainder receives exactly availableA.
+  //   * fillOrders and cancelOrders are all-or-nothing: one bad leg reverts the
+  //     whole call. There is no skip-and-continue variant.
+  // ============================================================================
+
+  const V2 = {
+    /**
+     * @see ISwapboard.createOrder — tokenA may be the native-ETH sentinel
+     * @param {Object} [pull] - Resolved pull; selects the permit overload
+     */
+    createOrder(tokenA, amountA, tokenB, amountB, partialFill, pull) {
+      const params = toCreateParams({
+        tokenA,
+        amountA,
+        tokenB,
+        amountB,
+        partialFillAllowed: partialFill,
+      });
+      const call = withPermit("createOrder", pull, [params]);
+      return v2Send(call.method, call.args, nativeEthTotal([{ token: tokenA, amount: amountA }]));
+    },
+
+    /**
+     * @see ISwapboard.createOrders — ETH and ERC20 orders may be mixed
+     * @param {Object} [pull] - Resolved batch pull; selects the permit overload
+     */
+    createOrders(params, pull) {
+      const legs = params.map((p) => ({ token: p.tokenA, amount: p.amountA }));
+      const call = withPermit("createOrders", pull, [params.map(toCreateParams)]);
+      return v2Send(call.method, call.args, nativeEthTotal(legs));
+    },
+
+    /**
+     * Describes a fill paying exactly `amountB` of the wanted token, which
+     * reverts unless it pays out at least the quoted `amountA`.
+     * @see ISwapboard.fillOrder
+     * @param {Object} order - Order being filled
+     * @param {bigint} amountA - Quoted receive, sent as minAmountA
+     * @param {bigint} amountB - Exact payment
+     * @param {number} deadline - Unix timestamp the fill must land by
+     * @returns {{method: string, args: Array, value: bigint}}
+     */
+    fillCall(order, amountA, amountB, deadline, pull) {
+      const call = withPermit(
+        "fillOrder",
+        pull,
+        [order.orderId, amountB, amountA, deadline],
+        [ZERO_ADDRESS]
+      );
+      return {
+        method: call.method,
+        args: call.args,
+        value: nativeEthTotal([{ token: order.tokenB.address, amount: amountB }]),
+      };
+    },
+
+    /** Sends a call described by fillCall. */
+    send({ method, args, value }) {
+      return v2Send(method, args, value);
+    },
+
+    /**
+     * Takes every order in `orders` whole.
+     *
+     * Paying the full remainder is the one fill whose outcome is known without
+     * asking the chain: _quoteFill pays out exactly availableA for exactly
+     * availableB, with no rounding — so that is the minAmountA each leg is
+     * held to.
+     *
+     * @see ISwapboard.fillOrders
+     * @param {Object[]} orders - Orders to take, as indexed
+     * @param {number} deadline - Unix timestamp the batch must land by
+     */
+    fillOrders(orders, deadline, pull) {
+      const fills = orders.map((o) => ({
+        orderId: o.orderId,
+        amountB: BigInt(o.availableB),
+        minAmountA: BigInt(o.availableA),
+      }));
+      const legs = orders.map((o) => ({ token: o.tokenB.address, amount: o.availableB }));
+      const call = withPermit("fillOrders", pull, [fills, deadline], [ZERO_ADDRESS]);
+      return v2Send(call.method, call.args, nativeEthTotal(legs));
+    },
+
+    /** @see ISwapboard.cancelOrder — native ETH escrow is refunded as ETH */
+    cancelOrder(orderId) {
+      return v2Send("cancelOrder", [orderId, ZERO_ADDRESS]);
+    },
+
+    /** @see ISwapboard.cancelOrders */
+    cancelOrders(orderIds) {
+      return v2Send("cancelOrders", [orderIds, ZERO_ADDRESS]);
+    },
+
+    /**
+     * Native ETH moves as msg.value and has no allowance to set. Anything else
+     * checks the deployment first: an approval naming a spender that does not
+     * exist is a wasted transaction, and some tokens revert on the zero one.
+     *
+     * v2 answers with a descriptor rather than a boolean, because an approval
+     * here may be a signature the caller has to pass on to the entry point.
+     */
+    async resolvePull(tokenAddress, total) {
+      if (isNativeEth(tokenAddress)) return NO_PULL;
+      await requireDeployed();
+      return resolvePull(tokenAddress, total);
+    },
+
+    /** @see resolveBatchPull — one signature flavour for the whole call */
+    async resolveBatchPull(legs) {
+      await requireDeployed();
+      return resolveBatchPull(legs);
+    },
+
+    /**
+     * Approves an ERC20 outright, for the tokens pullStrategy() calls "approve".
+     * Native ETH has no allowance to set, and the deployment is checked first so
+     * an approval never names a spender that does not exist.
+     */
+    async ensureAllowance(tokenAddress, total) {
+      if (isNativeEth(tokenAddress)) return false;
+      await requireDeployed();
+      return ensureAllowance(tokenAddress, total);
+    },
+
+    /**
+     * How a token would be pulled, without signing or sending anything.
+     *
+     * Batches are chunked into one transaction per chunk, and a permit nonce is
+     * spent by a single transaction, so a signature cannot be hoisted out of the
+     * chunk loop the way an approval can. Callers use this to approve the
+     * approve-only tokens once up front and leave the rest to the per-chunk pass.
+     */
+    async pullStrategy(tokenAddress, total) {
+      if (isNativeEth(tokenAddress)) return "none";
+      await requireDeployed();
+      return choosePullStrategy(await readPullLeg(tokenAddress, total));
+    },
+
+    /**
+     * Like v1's, except that with no deployment to simulate against it
+     * reports no estimate rather than one for a transfer to an empty address.
+     */
+    async estimateFor(method, args, value) {
+      try {
+        await requireDeployed();
+      } catch {
+        return null;
+      }
+      return estimateCall(method, args, value);
+    },
+
+    syncAfter,
+  };
+
+  // ============================================================================
+  // V1 CONNECTOR — LIVE CONTRACTS
+  // ============================================================================
+  //
+  // Swapboard v1 at CONTRACT_ADDRESS is deployed, immutable, and holds
+  // real funds. Every method here submits a real transaction.
+  //
+  // Where v2 takes an argument v1 has no concept of (a fill's amounts,
+  // partialFill), the v1 method accepts and ignores it; the UI never produces
+  // a meaningful value for it anyway, because CAPS.partialFill gates those
+  // controls off.
+  //
+  // The batch entry points (fillOrders / cancelOrders / createOrders) do not
+  // exist on v1 at all. They are present here only to throw a clear error:
+  // CAPS.batch keeps the selection UI hidden in v1, so reaching one of these
+  // means a gate was missed, and failing loudly beats silently sending one
+  // transaction where the user asked for twenty.
+  // ============================================================================
+
+  /** Rejects a v2-only batch call that leaked past a capability gate. */
+  function v1Unsupported(method) {
+    return Promise.reject(
+      new Error(`${method} is a v2 entry point and does not exist on Swapboard v1`)
+    );
+  }
+
+  const V1 = {
+    /** @see Swapboard.createOrder — partialFill has no v1 equivalent */
+    createOrder(tokenA, amountA, tokenB, amountB) {
+      return contract.createOrder(tokenA, amountA, tokenB, amountB);
+    },
+
+    /**
+     * @see Swapboard.createOrderWithEth
+     * v1 reaches ETH by wrapping: the offered side is WETH and the ETH rides
+     * in msg.value.
+     */
+    createOrderWithEth(tokenB, amountB, partialFill, value) {
+      return contract.createOrderWithEth(tokenB, amountB, { value });
+    },
+
+    createOrders: () => v1Unsupported("createOrders"),
+
+    /**
+     * Describes a fill. v1 orders are all-or-nothing, so neither amount is an
+     * argument; the payment matters only as msg.value when paying in ETH.
+     *
+     * Routing follows how each side has to settle:
+     *   - wanted token is WETH  -> fillOrderWithEth, so the taker can pay in
+     *                              ETH rather than wrapping first
+     *   - offered token is WETH -> fillOrderUnwrap, so the taker is paid in
+     *                              ETH rather than WETH
+     *   - otherwise             -> fillOrder, after an approval
+     *
+     * @returns {{method: string, args: Array, value?: bigint}}
+     */
+    fillCall(order, amountA, amountB, deadline) {
+      const { orderId } = order;
+      if (isNativeEth(order.tokenB.address) || isWeth(order.tokenB.address)) {
+        return { method: "fillOrderWithEth", args: [orderId, deadline], value: amountB };
+      }
+      if (isWeth(order.tokenA.address)) {
+        return { method: "fillOrderUnwrap", args: [orderId, deadline] };
+      }
+      return { method: "fillOrder", args: [orderId, deadline] };
+    },
+
+    /** Sends a call described by fillCall. */
+    send({ method, args, value }) {
+      return invokeContract(method, args, value);
+    },
+
+    fillOrders: () => v1Unsupported("fillOrders"),
+
+    /** @see Swapboard.cancelOrder */
+    cancelOrder(orderId) {
+      return contract.cancelOrder(orderId);
+    },
+
+    /** @see Swapboard.cancelOrderUnwrap — maker receives native ETH */
+    cancelOrderUnwrap(orderId) {
+      return contract.cancelOrderUnwrap(orderId);
+    },
+
+    cancelOrders: () => v1Unsupported("cancelOrders"),
+
+    /**
+     * v1 has no permit overloads (CAPS.permit is false), so every approval is a
+     * transaction. The descriptor shape is kept so call sites stay version-blind.
+     */
+    async resolvePull(tokenAddress, total) {
+      if (isNativeEth(tokenAddress)) return NO_PULL;
+      const sent = await ensureAllowance(tokenAddress, total);
+      return sent ? { kind: "approve" } : NO_PULL;
+    },
+
+    /** Batch entry points do not exist on v1; nothing reaches this. */
+    resolveBatchPull: () => v1Unsupported("resolveBatchPull"),
+
+    /** v1 has no signature paths, so anything with a shortfall is an approval. */
+    async pullStrategy(tokenAddress) {
+      return isNativeEth(tokenAddress) ? "none" : "approve";
+    },
+
+    ensureAllowance,
+    estimateFor: estimateCall,
+    syncAfter,
+  };
+
+  /**
+   * The connector for the active protocol version. Fixed for the life of the
+   * page — setVersion() reloads rather than swapping this out.
+   * @type {Object}
+   */
+  const SB = ACTIVE_VERSION === 1 ? V1 : V2;
+
+  // ============================================================================
   // Order Actions
   // ============================================================================
 
@@ -2555,70 +3535,202 @@
    * Handles the fill order flow: confirms with user, approves tokens, fills.
    * @param {Object} order - Order object from subgraph
    */
-  async function handleFillOrder(order) {
-    // Auto-route to ETH variants when WETH is involved
-    if (isWeth(order.tokenB.address)) {
-      return handleFillOrderWithEth(order);
-    }
-    if (isWeth(order.tokenA.address)) {
-      return handleFillOrderUnwrap(order);
+  /**
+   * Builds the partial-fill controls for the fill confirmation.
+   *
+   * The user types how much of the wanted token they will pay. v2 fills by
+   * payment (fillOrder), so that figure is exactly what leaves their wallet,
+   * and what they receive is derived from it, floored as the contract floors
+   * it. That receive is also the minimum the fill will accept on chain. Presets are percentages of what is *left* on the order, so they
+   * stay meaningful on a partly filled order.
+   *
+   * @param {Object} order - Order being filled
+   * @param {function(bigint, bigint): void} onChange - Called with the new
+   *   (tokenA received, tokenB paid)
+   * @returns {HTMLElement}
+   */
+  function buildPartialFillControls(order, onChange) {
+    const remainingB = BigInt(order.availableB);
+    const wrap = document.createElement("div");
+    wrap.className = "partial-fill-controls";
+
+    const label = document.createElement("label");
+    label.textContent = "Pay (" + order.tokenB.symbol + "):";
+    wrap.appendChild(label);
+
+    const inputRow = document.createElement("div");
+    inputRow.className = "partial-fill-input-row";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = formatAmount(remainingB, order.tokenB.decimals);
+    inputRow.appendChild(input);
+    wrap.appendChild(inputRow);
+
+    const presets = document.createElement("div");
+    presets.className = "partial-fill-presets";
+    wrap.appendChild(presets);
+
+    const quote = document.createElement("div");
+    quote.className = "partial-fill-quote";
+    wrap.appendChild(quote);
+
+    /**
+     * Recomputes what a payment receives and reports both.
+     * @param {bigint} pay - Wanted token the taker pays
+     * @param {boolean} writeBack - Whether to rewrite the input box
+     */
+    function update(pay, writeBack) {
+      const { amountA, amountB } = computeFillFromPayment(order, pay);
+
+      // A payment too small to buy one base unit is a fill the contract
+      // rejects (ZeroAmount), so it is flagged rather than offered.
+      input.classList.toggle("input-error", amountA === 0n);
+      if (writeBack) {
+        input.value = formatAmount(amountB, order.tokenB.decimals);
+      }
+
+      quote.textContent =
+        "You receive: " + formatAmount(amountA, order.tokenA.decimals) + " " + order.tokenA.symbol;
+
+      onChange(amountA, amountB);
     }
 
+    for (const percent of [25, 50, 75, 100]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "quick-amt-btn";
+      btn.textContent = percent + "%";
+      btn.addEventListener("click", () => {
+        for (const other of presets.children) other.classList.remove("active");
+        btn.classList.add("active");
+        update((remainingB * BigInt(percent)) / 100n, true);
+      });
+      presets.appendChild(btn);
+    }
+    presets.lastChild.classList.add("active");
+
+    input.addEventListener("input", () => {
+      for (const other of presets.children) other.classList.remove("active");
+      const { amount } = tryParseAmount(input.value, order.tokenB.decimals);
+      update(amount === null ? 0n : amount, false);
+    });
+
+    update(remainingB, false);
+    return wrap;
+  }
+
+  /**
+   * Fills a single order, optionally in part.
+   *
+   * Which contract call that is belongs to the connector (SB.fillCall): v1
+   * routes WETH sides through its wrap/unwrap entry points, v2 fills by
+   * payment through fillOrder. What stays here is the one thing both
+   * agree on — paying in ETH (native, or v1's WETH) rides in msg.value and
+   * needs no approval.
+   *
+   * @param {Object} order - Order to fill
+   */
+  async function handleFillOrder(order) {
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
 
-    const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
-    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
+    const payWithEth = isNativeEth(order.tokenB.address) || isWeth(order.tokenB.address);
+    const remainingA = BigInt(order.availableA);
+    const remainingB = BigInt(order.availableB);
 
-    const deadline = Math.floor(Date.now() / 1000) + 300;
+    // Orders that opted out of partial fill are all-or-nothing, so there is
+    // nothing to choose and the note and controls stay off. So is every v1 order.
+    const partial = CAPS.partialFill && allowsPartialFill(order);
 
-    // Estimate gas cost
-    showToast("Estimating gas...");
+    const body = document.createElement("div");
+    if (partial) {
+      const note = document.createElement("div");
+      note.className = "partial-fill-note";
+      note.textContent =
+        "This order supports partial fills: pick a percentage or enter a custom amount below.";
+      body.appendChild(note);
+    }
+
+    // Rewritten on every change to a partial fill's amount, so the sentence
+    // always states the fill that Confirm will send.
+    // Each contract token carries its full address so the filler can check it
+    // against the token they expect; native ETH has none.
+    const summary = document.createElement("div");
+    const describeToken = (token) =>
+      isNativeEth(token.address) ? token.symbol : `${token.symbol} (${token.address})`;
+    const describeFill = (amountA, amountB) => {
+      summary.textContent =
+        `You will send ${formatAmount(amountB, order.tokenB.decimals)} ${describeToken(order.tokenB)} ` +
+        `and receive ${formatAmount(amountA, order.tokenA.decimals)} ${describeToken(order.tokenA)} in return.`;
+    };
+    describeFill(remainingA, remainingB);
+    body.appendChild(summary);
+
+    let fillAmountA = remainingA;
+    let fillAmountB = remainingB;
+    if (partial) {
+      body.appendChild(
+        buildPartialFillControls(order, (amountA, amountB) => {
+          fillAmountA = amountA;
+          fillAmountB = amountB;
+          describeFill(amountA, amountB);
+        })
+      );
+    }
+
+    // Estimated against the full-remainder fill, which is what the modal opens
+    // on. A partial fill costs about the same, so re-estimating on every
+    // keystroke would buy precision nobody acts on.
+    //
+    // Always the plain overload, never a permit one: the approval is resolved
+    // after the user confirms, so there is no signature to price yet, and asking
+    // them to sign before they have agreed to the trade would be backwards. A
+    // permit fill costs somewhat more than this quotes -- the permit call itself
+    // -- which is the right direction for an estimate to be wrong in.
+    const estimateDeadline = Math.floor(Date.now() / 1000) + 300;
     let gasEstimate = null;
-    try {
-      const txData = contract.interface.encodeFunctionData("fillOrder", [order.orderId, deadline]);
-      gasEstimate = await estimateGasCost({
-        from: userAddress,
-        to: CONFIG.CONTRACT_ADDRESS,
-        data: txData,
-      });
-    } catch (e) {
-      console.error("Gas estimation failed:", e);
+    if (CAPS.gasEstimate) {
+      showToast("Estimating gas...");
+      const { method, args, value } = SB.fillCall(order, remainingA, remainingB, estimateDeadline);
+      gasEstimate = await SB.estimateFor(method, args, value);
     }
 
     showModal(
       "Fill Order #" + order.orderId,
-      `You will send ${amountBStr} ${order.tokenB.symbol} and receive ${amountAStr} ${order.tokenA.symbol} in return.`,
+      body,
       async () => {
         try {
-          const isLocal =
-            window.location.hostname === "localhost" ||
-            window.location.hostname === "127.0.0.1" ||
-            window.location.protocol === "file:";
-
-          if (!isLocal) {
-            showToast("Checking allowance...", "info", true);
-            const tokenContract = new ethers.Contract(order.tokenB.address, ERC20_ABI, signer);
-            const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
-            const amountB = BigInt(order.amountB);
-
-            if (allowance < amountB) {
-              showToast("Approve tokens in wallet...", "info", true);
-              const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountB);
-              showToast("Waiting for approval tx...", "info", true);
-              await approveTx.wait();
-              showToast("Approval confirmed");
-            }
+          if (fillAmountA <= 0n || fillAmountB <= 0n) {
+            showToast("Enter an amount to fill", "error");
+            return;
           }
 
+          const deadline = Math.floor(Date.now() / 1000) + 300;
+
+          // Paying in ETH: the amount rides in msg.value, so nothing to approve.
+          let pull = NO_PULL;
+          if (!payWithEth) {
+            showToast("Checking allowance...", "info", true);
+            pull = await SB.resolvePull(order.tokenB.address, fillAmountB);
+          }
+
+          // Submitted as-is: v2 fills by payment, so fillAmountB is exactly what
+          // the taker spends — pulled exactly for an ERC20 whatever allowance
+          // stands, and the exact msg.value for ETH. fillAmountA, the receive
+          // quoted above, is the least the chain may pay out: a maker repricing
+          // between quote and fill reverts the fill instead of shorting it.
           showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrder(order.orderId, deadline);
+          const tx = await SB.send(SB.fillCall(order, fillAmountA, fillAmountB, deadline, pull));
+
           showToast("Waiting for tx confirmation...", "info", true);
           await tx.wait();
           showToast("Order filled! Syncing...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
+          // A fully filled order goes inactive; a partial fill leaves it active
+          // with a smaller remainder, which this poll cannot distinguish, so
+          // only wait when the whole order was taken.
+          await SB.syncAfter(order.orderId, fillAmountA < remainingA);
           loadOrders();
           loadStats();
           showToast("Order filled!", "success");
@@ -2631,31 +3743,31 @@
     );
   }
 
+  /**
+   * Cancels a single order, returning the remaining offered amount to the maker.
+   *
+   * Orders offering WETH unwrap so the maker gets native ETH back. Orders
+   * offering native ETH need no special call — the escrow is already ETH.
+   *
+   * @param {Object} order - Order to cancel
+   */
   async function handleCancelOrder(order) {
-    // Auto-route to ETH variant when tokenA is WETH
-    if (isWeth(order.tokenA.address)) {
-      return handleCancelOrderUnwrap(order);
-    }
-
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
 
-    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
+    const unwrap = isWeth(order.tokenA.address);
+    // What comes back is what is still in escrow, not the order's original size.
+    const amountAStr = formatAmount(order.availableA, order.tokenA.decimals);
 
-    // Estimate gas cost
-    showToast("Estimating gas...");
     let gasEstimate = null;
-    try {
-      const txData = contract.interface.encodeFunctionData("cancelOrder", [order.orderId]);
-      gasEstimate = await estimateGasCost({
-        from: userAddress,
-        to: CONFIG.CONTRACT_ADDRESS,
-        data: txData,
-      });
-    } catch (e) {
-      console.error("Gas estimation failed:", e);
+    if (CAPS.gasEstimate) {
+      showToast("Estimating gas...");
+      gasEstimate = await SB.estimateFor(unwrap ? "cancelOrderUnwrap" : "cancelOrder", [
+        order.orderId,
+        ...(CAPS.nativeEth ? [ZERO_ADDRESS] : []),
+      ]);
     }
 
     showModal(
@@ -2663,11 +3775,13 @@
       `Your ${amountAStr} ${order.tokenA.symbol} will be returned to your wallet.`,
       async () => {
         try {
-          showToast("Cancelling order...");
-          const tx = await contract.cancelOrder(order.orderId);
+          showToast("Cancelling order...", "info", true);
+          const tx = unwrap
+            ? await SB.cancelOrderUnwrap(order.orderId)
+            : await SB.cancelOrder(order.orderId);
           await tx.wait();
           showToast("Order cancelled! Updating...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
+          await SB.syncAfter(order.orderId, false);
           loadOrders();
           loadStats();
           showToast("Order cancelled!", "success");
@@ -2680,328 +3794,908 @@
     );
   }
 
-  async function handleFillOrderWithEth(order) {
+  // ============================================================================
+  // Batch Order Actions (Fill All / Cancel All)
+  // ============================================================================
+
+  /**
+   * Builds one line of a batch confirmation list.
+   * @param {string} id - Order ID
+   * @param {string} text - Description of the swap or refund
+   * @returns {HTMLElement}
+   */
+  function buildBatchItem(id, text) {
+    const item = document.createElement("div");
+    item.className = "batch-summary-item";
+
+    const idSpan = document.createElement("span");
+    idSpan.className = "batch-summary-id";
+    idSpan.textContent = "#" + id;
+    item.appendChild(idSpan);
+
+    const textSpan = document.createElement("span");
+    textSpan.textContent = text;
+    item.appendChild(textSpan);
+
+    return item;
+  }
+
+  /**
+   * Adds a labelled total row to a batch summary.
+   * @param {HTMLElement} parent - Totals container
+   * @param {string} label - Row label
+   * @param {string} value - Row value
+   * @param {boolean} [emphasis=false] - Render as the headline figure
+   */
+  function appendTotalRow(parent, label, value, emphasis = false) {
+    const row = document.createElement("div");
+    if (emphasis) row.className = "batch-summary-emphasis";
+
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = label;
+    row.appendChild(labelSpan);
+
+    const valueSpan = document.createElement("span");
+    setNumberText(valueSpan, value);
+    row.appendChild(valueSpan);
+
+    parent.appendChild(row);
+  }
+
+  /**
+   * Adds a note explaining how many transactions a batch will take.
+   * @param {HTMLElement} parent - Container to append to
+   * @param {number} count - Number of orders
+   * @param {number} perTx - Maximum orders per transaction
+   */
+  function appendBatchTxNote(parent, count, perTx) {
+    const txCount = Math.ceil(count / perTx);
+    if (txCount <= 1) return;
+
+    const note = document.createElement("div");
+    note.className = "batch-summary-note";
+    note.textContent = `Too many orders for one transaction — this will be split into ${txCount} transactions of up to ${perTx} orders each.`;
+    parent.appendChild(note);
+  }
+
+  /**
+   * Runs a batch across as many transactions as it takes, reporting progress.
+   *
+   * @param {Array[]} chunks - Orders/IDs grouped one group per transaction
+   * @param {string} verb - Present participle for the progress toast ("Filling")
+   * @param {function(Array, number): Promise<*>} send - Submits one chunk
+   * @returns {Promise<number>} Number of orders processed
+   */
+  async function runBatchTransactions(chunks, verb, send) {
+    let processed = 0;
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const remaining = chunks.length - i - 1;
+      const progress =
+        chunks.length > 1
+          ? ` (transaction ${i + 1} of ${chunks.length}, ${remaining} remaining)`
+          : "";
+
+      showToast(`${verb} ${chunk.length} orders${progress}...`, "info", true);
+      const tx = await send(chunk, i);
+      await tx.wait();
+      processed += chunk.length;
+    }
+
+    return processed;
+  }
+
+  /**
+   * Fills every selected order.
+   *
+   * Selection rules guarantee a single token pair, so one approval covers the
+   * whole batch and the totals in the confirmation are meaningful. Each order is
+   * taken whole, at its full remainder; partial fill is intentionally not
+   * offered for batches.
+   */
+  async function fillSelectedOrders() {
+    const orders = getSelectedOrders();
+    if (orders.length === 0) return;
+
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
 
-    const amountBStr = formatAmount(order.amountB, 18);
-    const amountAStr = formatAmount(order.amountA, order.tokenA.decimals);
+    const { tokenA, tokenB } = orders[0];
+    const totals = summarizeFillBatch(orders);
+    const sendStr = formatAmount(totals.totalSend, tokenB.decimals);
+    const receiveStr = formatAmount(totals.totalReceive, tokenA.decimals);
+    // Same routing as a single fill: pay in ETH for a native-ETH or WETH
+    // wanted token, otherwise approve the ERC20.
+    const payWithEth = isNativeEth(tokenB.address) || isWeth(tokenB.address);
 
-    const deadline = Math.floor(Date.now() / 1000) + 300;
+    const body = document.createElement("div");
+    body.className = "batch-summary";
 
-    showToast("Estimating gas...");
-    let gasEstimate = null;
-    try {
-      const txData = contract.interface.encodeFunctionData("fillOrderWithEth", [order.orderId, deadline]);
-      gasEstimate = await estimateGasCost({
-        from: userAddress,
-        to: CONFIG.CONTRACT_ADDRESS,
-        data: txData,
-        value: BigInt(order.amountB),
-      });
-    } catch (e) {
-      console.error("Gas estimation failed:", e);
+    const list = document.createElement("div");
+    list.className = "batch-summary-list";
+    for (const order of orders) {
+      list.appendChild(
+        buildBatchItem(
+          order.orderId,
+          `${formatAmount(order.availableB, tokenB.decimals)} ${tokenB.symbol} → ` +
+            `${formatAmount(order.availableA, tokenA.decimals)} ${tokenA.symbol}`
+        )
+      );
+    }
+    body.appendChild(list);
+
+    const totalsEl = document.createElement("div");
+    totalsEl.className = "batch-summary-totals";
+    appendTotalRow(totalsEl, "Orders", String(totals.count));
+    appendTotalRow(
+      totalsEl,
+      "Average price",
+      totals.avgPrice === null
+        ? "N/A"
+        : `${formatRatio(totals.avgPrice)} ${tokenB.symbol}/${tokenA.symbol}`
+    );
+    appendTotalRow(totalsEl, "You send", `${sendStr} ${tokenB.symbol}`, true);
+    appendTotalRow(totalsEl, "You receive", `${receiveStr} ${tokenA.symbol}`, true);
+    body.appendChild(totalsEl);
+
+    if (payWithEth) {
+      const note = document.createElement("div");
+      note.className = "batch-summary-note";
+      note.textContent = "Paid in ETH, so no token approval is needed.";
+      body.appendChild(note);
     }
 
-    showModal(
-      "Fill Order #" + order.orderId + " with ETH",
-      `You will send ${amountBStr} ETH and receive ${amountAStr} ${order.tokenA.symbol} in return.`,
-      async () => {
-        try {
-          showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrderWithEth(order.orderId, deadline, {
-            value: BigInt(order.amountB),
-          });
-          showToast("Waiting for tx confirmation...", "info", true);
-          await tx.wait();
-          showToast("Order filled! Syncing...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
-          loadOrders();
-          loadStats();
-          showToast("Order filled!", "success");
-        } catch (e) {
-          console.error("Fill error:", e);
-          showToast("Fill failed: " + parseContractError(e), "error");
+    // fillOrders has no skip-and-continue mode: one leg the order can no longer
+    // take as selected reverts the whole call.
+    const atomicNote = document.createElement("div");
+    atomicNote.className = "batch-summary-note";
+    atomicNote.textContent =
+      "Each transaction is all-or-nothing: if any order in it has been filled, cancelled or " +
+      "changed by the time it lands, that transaction reverts and nothing in it is spent.";
+    body.appendChild(atomicNote);
+
+    appendBatchTxNote(body, orders.length, CONFIG.MAX_BATCH_FILL);
+
+    showModal(`Fill ${orders.length} Orders`, body, async () => {
+      try {
+        // An approve-only token is approved once for the whole batch, as before.
+        // A signature-capable one is left alone here and signed per chunk below,
+        // because each chunk is its own transaction and spends its own nonce.
+        if (
+          !payWithEth &&
+          (await SB.pullStrategy(tokenB.address, totals.totalSend)) === "approve"
+        ) {
+          showToast("Checking allowance...", "info", true);
+          await SB.ensureAllowance(tokenB.address, totals.totalSend);
         }
-      },
-      gasEstimate
-    );
+
+        const deadline = Math.floor(Date.now() / 1000) + 300;
+        const chunks = chunkArray(orders, CONFIG.MAX_BATCH_FILL);
+
+        const filled = await runBatchTransactions(chunks, "Filling", async (chunk) => {
+          const pull = payWithEth
+            ? NO_PULL
+            : await SB.resolveBatchPull(
+                chunk.map((o) => ({ token: o.tokenB.address, amount: o.availableB }))
+              );
+          return SB.fillOrders(chunk, deadline, pull);
+        });
+
+        clearSelection(false);
+        showToast(`Filled ${filled} orders! Syncing...`, "success", true);
+        loadOrders();
+        loadStats();
+        showToast(`Filled ${filled} orders!`, "success");
+      } catch (e) {
+        console.error("Batch fill error:", e);
+        showToast("Fill failed: " + parseContractError(e), "error");
+      }
+    });
   }
 
-  async function handleFillOrderUnwrap(order) {
+  /**
+   * Cancels every selected order.
+   *
+   * Own orders may span different pairs, so totals are grouped per offered
+   * token. Batching is v2-only, and v2 has no unwrap: an order escrowing native
+   * ETH refunds ETH and one escrowing WETH refunds WETH, all in one call.
+   */
+  async function cancelSelectedOrders() {
+    const orders = getSelectedOrders();
+    if (orders.length === 0) return;
+
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
 
-    const amountBStr = formatAmount(order.amountB, order.tokenB.decimals);
-    const amountAStr = formatAmount(order.amountA, 18);
+    const body = document.createElement("div");
+    body.className = "batch-summary";
 
-    const deadline = Math.floor(Date.now() / 1000) + 300;
+    const list = document.createElement("div");
+    list.className = "batch-summary-list";
+    const refunds = new Map();
+    for (const order of orders) {
+      const { symbol, decimals } = order.tokenA;
+      list.appendChild(
+        buildBatchItem(
+          order.orderId,
+          `${formatAmount(order.availableA, decimals)} ${symbol} returned`
+        )
+      );
 
-    showToast("Estimating gas...");
-    let gasEstimate = null;
-    try {
-      const txData = contract.interface.encodeFunctionData("fillOrderUnwrap", [order.orderId, deadline]);
-      gasEstimate = await estimateGasCost({
-        from: userAddress,
-        to: CONFIG.CONTRACT_ADDRESS,
-        data: txData,
+      const existing = refunds.get(symbol);
+      refunds.set(symbol, {
+        decimals,
+        total: (existing ? existing.total : 0n) + BigInt(order.availableA),
       });
-    } catch (e) {
-      console.error("Gas estimation failed:", e);
+    }
+    body.appendChild(list);
+
+    const totalsEl = document.createElement("div");
+    totalsEl.className = "batch-summary-totals";
+    appendTotalRow(totalsEl, "Orders", String(orders.length));
+    for (const [symbol, { decimals, total }] of refunds) {
+      appendTotalRow(totalsEl, "Returned", `${formatAmount(total, decimals)} ${symbol}`, true);
+    }
+    body.appendChild(totalsEl);
+
+    appendBatchTxNote(body, orders.length, CONFIG.MAX_BATCH_CANCEL);
+
+    showModal(`Cancel ${orders.length} Orders`, body, async () => {
+      try {
+        const cancelled = await runBatchTransactions(
+          chunkArray(orders, CONFIG.MAX_BATCH_CANCEL),
+          "Cancelling",
+          (chunk) => SB.cancelOrders(chunk.map((o) => o.orderId))
+        );
+
+        clearSelection(false);
+        showToast(`Cancelled ${cancelled} orders! Updating...`, "success", true);
+        loadOrders();
+        loadStats();
+        showToast(`Cancelled ${cancelled} orders!`, "success");
+      } catch (e) {
+        console.error("Batch cancel error:", e);
+        showToast("Cancel failed: " + parseContractError(e), "error");
+      }
+    });
+  }
+
+  // ============================================================================
+  // Sell Tokens form (batch create)
+  // ============================================================================
+  //
+  // The form is a list of order rows cloned from #create-row-template. Fields
+  // are addressed by [data-field] scoped to their row rather than by global id,
+  // so several orders can go out in one createOrders() transaction.
+
+  /**
+   * Finds a field inside a create-order row.
+   * @param {HTMLElement} row - A .create-row element
+   * @param {string} name - data-field value
+   * @returns {HTMLElement}
+   */
+  function rowField(row, name) {
+    return row.querySelector('[data-field="' + name + '"]');
+  }
+
+  /**
+   * Returns every create-order row, in form order.
+   * @returns {HTMLElement[]}
+   */
+  function getCreateRows() {
+    return Array.from(document.querySelectorAll("#create-rows .create-row"));
+  }
+
+  /**
+   * Per-row token metadata and balances, keyed by the row element so removing
+   * a row disposes of its state automatically.
+   * @type {WeakMap<HTMLElement, {tokenA: Object, tokenB: Object}>}
+   */
+  const rowStates = new WeakMap();
+
+  /**
+   * Returns (creating if needed) the validation state for a row.
+   * @param {HTMLElement} row - A .create-row element
+   * @returns {{tokenA: {info: ?Object, balance: ?bigint}, tokenB: {info: ?Object, balance: ?bigint}}}
+   */
+  function getRowState(row) {
+    if (!rowStates.has(row)) {
+      rowStates.set(row, {
+        tokenA: { info: null, balance: null },
+        tokenB: { info: null, balance: null },
+      });
+    }
+    return rowStates.get(row);
+  }
+
+  /**
+   * Validates an amount field against the row's token metadata and balance.
+   * @param {HTMLElement} row - A .create-row element
+   * @param {"tokenA"|"tokenB"} side - Which side of the order
+   * @returns {boolean} True when the amount is usable
+   */
+  function validateRowAmount(row, side) {
+    const input = rowField(row, side === "tokenA" ? "amountA" : "amountB");
+    const state = getRowState(row)[side];
+
+    let errorSpan = input.parentNode.querySelector(".amount-error");
+    if (!errorSpan) {
+      errorSpan = document.createElement("span");
+      errorSpan.className = "amount-error";
+      input.parentNode.appendChild(errorSpan);
     }
 
-    showModal(
-      "Fill Order #" + order.orderId + " (receive ETH)",
-      `You will send ${amountBStr} ${order.tokenB.symbol} and receive ${amountAStr} ETH in return.`,
-      async () => {
-        try {
-          const isLocal =
-            window.location.hostname === "localhost" ||
-            window.location.hostname === "127.0.0.1" ||
-            window.location.protocol === "file:";
+    const value = input.value.trim();
+    if (!value || !state.info) {
+      input.classList.remove("input-error");
+      errorSpan.textContent = "";
+      return true;
+    }
 
-          if (!isLocal) {
-            showToast("Checking allowance...", "info", true);
-            const tokenContract = new ethers.Contract(order.tokenB.address, ERC20_ABI, signer);
-            const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
-            const amountB = BigInt(order.amountB);
+    const { amount, error } = tryParseAmount(value, state.info.decimals);
+    if (amount === null) {
+      input.classList.add("input-error");
+      errorSpan.textContent = error;
+      return false;
+    }
 
-            if (allowance < amountB) {
-              showToast("Approve tokens in wallet...", "info", true);
-              const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountB);
-              showToast("Waiting for approval tx...", "info", true);
-              await approveTx.wait();
-              showToast("Approval confirmed");
-            }
-          }
+    // Only the offered side is spent, so only it can exceed a balance.
+    if (side === "tokenA" && state.balance !== null && amount > state.balance) {
+      input.classList.add("input-error");
+      errorSpan.textContent = "Exceeds balance";
+      return false;
+    }
 
-          showToast("Confirm fill in wallet...", "info", true);
-          const tx = await contract.fillOrderUnwrap(order.orderId, deadline);
-          showToast("Waiting for tx confirmation...", "info", true);
-          await tx.wait();
-          showToast("Order filled! Syncing...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
-          loadOrders();
-          loadStats();
-          showToast("Order filled!", "success");
-        } catch (e) {
-          console.error("Fill error:", e);
-          showToast("Fill failed: " + parseContractError(e), "error");
-        }
-      },
-      gasEstimate
+    if (amount === 0n && value !== "0") {
+      input.classList.add("input-error");
+      errorSpan.textContent = "Amount too small";
+      return false;
+    }
+
+    input.classList.remove("input-error");
+    errorSpan.textContent = "";
+    return true;
+  }
+
+  /**
+   * Shows the implied price for a row once both amounts are filled in.
+   * @param {HTMLElement} row - A .create-row element
+   */
+  function updateRowPriceDisplay(row) {
+    const priceInfo = rowField(row, "price-info");
+    const state = getRowState(row);
+    const amountA = parseFloat(rowField(row, "amountA").value.trim());
+    const amountB = parseFloat(rowField(row, "amountB").value.trim());
+
+    priceInfo.textContent = "";
+    if (isNaN(amountA) || isNaN(amountB) || amountA <= 0 || amountB <= 0) return;
+
+    const symbolA = state.tokenA.info ? state.tokenA.info.symbol : "Token A";
+    const symbolB = state.tokenB.info ? state.tokenB.info.symbol : "Token B";
+    const trim = (n) => n.toFixed(6).replace(/\.?0+$/, "");
+
+    priceInfo.appendChild(
+      document.createTextNode("1 " + symbolB + " = " + trim(amountA / amountB) + " " + symbolA)
+    );
+    priceInfo.appendChild(document.createElement("br"));
+    priceInfo.appendChild(
+      document.createTextNode("1 " + symbolA + " = " + trim(amountB / amountA) + " " + symbolB)
     );
   }
 
-  async function handleCancelOrderUnwrap(order) {
-    if (!signer) {
-      showToast("Connect wallet first", "error");
+  /**
+   * Renders quick-amount buttons (25/50/75/100% of balance) for a row side.
+   * @param {HTMLElement} row - A .create-row element
+   * @param {"tokenA"|"tokenB"} side - Which side of the order
+   * @param {bigint} balance - Available balance in base units
+   * @param {number} decimals - Token decimals
+   */
+  function renderRowQuickAmounts(row, side, balance, decimals) {
+    const container = rowField(row, "quick-amounts-A");
+    if (!container || side !== "tokenA") return;
+
+    container.textContent = "";
+    if (balance <= 0n) return;
+
+    const amountInput = rowField(row, "amountA");
+    for (const percent of [25, 50, 75, 100]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "quick-amt-btn";
+      btn.textContent = percent + "%";
+      btn.addEventListener("click", () => {
+        amountInput.value = formatAmount(((balance * BigInt(percent)) / 100n).toString(), decimals);
+        amountInput.dispatchEvent(new Event("input"));
+      });
+      container.appendChild(btn);
+    }
+  }
+
+  /**
+   * Renders the resolved token metadata line under a token input.
+   * @param {HTMLElement} infoEl - The [data-field="tokenX-info"] element
+   * @param {Object} info - Token info from fetchTokenInfo
+   */
+  function renderTokenInfoLine(infoEl, info) {
+    infoEl.textContent = "";
+
+    if (isNativeEth(info.address)) {
+      infoEl.appendChild(document.createTextNode("ETH (18 decimals) — native, no contract"));
       return;
     }
 
-    const amountAStr = formatAmount(order.amountA, 18);
+    const cgUrl = coinGeckoUrl(info.address);
+    if (cgUrl) {
+      const link = document.createElement("a");
+      link.href = cgUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = info.symbol;
+      link.title = "Verify on CoinGecko";
+      infoEl.appendChild(link);
+      infoEl.appendChild(document.createTextNode(" (" + info.decimals + " decimals) "));
 
-    showToast("Estimating gas...");
-    let gasEstimate = null;
-    try {
-      const txData = contract.interface.encodeFunctionData("cancelOrderUnwrap", [order.orderId]);
-      gasEstimate = await estimateGasCost({
-        from: userAddress,
-        to: CONFIG.CONTRACT_ADDRESS,
-        data: txData,
-      });
-    } catch (e) {
-      console.error("Gas estimation failed:", e);
+      const verifyLink = document.createElement("a");
+      verifyLink.href = cgUrl;
+      verifyLink.target = "_blank";
+      verifyLink.rel = "noopener noreferrer";
+      verifyLink.textContent = "[verify]";
+      verifyLink.className = "verify-link";
+      infoEl.appendChild(verifyLink);
+    } else {
+      infoEl.appendChild(
+        document.createTextNode(info.symbol + " (" + info.decimals + " decimals) ")
+      );
     }
 
-    showModal(
-      "Cancel Order #" + order.orderId + " (receive ETH)",
-      `Your ${amountAStr} ETH will be returned to your wallet.`,
-      async () => {
-        try {
-          showToast("Cancelling order...");
-          const tx = await contract.cancelOrderUnwrap(order.orderId);
-          await tx.wait();
-          showToast("Order cancelled! Updating...", "success", true);
-          await waitForOrderUpdate(order.orderId, false);
-          loadOrders();
-          loadStats();
-          showToast("Order cancelled!", "success");
-        } catch (e) {
-          console.error("Cancel error:", e);
-          showToast("Cancel failed: " + parseContractError(e), "error");
-        }
-      },
-      gasEstimate
-    );
+    appendUnknownTokenBadge(infoEl, info.address);
   }
 
+  /**
+   * Loads and displays the connected wallet's balance for a row side.
+   *
+   * The balance shown has to be the one the order will actually spend. An
+   * offered side that settles as ETH spends the account balance even when the
+   * field holds a token address: v1 has no native sentinel and routes an
+   * offered WETH through createOrderWithEth, paying in ETH via msg.value. So
+   * the test is "does this side settle as ETH", not "is this address native" —
+   * the latter is never true in v1 and would show a v1 seller their WETH
+   * balance (typically 0) for an order paid out of their ETH.
+   *
+   * Only the offered side is spent, so only tokenA gets this treatment.
+   *
+   * @param {HTMLElement} row - A .create-row element
+   * @param {"tokenA"|"tokenB"} side - Which side of the order
+   * @param {Object} info - Token info from fetchTokenInfo
+   */
+  async function loadRowBalance(row, side, info) {
+    const balanceEl = rowField(row, side + "-balance");
+    if (!userAddress || !provider) return;
+
+    const spendsEth =
+      side === "tokenA"
+        ? offersEthDirectly(info.address, ACTIVE_VERSION, isWeth)
+        : isNativeEth(info.address);
+
+    try {
+      const balance = spendsEth
+        ? await provider.getBalance(userAddress)
+        : await new ethers.Contract(info.address, ERC20_ABI, provider).balanceOf(userAddress);
+
+      getRowState(row)[side].balance = balance;
+      balanceEl.textContent = "Balance: " + formatAmount(balance.toString(), info.decimals);
+
+      validateRowAmount(row, side);
+      renderRowQuickAmounts(row, side, balance, info.decimals);
+    } catch (e) {
+      console.error("Balance fetch error:", e);
+    }
+  }
+
+  /**
+   * Wires a row's token address field: debounced metadata lookup, balance
+   * fetch, and state bookkeeping.
+   * @param {HTMLElement} row - A .create-row element
+   * @param {"tokenA"|"tokenB"} side - Which side of the order
+   */
+  function setupRowTokenField(row, side) {
+    const input = rowField(row, side);
+    const infoEl = rowField(row, side + "-info");
+    const balanceEl = rowField(row, side + "-balance");
+    let timeout = null;
+
+    input.addEventListener("input", () => {
+      clearTimeout(timeout);
+      rowField(row, "price-info").textContent = "";
+
+      const addr = input.value.trim();
+      const state = getRowState(row)[side];
+
+      // Keep [ETH] lit when ETH arrives via the autocomplete rather than the
+      // button, so the two entry points agree.
+      row
+        .querySelector('[data-eth-for="' + side + '"]')
+        .classList.toggle("active", isNativeEth(addr));
+
+      if (!isValidAddress(addr)) {
+        infoEl.textContent = addr ? "Invalid address" : "";
+        balanceEl.textContent = "";
+        renderRowQuickAmounts(row, side, 0n, 18);
+        state.info = null;
+        state.balance = null;
+        return;
+      }
+
+      timeout = setTimeout(async () => {
+        infoEl.textContent = "Loading...";
+        balanceEl.textContent = "";
+
+        const info = await fetchTokenInfo(addr);
+        if (info.decimals == null) {
+          infoEl.textContent = "";
+          const warnSpan = document.createElement("span");
+          warnSpan.className = "token-warning";
+          warnSpan.textContent = "Could not read token decimals — cannot use this token";
+          infoEl.appendChild(warnSpan);
+          state.info = null;
+          state.balance = null;
+          return;
+        }
+
+        if (isWeth(addr)) {
+          info.symbol = "ETH";
+          info.name = "Ether";
+        }
+
+        state.info = info;
+        state.balance = null;
+        renderTokenInfoLine(infoEl, info);
+        await loadRowBalance(row, side, info);
+      }, CONFIG.DEBOUNCE_DELAY);
+    });
+  }
+
+  /**
+   * Toggles a row side between native ETH and a pasted contract address.
+   *
+   * Native ETH has no contract, so selecting it pins the field to the sentinel
+   * and locks it; clicking again hands the field back to the user.
+   *
+   * @param {HTMLElement} row - A .create-row element
+   * @param {"tokenA"|"tokenB"} side - Which side of the order
+   */
+  function toggleRowNativeEth(row, side) {
+    const input = rowField(row, side);
+    const btn = row.querySelector('[data-eth-for="' + side + '"]');
+    const enabling = !isNativeEth(input.value.trim());
+
+    input.value = enabling ? NATIVE_ETH : "";
+    input.readOnly = enabling;
+    input.classList.toggle("input-native-eth", enabling);
+    btn.classList.toggle("active", enabling);
+
+    input.dispatchEvent(new Event("input"));
+  }
+
+  /**
+   * Renumbers rows and syncs the [Add Sell] button to the batch limit.
+   */
+  function refreshCreateRows() {
+    const rows = getCreateRows();
+
+    rows.forEach((row, i) => {
+      row.querySelector(".create-row-label").textContent =
+        rows.length > 1 ? "Order " + (i + 1) + " of " + rows.length : "";
+    });
+
+    // One order per transaction without a batch create entry point.
+    const rowLimit = CAPS.multiCreate ? CONFIG.MAX_BATCH_CREATE : 1;
+    const atLimit = rows.length >= rowLimit;
+    $("#add-sell-btn").disabled = atLimit;
+    $("#create-limit-note").textContent =
+      atLimit && CAPS.multiCreate
+        ? "Limit reached — " + CONFIG.MAX_BATCH_CREATE + " orders per transaction"
+        : "";
+    $("#create-btn").textContent =
+      rows.length > 1 ? "Create " + rows.length + " Orders" : "Create Order";
+  }
+
+  /**
+   * Appends a fresh order row to the Sell Tokens form.
+   * @returns {HTMLElement|null} The new row, or null at the batch limit
+   */
+  function addCreateRow() {
+    const rowLimit = CAPS.multiCreate ? CONFIG.MAX_BATCH_CREATE : 1;
+    if (getCreateRows().length >= rowLimit) return null;
+
+    const row = $("#create-row-template").content.firstElementChild.cloneNode(true);
+
+    for (const side of ["tokenA", "tokenB"]) {
+      setupRowTokenField(row, side);
+      // The [ETH] shortcut fills in the native-ETH sentinel, which only v2
+      // understands; v1 reaches ETH by naming WETH like any other token.
+      if (CAPS.nativeEth) {
+        row.querySelector('[data-eth-for="' + side + '"]').addEventListener("click", () => {
+          toggleRowNativeEth(row, side);
+        });
+      }
+    }
+
+    rowField(row, "amountA").addEventListener("input", () => {
+      updateRowPriceDisplay(row);
+      validateRowAmount(row, "tokenA");
+    });
+    rowField(row, "amountB").addEventListener("input", () => {
+      updateRowPriceDisplay(row);
+      validateRowAmount(row, "tokenB");
+    });
+
+    row.querySelector(".create-row-remove").addEventListener("click", () => {
+      if (getCreateRows().length <= 1) return;
+      row.remove();
+      refreshCreateRows();
+    });
+
+    $("#create-rows").appendChild(row);
+
+    // Safe to attach before the Uniswap list has loaded: the selector reads it
+    // lazily, on input.
+    createTokenSelector(rowField(row, "tokenA"));
+    createTokenSelector(rowField(row, "tokenB"));
+
+    refreshCreateRows();
+    return row;
+  }
+
+  /**
+   * Clears the Sell Tokens form back to a single empty row.
+   */
+  function resetCreateForm() {
+    $("#create-rows").textContent = "";
+    addCreateRow();
+  }
+
+  /**
+   * Reads and validates every row into contract-ready CreateOrderParams.
+   * @returns {Promise<Object[]|null>} Params array, or null if anything is invalid
+   */
+  async function collectCreateParams() {
+    const rows = getCreateRows();
+    const params = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const label = rows.length > 1 ? "Order " + (i + 1) + ": " : "";
+
+      const tokenAAddr = rowField(row, "tokenA").value.trim();
+      const tokenBAddr = rowField(row, "tokenB").value.trim();
+      const amountAStr = rowField(row, "amountA").value.trim();
+      const amountBStr = rowField(row, "amountB").value.trim();
+
+      if (!tokenAAddr || !tokenBAddr || !amountAStr || !amountBStr) {
+        showToast(label + "Fill in all fields", "error");
+        return null;
+      }
+      if (!isValidAddress(tokenAAddr) || !isValidAddress(tokenBAddr)) {
+        showToast(label + "Invalid token address format", "error");
+        return null;
+      }
+      if (tokenAAddr.toLowerCase() === tokenBAddr.toLowerCase()) {
+        showToast(label + "Offered and wanted token must differ", "error");
+        return null;
+      }
+
+      const tokenA = await fetchTokenInfo(tokenAAddr);
+      const tokenB = await fetchTokenInfo(tokenBAddr);
+      if (isWeth(tokenAAddr)) tokenA.symbol = "ETH";
+      if (isWeth(tokenBAddr)) tokenB.symbol = "ETH";
+
+      if (tokenA.decimals == null || tokenB.decimals == null) {
+        showToast(
+          label + "Could not read decimals — check that both token addresses are correct",
+          "error"
+        );
+        return null;
+      }
+
+      const parsedA = tryParseAmount(amountAStr, tokenA.decimals);
+      const parsedB = tryParseAmount(amountBStr, tokenB.decimals);
+      if (parsedA.error || parsedB.error) {
+        showToast(label + (parsedA.error || parsedB.error), "error");
+        return null;
+      }
+      const amountA = parsedA.amount;
+      const amountB = parsedB.amount;
+      if (amountA === 0n || amountB === 0n) {
+        showToast(label + "Amounts must be greater than 0", "error");
+        return null;
+      }
+
+      const state = getRowState(row);
+      if (state.tokenA.balance !== null && amountA > state.tokenA.balance) {
+        showToast(label + "Insufficient balance for offered token", "error");
+        return null;
+      }
+
+      params.push({
+        tokenA: tokenAAddr,
+        amountA,
+        tokenB: tokenBAddr,
+        amountB,
+        // The checkbox is the opt-out, so partial fills are the default —
+        // except on v1, where every order is all-or-nothing regardless.
+        partialFillAllowed: CAPS.partialFill && !rowField(row, "no-partial").checked,
+        tokenAInfo: tokenA,
+        tokenBInfo: tokenB,
+        amountAStr,
+        amountBStr,
+      });
+    }
+
+    return params;
+  }
+
+  /**
+   * Creates every order in the Sell Tokens form.
+   *
+   * Approvals are grouped by offered token, so a batch selling the same token
+   * across several rows approves once for the combined amount.
+   */
   async function handleCreateOrder() {
     if (!signer) {
       showToast("Connect wallet first", "error");
       return;
     }
 
-    const tokenAAddr = $("#create-tokenA").value.trim();
-    const tokenBAddr = $("#create-tokenB").value.trim();
-    const amountAStr = $("#create-amountA").value.trim();
-    const amountBStr = $("#create-amountB").value.trim();
-
-    if (!tokenAAddr || !tokenBAddr || !amountAStr || !amountBStr) {
-      showToast("Fill in all fields", "error");
-      return;
-    }
-
-    if (!isValidAddress(tokenAAddr) || !isValidAddress(tokenBAddr)) {
-      showToast("Invalid token address format", "error");
-      return;
-    }
-
-    const useEth = isWeth(tokenAAddr);
-
+    // collectCreateParams reports its own validation failures and returns null.
+    // This catch is for the rest: fetchTokenInfo hits the network, so an RPC
+    // failure lands here too, and an escaped throw would leave the Create
+    // button looking simply dead — no toast, no modal, no state change.
+    let params;
     try {
-      const tokenA = await fetchTokenInfo(tokenAAddr);
-      if (useEth) tokenA.symbol = "ETH";
-      const tokenB = await fetchTokenInfo(tokenBAddr);
-
-      if (tokenA.decimals == null) {
-        showToast(
-          `Could not read decimals for ${tokenAAddr}. Please check that the token address is correct`,
-          "error",
-        );
-        return;
-      }
-      if (tokenB.decimals == null) {
-        showToast(
-          `Could not read decimals for ${tokenBAddr}. Please check that the token address is correct`,
-          "error",
-        );
-        return;
-      }
-
-      let amountA, amountB;
-      try {
-        amountA = parseAmount(amountAStr, tokenA.decimals);
-        amountB = parseAmount(amountBStr, tokenB.decimals);
-      } catch (e) {
-        showToast(e.message, "error");
-        return;
-      }
-
-      if (amountA === 0n || amountB === 0n) {
-        showToast("Amounts must be greater than 0", "error");
-        return;
-      }
-
-      // Check balance for offered token
-      if (createFormState.tokenA.balance !== null && amountA > createFormState.tokenA.balance) {
-        showToast("Insufficient balance for offered token", "error");
-        return;
-      }
-
-      showModal(
-        "Create Order",
-        `Sell ${amountAStr} ${tokenA.symbol} for ${amountBStr} ${tokenB.symbol}`,
-        async () => {
-          const createBtn = $("#create-btn");
-          const originalText = createBtn.textContent;
-          createBtn.disabled = true;
-          setTextWithDots(createBtn, "Processing");
-
-          try {
-            let receipt;
-
-            if (useEth) {
-              setTextWithDots(createBtn, "Creating");
-              showToast("Confirm order in wallet...", "info", true);
-              const tx = await contract.createOrderWithEth(tokenBAddr, amountB, {
-                value: amountA,
-              });
-              showToast("Waiting for tx confirmation...", "info", true);
-              receipt = await tx.wait();
-            } else {
-              // Verify token contract exists on this network
-              const code = await provider.getCode(tokenAAddr);
-              if (code === "0x") {
-                showToast("Token contract not found on this network", "error");
-                createBtn.disabled = false;
-                createBtn.textContent = originalText;
-                return;
-              }
-
-              showToast("Checking allowance...", "info", true);
-              const tokenContract = new ethers.Contract(tokenAAddr, ERC20_ABI, signer);
-              const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
-
-              if (allowance < amountA) {
-                setTextWithDots(createBtn, "Approving");
-                showToast("Approve tokens in wallet...", "info", true);
-                const approveTx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, amountA);
-                showToast("Waiting for approval tx...", "info", true);
-                await approveTx.wait();
-                showToast("Approval confirmed");
-              }
-
-              setTextWithDots(createBtn, "Creating");
-              showToast("Confirm order in wallet...", "info", true);
-              const tx = await contract.createOrder(tokenAAddr, amountA, tokenBAddr, amountB);
-              showToast("Waiting for tx confirmation...", "info", true);
-              receipt = await tx.wait();
-            }
-            showToast("Order created! Updating...", "success", true);
-
-            // Save tokens to recent list
-            addRecentToken(tokenAAddr, tokenA.symbol);
-            addRecentToken(tokenBAddr, tokenB.symbol);
-
-            $("#create-tokenA").value = "";
-            $("#create-tokenB").value = "";
-            $("#create-amountA").value = "";
-            $("#create-amountB").value = "";
-            $("#tokenA-info").textContent = "";
-            $("#tokenB-info").textContent = "";
-            $("#tokenA-balance").textContent = "";
-            $("#tokenB-balance").textContent = "";
-            $("#price-info").textContent = "";
-            $("#sell-modal").classList.add("hidden");
-
-            // Get order ID from event and wait for subgraph to index
-            const orderCreatedEvent = receipt.logs
-              .map((log) => {
-                try {
-                  return contract.interface.parseLog(log);
-                } catch {
-                  return null;
-                }
-              })
-              .find((parsed) => parsed && parsed.name === "OrderCreated");
-            if (orderCreatedEvent) {
-              const newOrderId = orderCreatedEvent.args.orderId.toString();
-              await waitForOrderUpdate(newOrderId, true, 15, 2000);
-            } else {
-              // Fallback: wait a bit for indexing
-              await new Promise((resolve) => setTimeout(resolve, 5000));
-            }
-            loadOrders();
-            loadStats();
-            showToast("Order created!", "success");
-          } catch (e) {
-            console.error("Create error:", e);
-            showToast("Create failed: " + parseContractError(e), "error");
-          } finally {
-            createBtn.disabled = false;
-            createBtn.textContent = originalText;
-          }
-        }
-      );
+      params = await collectCreateParams();
     } catch (e) {
-      console.error("Token info error:", e);
-      showToast("Failed to load token info", "error");
+      console.error("Create validation error:", e);
+      showToast(e.message || "Could not read the order details", "error");
+      return;
     }
+    if (!params) return;
+
+    const body = document.createElement("div");
+    body.className = "batch-summary";
+
+    const list = document.createElement("div");
+    list.className = "batch-summary-list";
+    params.forEach((p, i) => {
+      list.appendChild(
+        buildBatchItem(
+          String(i + 1),
+          `Sell ${p.amountAStr} ${p.tokenAInfo.symbol} for ${p.amountBStr} ${p.tokenBInfo.symbol}` +
+            // On v1 nothing partially fills, so saying so would be noise.
+            (!CAPS.partialFill || p.partialFillAllowed ? "" : " (no partial fills)")
+        )
+      );
+    });
+    body.appendChild(list);
+
+    // Orders offering ETH escrow it through msg.value instead of an approval.
+    // What counts as "offering ETH" is version-dependent: v2 means the
+    // native-ETH sentinel, v1 means WETH. v2 takes those on its ordinary entry
+    // points, mixed in with ERC20 orders in the same batch; v1 reaches ETH only
+    // through createOrderWithEth, so there they go out as separate calls.
+    const offersEth = (p) => offersEthDirectly(p.tokenA, ACTIVE_VERSION, isWeth);
+    const ethParams = CAPS.nativeEth ? [] : params.filter(offersEth);
+    const erc20Params = CAPS.nativeEth ? params : params.filter((p) => !offersEth(p));
+
+    // Without batch entry points every order is its own transaction.
+    const createChunkSize = CAPS.batch ? CONFIG.MAX_BATCH_CREATE : 1;
+
+    if (ethParams.length > 0 && erc20Params.length > 0) {
+      const note = document.createElement("div");
+      note.className = "batch-summary-note";
+      note.textContent =
+        `${ethParams.length} of these offer ETH and settle through a separate ` +
+        "call, so this takes one more transaction than a token-only batch.";
+      body.appendChild(note);
+    }
+
+    appendBatchTxNote(body, erc20Params.length, createChunkSize);
+    appendBatchTxNote(body, ethParams.length, createChunkSize);
+
+    showModal(
+      params.length > 1 ? `Create ${params.length} Orders` : "Create Order",
+      body,
+      async () => {
+        const createBtn = $("#create-btn");
+        const originalText = createBtn.textContent;
+        createBtn.disabled = true;
+        setTextWithDots(createBtn, "Processing");
+
+        try {
+          // One approval per distinct offered token, covering every row using
+          // it. Orders paying through msg.value have nothing to approve.
+          const totals = new Map();
+          for (const p of params) {
+            if (offersEth(p)) continue;
+            totals.set(p.tokenA, (totals.get(p.tokenA) || 0n) + p.amountA);
+          }
+
+          // Approve-only tokens get one transaction covering every row that uses
+          // them, as before. Signature-capable ones are skipped here and signed
+          // per chunk below: a permit nonce is spent by a single transaction, so
+          // it cannot be hoisted out of the chunk loop.
+          for (const [token, total] of totals) {
+            if ((await SB.pullStrategy(token, total)) !== "approve") continue;
+            setTextWithDots(createBtn, "Approving");
+            showToast("Checking allowance...", "info", true);
+            await SB.ensureAllowance(token, total);
+          }
+
+          setTextWithDots(createBtn, "Creating");
+
+          await runBatchTransactions(
+            chunkArray(erc20Params, createChunkSize),
+            "Creating",
+            async (chunk) => {
+              if (chunk.length === 1) {
+                const one = chunk[0];
+                const pull = await SB.resolvePull(one.tokenA, one.amountA);
+                return SB.createOrder(
+                  one.tokenA,
+                  one.amountA,
+                  one.tokenB,
+                  one.amountB,
+                  one.partialFillAllowed,
+                  pull
+                );
+              }
+              const pull = await SB.resolveBatchPull(
+                chunk.map((c) => ({ token: c.tokenA, amount: c.amountA }))
+              );
+              return SB.createOrders(chunk, pull);
+            }
+          );
+
+          // v1 only (empty on v2): offering WETH means the amount rides in
+          // msg.value through the payable variant, with no tokenA argument.
+          // Without batching every chunk here is a single order.
+          await runBatchTransactions(chunkArray(ethParams, createChunkSize), "Creating", (chunk) =>
+            SB.createOrderWithEth(
+              chunk[0].tokenB,
+              chunk[0].amountB,
+              chunk[0].partialFillAllowed,
+              chunk[0].amountA
+            )
+          );
+
+          showToast("Orders created! Updating...", "success", true);
+          for (const p of params) {
+            addRecentToken(p.tokenA, p.tokenAInfo.symbol);
+            addRecentToken(p.tokenB, p.tokenBInfo.symbol);
+          }
+
+          resetCreateForm();
+          $("#sell-modal").classList.add("hidden");
+          loadOrders();
+          loadStats();
+          showToast(
+            params.length > 1 ? `Created ${params.length} orders!` : "Order created!",
+            "success"
+          );
+        } catch (e) {
+          console.error("Create error:", e);
+          showToast("Create failed: " + parseContractError(e), "error");
+        } finally {
+          createBtn.disabled = false;
+          createBtn.textContent = originalText;
+        }
+      }
+    );
   }
 
   // ============================================================================
@@ -3027,8 +4721,10 @@
   }
 
   async function switchToExpectedNetwork() {
+    // Ask the wallet the user picked, which need not be the one on window.ethereum.
+    const wallet = selectedProvider || window.ethereum;
     try {
-      await window.ethereum.request({
+      await wallet.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: EXPECTED_CHAIN.chainId }],
       });
@@ -3036,7 +4732,7 @@
     } catch (switchError) {
       if (switchError.code === 4902) {
         try {
-          await window.ethereum.request({
+          await wallet.request({
             method: "wallet_addEthereumChain",
             params: [EXPECTED_CHAIN],
           });
@@ -3049,22 +4745,40 @@
     }
   }
 
-  async function validateNetwork() {
+  /**
+   * Checks the wallet is on EXPECTED_CHAIN_ID, asking it to switch if not.
+   * @param {{silent?: boolean}} [opts] - silent: page-load reconnect; report
+   *   the wrong chain but never pop a wallet prompt the user did not ask for
+   * @returns {Promise<boolean>} true once the wallet is on the expected chain
+   */
+  async function validateNetwork({ silent = false } = {}) {
     const network = await provider.getNetwork();
     const chainId = Number(network.chainId);
+    if (chainId === EXPECTED_CHAIN_ID) return true;
 
-    if (chainId !== EXPECTED_CHAIN_ID) {
-      const networkName = NETWORK_NAMES[chainId] || "Chain " + chainId;
-      showToast(`Wrong network: ${networkName}. Switching to Ethereum mainnet...`, "error", true);
-
-      const switched = await switchToExpectedNetwork();
-      if (!switched) {
-        showToast("Please switch to Ethereum mainnet", "error");
-        return false;
-      }
+    const networkName = NETWORK_NAMES[chainId] || "Chain " + chainId;
+    if (silent) {
+      showToast(`Wallet is on ${networkName}. Switch to ${EXPECTED_CHAIN_LABEL} to reconnect.`);
       return false;
     }
-    return true;
+
+    showToast(
+      `Wrong network: ${networkName}. Switching to ${EXPECTED_CHAIN_LABEL}...`,
+      "error",
+      true
+    );
+
+    const switched = await switchToExpectedNetwork();
+    if (!switched) {
+      showToast("Please switch to " + EXPECTED_CHAIN_LABEL, "error");
+      return false;
+    }
+
+    // ethers v6 pins a BrowserProvider to the chain it first saw, so the old
+    // one throws "network changed" from here on. Rebuild it and re-check.
+    provider = new ethers.BrowserProvider(selectedProvider || window.ethereum);
+    const switchedNetwork = await provider.getNetwork();
+    return Number(switchedNetwork.chainId) === EXPECTED_CHAIN_ID;
   }
 
   /**
@@ -3089,7 +4803,7 @@
     if (providers.length === 0) {
       if (typeof window.ethereum !== "undefined") {
         // Single legacy wallet - connect directly
-        connectWithProvider(window.ethereum, "Browser Wallet");
+        connectWithProvider(window.ethereum, "Browser Wallet", WALLET_INJECTED);
         return;
       }
       // No wallets at all
@@ -3100,7 +4814,7 @@
     // If only one EIP-6963 wallet, connect directly
     if (providers.length === 1) {
       const { info, provider: walletProvider } = providers[0];
-      connectWithProvider(walletProvider, info.name);
+      connectWithProvider(walletProvider, info.name, info.rdns || null);
       return;
     }
 
@@ -3114,7 +4828,7 @@
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         $("#wallet-modal").classList.add("hidden");
-        connectWithProvider(walletProvider, info.name);
+        connectWithProvider(walletProvider, info.name, info.rdns || null);
       });
 
       walletList.appendChild(btn);
@@ -3124,29 +4838,90 @@
   }
 
   /**
+   * Reconnects on page load, without prompting, to the wallet the user last
+   * connected. A wallet with no authorised account stays disconnected.
+   */
+  function restoreWalletConnection() {
+    // Some wallet extensions define window.ethereum as a non-configurable
+    // getter, so mock mode cannot replace it and this path would reconnect the
+    // user's real wallet — real signer, real address, real contract calls — on
+    // a page where everything else is simulated. Mock mode owns this provider
+    // when it is active; window.ethereum stays the default everywhere else.
+    if (window.SWAPBOARD_MOCK_PROVIDER) {
+      connectWithProvider(window.SWAPBOARD_MOCK_PROVIDER, "Mock Wallet", null, { silent: true });
+      return;
+    }
+
+    const stored = readStoredWallet();
+    if (stored === WALLET_DISCONNECTED) return;
+
+    // Discovery ran synchronously at the top of initApp, so announced wallets
+    // are already in the map.
+    const match = Array.from(discoveredProviders.values()).find(
+      ({ info }) => stored && info.rdns === stored
+    );
+    if (match) {
+      connectWithProvider(match.provider, match.info.name, stored, { silent: true });
+      return;
+    }
+
+    // Legacy injection, no remembered choice (connected before this was
+    // stored), or the remembered wallet did not announce. The stored choice
+    // is left alone so it still wins if that wallet is back next load.
+    if (window.ethereum) {
+      connectWithProvider(window.ethereum, "Browser Wallet", null, { silent: true });
+    }
+  }
+
+  /**
    * Connects to wallet using a specific EIP-1193 provider.
    * @param {Object} walletProvider - The EIP-1193 provider object
    * @param {string} walletName - Display name of the wallet (for toasts)
+   * @param {string|null} [walletId] - Remembered for the next page load (an
+   *   EIP-6963 rdns or WALLET_INJECTED); null leaves the stored choice alone
+   * @param {{silent?: boolean}} [opts] - silent: page-load reconnect. Only
+   *   uses already-authorised accounts, and never prompts, switches chain or
+   *   toasts a failure.
    */
-  async function connectWithProvider(walletProvider, walletName) {
+  async function connectWithProvider(
+    walletProvider,
+    walletName,
+    walletId = null,
+    { silent = false } = {}
+  ) {
     try {
       selectedProvider = walletProvider;
       provider = new ethers.BrowserProvider(walletProvider);
-      await provider.send("eth_requestAccounts", []);
+      if (silent) {
+        const accounts = await provider.send("eth_accounts", []);
+        if (!accounts || accounts.length === 0) return;
+      } else {
+        await provider.send("eth_requestAccounts", []);
+      }
+
+      const validNetwork = await validateNetwork({ silent });
+      if (!validNetwork) {
+        // Keep listening: switching to the right chain in the wallet reloads
+        // the page, and the reload reconnects.
+        if (silent) setupProviderListeners(walletProvider, walletId);
+        return;
+      }
+
+      // After validateNetwork, which may have rebuilt provider on the new chain.
       signer = await provider.getSigner();
       userAddress = await signer.getAddress();
-
-      const validNetwork = await validateNetwork();
-      if (!validNetwork) return;
 
       const network = await provider.getNetwork();
       updateNetworkIndicator(Number(network.chainId));
 
-      contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+      contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
-      if (!cachedWethAddress) {
+      // v1 only. v2 has no getWeth() to ask, and no use for the answer: it
+      // escrows native ETH directly and WETH is just another ERC20 to it, so
+      // caching an address here would make isWeth() relabel real WETH orders.
+      if (!CAPS.nativeEth && !cachedWethAddress) {
         try {
-          cachedWethAddress = (await contract.weth()).toLowerCase();
+          cachedWethAddress = (await contract.getWeth()).toLowerCase();
         } catch (e) {
           cachedWethAddress = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
         }
@@ -3177,17 +4952,23 @@
         loadStats();
       });
 
-      contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
-        loadOrders();
-        loadStats();
-      });
+      contract.on(
+        "OrderCreated",
+        (orderId, maker, tokenA, amountA, tokenB, amountB, partialFillAllowed) => {
+          loadOrders();
+          loadStats();
+        }
+      );
 
       // Set up provider event listeners for the selected wallet
-      setupProviderListeners(walletProvider);
+      setupProviderListeners(walletProvider, walletId);
 
-      showToast(`Connected to ${walletName}`, "success");
+      if (walletId) storeWallet(walletId);
+      if (!silent) showToast(`Connected to ${walletName}`, "success");
       loadOrders();
     } catch (e) {
+      // A locked or unreachable wallet on page load is not worth a toast.
+      if (silent) return;
       console.error("Connect error:", e);
       if (e.code === 4001 || e.code === "ACTION_REJECTED") {
         showToast("Wallet connection cancelled", "info");
@@ -3212,21 +4993,22 @@
   /**
    * Sets up event listeners for the selected wallet provider.
    * @param {Object} walletProvider - The EIP-1193 provider object
+   * @param {string|null} [walletId] - Passed through when an account change reconnects
    */
-  function setupProviderListeners(walletProvider) {
+  function setupProviderListeners(walletProvider, walletId = null) {
     walletProvider.on("accountsChanged", (accounts) => {
       if (accounts.length === 0) {
         disconnectWallet();
         $("#sell-modal").classList.add("hidden");
       } else {
-        connectWithProvider(walletProvider, "Wallet");
+        connectWithProvider(walletProvider, "Wallet", walletId);
       }
     });
 
     walletProvider.on("chainChanged", (chainIdHex) => {
       const chainId = parseInt(chainIdHex, 16);
       if (chainId !== EXPECTED_CHAIN_ID) {
-        showToast("Please switch to Ethereum mainnet", "error");
+        showToast("Please switch to " + EXPECTED_CHAIN_LABEL, "error");
         disconnectWallet();
       } else {
         window.location.reload();
@@ -3234,6 +5016,11 @@
     });
   }
 
+  /**
+   * Clears wallet state. Deliberately does not touch the stored wallet: this
+   * also runs when the wallet locks or leaves the chain, and the next reload
+   * should reconnect after those. Only the Disconnect button records that.
+   */
   function disconnectWallet() {
     userAddress = null;
     signer = null;
@@ -3312,7 +5099,7 @@
     for (const [address, token] of tokenMap) {
       try {
         const tokenContract = new ethers.Contract(address, ERC20_ABI, provider);
-        const allowance = await tokenContract.allowance(userAddress, CONFIG.CONTRACT_ADDRESS);
+        const allowance = await tokenContract.allowance(userAddress, CONTRACT_ADDRESS);
         if (allowance > 0n) {
           approvals.push({ address, symbol: token.symbol, decimals: token.decimals, allowance });
         }
@@ -3357,7 +5144,7 @@
     try {
       showToast("Revoking approval for " + tokenSymbol + "...", "info", true);
       const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
-      const tx = await tokenContract.approve(CONFIG.CONTRACT_ADDRESS, 0);
+      const tx = await tokenContract.approve(CONTRACT_ADDRESS, 0);
       showToast("Waiting for confirmation...", "info", true);
       await tx.wait();
       showToast("Revoked approval for " + tokenSymbol, "success");
@@ -3385,15 +5172,7 @@
         orderDirection: desc
         first: 1000
       ) {
-        orderId
-        maker
-        amountA
-        amountB
-        active
-        taker
-        createdAt
-        tokenA { address symbol decimals }
-        tokenB { address symbol decimals }
+${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
       }
     }`;
     const data = await querySubgraph(query, {}, true);
@@ -3401,6 +5180,9 @@
       showToast("Failed to export orders", "error");
       return;
     }
+    // The CSV is a record of orders as placed, so it reports the original
+    // amounts rather than what is left — a fully filled order has nothing left.
+    for (const o of data.orders) normalizeOrder(o, ACTIVE_VERSION);
     const headers = [
       "Trade ID",
       "Status",
@@ -3412,7 +5194,7 @@
       "Taker",
     ];
     const rows = data.orders.map((o) => {
-      const status = o.active ? "Open" : o.taker ? "Filled" : "Cancelled";
+      const status = orderStatus(o);
       const amtA = o.tokenA.decimals
         ? (parseFloat(o.amountA) / Math.pow(10, o.tokenA.decimals)).toString()
         : o.amountA;
@@ -3430,7 +5212,7 @@
         o.taker || "",
       ];
     });
-    const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const csvContent = toCsv(headers, rows);
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -3449,212 +5231,6 @@
 
     // Show wallet selection modal
     showWalletModal();
-  }
-
-  function setupTokenInfoFetch(inputId, infoId, balanceId, quickAmountsId) {
-    const input = $(inputId);
-    let timeout = null;
-    let currentTokenInfo = null;
-
-    input.addEventListener("input", () => {
-      clearTimeout(timeout);
-      const addr = input.value.trim();
-
-      if (!isValidAddress(addr)) {
-        $(infoId).textContent = addr ? "Invalid address" : "";
-        if (balanceId) $(balanceId).textContent = "";
-        if (quickAmountsId) $(quickAmountsId).textContent = "";
-        currentTokenInfo = null;
-        return;
-      }
-
-      timeout = setTimeout(async () => {
-        $(infoId).textContent = "Loading...";
-        if (balanceId) $(balanceId).textContent = "";
-        if (quickAmountsId) $(quickAmountsId).textContent = "";
-
-        const info = await fetchTokenInfo(addr);
-        if (info.decimals == null) {
-          const infoEl = $(infoId);
-          infoEl.textContent = "";
-          const warnSpan = document.createElement("span");
-          warnSpan.className = "token-warning";
-          warnSpan.textContent = "Could not read token decimals — cannot use this token";
-          infoEl.appendChild(warnSpan);
-
-          const stateKey = inputId === "#create-tokenA" ? "tokenA" : "tokenB";
-          createFormState[stateKey].info = null;
-          createFormState[stateKey].balance = null;
-          currentTokenInfo = null;
-          return;
-        }
-        const addrIsWeth = isWeth(addr);
-        if (addrIsWeth) {
-          info.symbol = "ETH";
-          info.name = "Ether";
-        }
-        currentTokenInfo = info;
-
-        // Show token info with CoinGecko verification link if available
-        const infoEl = $(infoId);
-        infoEl.textContent = "";
-
-        const coinGeckoId = COINGECKO_ID_MAP[addr.toLowerCase()];
-        if (coinGeckoId) {
-          const link = document.createElement("a");
-          link.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
-          link.target = "_blank";
-          link.rel = "noopener noreferrer";
-          link.textContent = info.symbol;
-          link.title = "Verify on CoinGecko";
-          infoEl.appendChild(link);
-          infoEl.appendChild(document.createTextNode(" (" + info.decimals + " decimals) "));
-
-          const verifyLink = document.createElement("a");
-          verifyLink.href = "https://www.coingecko.com/en/coins/" + coinGeckoId;
-          verifyLink.target = "_blank";
-          verifyLink.rel = "noopener noreferrer";
-          verifyLink.textContent = "[verify]";
-          verifyLink.className = "verify-link";
-          infoEl.appendChild(verifyLink);
-        } else {
-          // Unknown token - show warning
-          const symbolSpan = document.createElement("span");
-          symbolSpan.textContent = info.symbol;
-          infoEl.appendChild(symbolSpan);
-          infoEl.appendChild(document.createTextNode(" (" + info.decimals + " decimals) "));
-
-          const warnSpan = document.createElement("span");
-          warnSpan.className = "token-warning";
-          warnSpan.textContent = "[unknown token]";
-          warnSpan.title = "This token is not in our verified list. Double-check the address.";
-          infoEl.appendChild(warnSpan);
-        }
-
-        // Store token info in form state
-        const stateKey = inputId === "#create-tokenA" ? "tokenA" : "tokenB";
-        createFormState[stateKey].info = info;
-        createFormState[stateKey].balance = null;
-
-        // Fetch balance if connected
-        if (balanceId && userAddress && provider) {
-          try {
-            const amountInputId =
-              inputId === "#create-tokenA" ? "#create-amountA" : "#create-amountB";
-
-            if (addrIsWeth && stateKey === "tokenA") {
-              // Show native ETH balance for offered WETH (will use createOrderWithEth)
-              const balance = await provider.getBalance(userAddress);
-              createFormState[stateKey].balance = balance;
-              const eth = ethers.formatEther(balance);
-              $(balanceId).textContent = "Balance: " + parseFloat(eth).toFixed(4) + " ETH";
-
-              validateAmountInput(amountInputId, stateKey);
-
-              if (quickAmountsId && balance > 0n) {
-                $(quickAmountsId).textContent = "";
-                [25, 50, 75, 100].forEach((pct) => {
-                  const btn = document.createElement("button");
-                  btn.type = "button";
-                  btn.textContent = pct + "%";
-                  btn.classList.add("quick-amt-btn");
-                  btn.addEventListener("click", () => {
-                    const amt = (balance * BigInt(pct)) / 100n;
-                    $(amountInputId).value = ethers.formatEther(amt);
-                    $(amountInputId).dispatchEvent(new Event("input"));
-                  });
-                  $(quickAmountsId).appendChild(btn);
-                });
-              }
-            } else {
-              const tokenContract = new ethers.Contract(addr, ERC20_ABI, provider);
-              const balance = await tokenContract.balanceOf(userAddress);
-              createFormState[stateKey].balance = balance;
-              const formatted = formatAmount(balance.toString(), info.decimals);
-              $(balanceId).textContent = "Balance: " + formatted;
-
-              validateAmountInput(amountInputId, stateKey);
-
-              // Add quick amount buttons
-              if (quickAmountsId && balance > 0n) {
-                $(quickAmountsId).textContent = "";
-                [25, 50, 75, 100].forEach((pct) => {
-                  const btn = document.createElement("button");
-                  btn.type = "button";
-                  btn.textContent = pct + "%";
-                  btn.classList.add("quick-amt-btn");
-                  btn.addEventListener("click", () => {
-                    const amt = (balance * BigInt(pct)) / 100n;
-                    $(amountInputId).value = formatAmount(amt.toString(), info.decimals);
-                    $(amountInputId).dispatchEvent(new Event("input"));
-                  });
-                  $(quickAmountsId).appendChild(btn);
-                });
-              }
-            }
-          } catch (e) {
-            console.error("Balance fetch error:", e);
-          }
-        }
-      }, CONFIG.DEBOUNCE_DELAY);
-    });
-
-    // Clear state when token address is cleared
-    input.addEventListener("input", () => {
-      if (!input.value.trim()) {
-        const stateKey = inputId === "#create-tokenA" ? "tokenA" : "tokenB";
-        createFormState[stateKey].info = null;
-        createFormState[stateKey].balance = null;
-      }
-    });
-  }
-
-  function validateAmountInput(amountInputId, stateKey) {
-    const input = $(amountInputId);
-    const state = createFormState[stateKey];
-    const errorSpanId = amountInputId + "-error";
-    let errorSpan = document.getElementById(errorSpanId.slice(1));
-
-    if (!errorSpan) {
-      errorSpan = document.createElement("span");
-      errorSpan.id = errorSpanId.slice(1);
-      errorSpan.className = "amount-error";
-      input.parentNode.appendChild(errorSpan);
-    }
-
-    const value = input.value.trim();
-    if (!value || !state.info) {
-      input.classList.remove("input-error");
-      errorSpan.textContent = "";
-      return true;
-    }
-
-    try {
-      const amount = parseAmount(value, state.info.decimals);
-
-      // Check if amount exceeds balance (only for tokenA - offered token)
-      if (stateKey === "tokenA" && state.balance !== null && amount > state.balance) {
-        input.classList.add("input-error");
-        errorSpan.textContent = "Exceeds balance";
-        return false;
-      }
-
-      if (amount === 0n && value !== "0") {
-        input.classList.add("input-error");
-        errorSpan.textContent = "Amount too small";
-        return false;
-      }
-
-      input.classList.remove("input-error");
-      errorSpan.textContent = "";
-      return true;
-    } catch (e) {
-      input.classList.add("input-error");
-      errorSpan.textContent = e.message.includes("decimals")
-        ? `Max ${state.info.decimals} decimals`
-        : "Invalid amount";
-      return false;
-    }
   }
 
   async function resolveBuildInfo() {
@@ -3730,12 +5306,15 @@
 
     validateConfig();
 
+    // Before anything renders: the version decides the table's columns and
+    // which controls exist at all.
+    applyVersionUi();
+
     // Initialize dark mode from localStorage or system preference
     initTheme();
 
     // Populate contract link
-    $("#contract-link").href =
-      EXPECTED_CHAIN.blockExplorerUrls[0] + "/address/" + CONFIG.CONTRACT_ADDRESS;
+    $("#contract-link").href = EXPECTED_CHAIN.blockExplorerUrls[0] + "/address/" + CONTRACT_ADDRESS;
 
     // Resolve build info if deploy.sh placeholders are unreplaced
     resolveBuildInfo();
@@ -3912,6 +5491,7 @@
     $("#wallet-disconnect").addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      storeWallet(WALLET_DISCONNECTED);
       disconnectWallet();
       $("#wallet-menu").classList.add("hidden");
     });
@@ -4056,6 +5636,36 @@
       loadOrders();
     });
 
+    // Selection bar. Left unwired without batch entry points — the bar and its
+    // checkboxes are hidden in that case, so there is nothing to listen to.
+    if (CAPS.batch) {
+      $("#select-all-orders").addEventListener("click", (e) => {
+        e.preventDefault();
+        selectAllOwnOrders();
+      });
+
+      $("#selection-clear").addEventListener("click", (e) => {
+        e.preventDefault();
+        clearSelection();
+      });
+
+      $("#batch-fill-btn").addEventListener("click", async (e) => {
+        e.preventDefault();
+        if (!userAddress) await connectWallet();
+        if (userAddress) fillSelectedOrders();
+      });
+
+      $("#batch-cancel-btn").addEventListener("click", (e) => {
+        e.preventDefault();
+        cancelSelectedOrders();
+      });
+    }
+
+    // Protocol version switcher
+    document.querySelectorAll("#version-switch .version-option").forEach((btn) => {
+      btn.addEventListener("click", () => setVersion(Number(btn.dataset.version)));
+    });
+
     $("#prev-page").addEventListener("click", () => {
       if (currentPage > 1) {
         currentPage--;
@@ -4091,12 +5701,11 @@
       const rows = cachedOrders.map((order) => {
         const tokenADecimals = parseInt(order.tokenA.decimals) || 18;
         const tokenBDecimals = parseInt(order.tokenB.decimals) || 18;
+        // Original size, not what is left. The export spans closed orders too,
+        // and a filled order has nothing remaining to report.
         const amountA = formatAmount(order.amountA, tokenADecimals);
         const amountB = formatAmount(order.amountB, tokenBDecimals);
-        let status = "Open";
-        if (!order.active) {
-          status = order.taker ? "Filled" : "Cancelled";
-        }
+        const status = orderStatus(order);
         const createdDate = new Date(parseInt(order.createdAt) * 1000).toISOString();
 
         return [
@@ -4110,19 +5719,10 @@
           order.tokenB.symbol,
           amountB,
           createdDate,
-        ]
-          .map((val) => {
-            // Escape quotes and wrap in quotes if contains comma
-            const str = String(val);
-            if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-              return '"' + str.replace(/"/g, '""') + '"';
-            }
-            return str;
-          })
-          .join(",");
+        ];
       });
 
-      const csvContent = [headers.join(","), ...rows].join("\n");
+      const csvContent = toCsv(headers, rows);
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
@@ -4134,62 +5734,14 @@
 
     $("#create-btn").addEventListener("click", handleCreateOrder);
 
-    setupTokenInfoFetch("#create-tokenA", "#tokenA-info", "#tokenA-balance", "#quick-amounts-A");
-    setupTokenInfoFetch("#create-tokenB", "#tokenB-info", "#tokenB-balance", null);
+    $("#add-sell-btn").addEventListener("click", addCreateRow);
 
-    // Add token selectors with Uniswap token list
-    fetchUniswapTokenList().then(() => {
-      createTokenSelector($("#create-tokenA"));
-      createTokenSelector($("#create-tokenB"));
-    });
+    // Start the Sell Tokens form with one empty order row
+    resetCreateForm();
 
-    // Price calculator - show price based on amounts
-    function updatePriceDisplay() {
-      const amountAStr = $("#create-amountA").value.trim();
-      const amountBStr = $("#create-amountB").value.trim();
-      const tokenASymbol = $("#tokenA-info").textContent.split(" ")[0] || "Token A";
-      const tokenBSymbol = $("#tokenB-info").textContent.split(" ")[0] || "Token B";
-
-      const amountA = parseFloat(amountAStr);
-      const amountB = parseFloat(amountBStr);
-
-      if (!isNaN(amountA) && !isNaN(amountB) && amountA > 0 && amountB > 0) {
-        const priceAPerB = amountA / amountB;
-        const priceBPerA = amountB / amountA;
-        const priceInfo = $("#price-info");
-        priceInfo.textContent = "";
-        priceInfo.appendChild(
-          document.createTextNode(
-            "1 " + tokenBSymbol + " = " + priceAPerB.toFixed(6).replace(/\.?0+$/, "") + " " + tokenASymbol
-          )
-        );
-        priceInfo.appendChild(document.createElement("br"));
-        priceInfo.appendChild(
-          document.createTextNode(
-            "1 " + tokenASymbol + " = " + priceBPerA.toFixed(6).replace(/\.?0+$/, "") + " " + tokenBSymbol
-          )
-        );
-      } else {
-        $("#price-info").textContent = "";
-      }
-    }
-
-    $("#create-amountA").addEventListener("input", () => {
-      updatePriceDisplay();
-      validateAmountInput("#create-amountA", "tokenA");
-    });
-    $("#create-amountB").addEventListener("input", () => {
-      updatePriceDisplay();
-      validateAmountInput("#create-amountB", "tokenB");
-    });
-
-    // Clear price info when tokens change
-    $("#create-tokenA").addEventListener("input", () => {
-      $("#price-info").textContent = "";
-    });
-    $("#create-tokenB").addEventListener("input", () => {
-      $("#price-info").textContent = "";
-    });
+    // Rows attach their own autocomplete in addCreateRow(); this just warms
+    // the token list they search against.
+    fetchUniswapTokenList();
 
     // Sortable column headers
     document.querySelectorAll("thead th.sortable").forEach((th) => {
@@ -4203,66 +5755,7 @@
       });
     });
 
-    if (window.ethereum) {
-      provider = new ethers.BrowserProvider(window.ethereum);
-
-      // Check for existing connection
-      provider
-        .send("eth_accounts", [])
-        .then(async (accounts) => {
-          if (accounts && accounts.length > 0) {
-            signer = await provider.getSigner();
-            userAddress = await signer.getAddress();
-
-            const validNetwork = await validateNetwork();
-            if (!validNetwork) return;
-
-            const network = await provider.getNetwork();
-            updateNetworkIndicator(Number(network.chainId));
-            contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-
-            if (!cachedWethAddress) {
-              try {
-                cachedWethAddress = (await contract.weth()).toLowerCase();
-              } catch (e) {
-                cachedWethAddress = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
-              }
-            }
-
-            $("#connect-btn").textContent = "[" + truncateAddress(userAddress) + "]";
-            $("#sell-btn").classList.remove("hidden");
-            $("#my-orders-label").classList.remove("hidden");
-            updateNotifyText();
-
-            // Subscribe to contract events for real-time updates
-            contract.on("OrderFilled", (orderId, taker) => {
-              if (taker.toLowerCase() !== userAddress.toLowerCase()) {
-                showNotification(
-                  "Order Filled",
-                  `Your order #${orderId} has been filled!`,
-                  "order-" + orderId
-                );
-              }
-              loadOrders();
-              loadStats();
-            });
-
-            contract.on("OrderCanceled", (orderId) => {
-              showToast(`Order #${orderId} canceled`, "info");
-              loadOrders();
-              loadStats();
-            });
-
-            contract.on("OrderCreated", (orderId, maker, tokenA, amountA, tokenB, amountB) => {
-              loadOrders();
-              loadStats();
-            });
-
-            loadOrders();
-          }
-        })
-        .catch(() => {});
-    }
+    restoreWalletConnection();
 
     loadStats();
     loadPopularPairs();
@@ -4286,16 +5779,174 @@
     }, AUTO_REFRESH_MS);
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
-
-  // Register service worker for PWA support
-  if ("serviceWorker" in navigator) {
+  /**
+   * Registers the service worker for PWA support. No-op where unsupported.
+   */
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) {
+      return;
+    }
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     });
+  }
+
+  /**
+   * Boots the app once the DOM is ready, then registers the service worker.
+   */
+  function bootstrap() {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+    registerServiceWorker();
+  }
+
+  // index.html loads this as a classic <script>, where `module` is undefined, so the
+  // app boots normally. Under Jest the module is required instead: expose the closure
+  // surface for tests and skip bootstrap so require() has no side effects.
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      // The version connectors. Exported so each adapter method can be asserted
+      // against the call it makes, including the defensive v1 stubs that the
+      // capability gates deliberately keep unreachable from the UI.
+      V1,
+      V2,
+      addCreateRow,
+      addRecentToken,
+      appendBatchTxNote,
+      appendTotalRow,
+      applyVersionUi,
+      applyWalletFilter,
+      batchResolveEns,
+      bootstrap,
+      buildAmountCell,
+      buildBatchItem,
+      buildPartialFillControls,
+      buildTokenCell,
+      createUnknownTokenBadge,
+      cancelSelectedOrders,
+      checkWatchedOrders,
+      clearSelection,
+      collectCreateParams,
+      connectWallet,
+      connectWithProvider,
+      createCopyButton,
+      createTokenSelector,
+      disconnectWallet,
+      ensureAllowance,
+      resolvePull,
+      resolveBatchPull,
+      readPullLeg,
+      resolvePermitDomain,
+      signTokenPermit,
+      signPermit2,
+      randomBytes32,
+      withPermit,
+      permitTuple,
+      tryRead,
+      estimateCall,
+      estimateGasCost,
+      exportMyOrders,
+      fetchTokenInfo,
+      fetchUniswapTokenList,
+      fillOrderModalAmount,
+      fillSelectedOrders,
+      findOrderById,
+      getCachedEns,
+      getCreateRows,
+      getEthToken,
+      getOrderIdFromHash,
+      getOrderShareUrl,
+      getRecentTokens,
+      getRowState,
+      getSelectedOrders,
+      getSelectionAnchor,
+      getWatchedOrders,
+      handleCancelOrder,
+      handleCreateOrder,
+      handleFillOrder,
+      handleSort,
+      hideToast,
+      init,
+      initApp,
+      initTheme,
+      isOrderWatched,
+      isStable,
+      isWeth,
+      loadFilterPreferences,
+      loadOrders,
+      loadPopularPairs,
+      loadRowBalance,
+      loadSortPreferences,
+      loadStats,
+      loadTokenFilters,
+      loadUserApprovals,
+      openOrderModal,
+      orderColumnCount,
+      preferredQuoteSide,
+      pruneSelection,
+      querySubgraph,
+      readStoredVersion,
+      refreshCreateRows,
+      registerServiceWorker,
+      renderOrders,
+      renderRowQuickAmounts,
+      renderSelectionBar,
+      renderSkeletonRows,
+      renderTokenInfoLine,
+      requestNotificationPermission,
+      requireDeployed,
+      resetCreateForm,
+      resolveBuildInfo,
+      resolveEns,
+      retryRpc,
+      revokeApproval,
+      rowField,
+      runBatchTransactions,
+      saveFilterPreferences,
+      saveSortPreferences,
+      searchTokens,
+      selectAllOwnOrders,
+      setRevokeStatus,
+      setTextWithDots,
+      setVersion,
+      setupEIP6963Discovery,
+      setupProviderListeners,
+      setupRowTokenField,
+      showModal,
+      showNotification,
+      showToast,
+      showWalletModal,
+      sortOrders,
+      startAutoRefresh,
+      switchToExpectedNetwork,
+      switchWallet,
+      syncAfter,
+      toCreateParams,
+      toggleNotifications,
+      toggleOrderSelection,
+      toggleRowNativeEth,
+      toggleTheme,
+      tryParseAmount,
+      unwatchOrder,
+      updateNetworkIndicator,
+      updateNotifyText,
+      updatePagination,
+      updateRowPriceDisplay,
+      updateSortIndicators,
+      updateThemeIcons,
+      updateWalletMenu,
+      v1Unsupported,
+      v2Send,
+      validateConfig,
+      validateNetwork,
+      validateRowAmount,
+      waitForOrderUpdate,
+      watchOrder,
+    };
+  } else {
+    bootstrap();
   }
 })();
