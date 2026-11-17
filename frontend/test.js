@@ -87,7 +87,7 @@ async function runTests() {
 
   const isCI = process.env.CI === "true";
   const browser = await puppeteer.launch({
-    headless: "new",
+    headless: true,
     args: isCI ? ["--no-sandbox", "--disable-setuid-sandbox"] : [],
   });
   const page = await browser.newPage();

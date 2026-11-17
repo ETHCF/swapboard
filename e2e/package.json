@@ -16,7 +16,7 @@
     "e2e": "bash setup.sh && node e2e.test.js; EXIT=$?; bash teardown.sh; exit $EXIT"
   },
   "dependencies": {
-    "puppeteer": "^24.0.0",
-    "viem": "^2.21.0"
+    "puppeteer": "^25.17.0",
+    "viem": "^2.57.20"
   }
 }

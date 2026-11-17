@@ -10,7 +10,7 @@ module.exports = {
   // Flat layout: instrument the shipped application scripts, not just the files a
   // test happens to require. Exclusions are the load-bearing part here -- `coverage/`
   // is a generated report full of real .js, and test.js is the Puppeteer e2e runner.
-  // See also the eslint --ignore-pattern in package.json.
+  // See also the ignores in eslint.config.js.
   collectCoverageFrom: [
     "*.js",
     "!jest.config.js",

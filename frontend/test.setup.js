@@ -36,11 +36,16 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
-// Mock Notification API
-global.Notification = {
-  permission: "default",
-  requestPermission: jest.fn().mockResolvedValue("granted"),
-};
+// Mock Notification API. Rebuilt before each test: several tests swap in their
+// own constructor, and one left behind would carry a live 10s close() timer into
+// whichever test runs next.
+function resetNotification() {
+  global.Notification = {
+    permission: "default",
+    requestPermission: jest.fn().mockResolvedValue("granted"),
+  };
+}
+resetNotification();
 
 // Mock fetch
 global.fetch = jest.fn();
@@ -48,6 +53,7 @@ global.fetch = jest.fn();
 // Reset mocks before each test
 beforeEach(() => {
   jest.clearAllMocks();
+  resetNotification();
   localStorageMock.store = {};
   global.fetch.mockReset();
 });

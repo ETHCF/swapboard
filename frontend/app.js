@@ -100,6 +100,25 @@
   const EXPLORER_URL = EXPECTED_CHAIN.blockExplorerUrls[0];
 
   // ============================================================================
+  // Page Location
+  // ============================================================================
+
+  /**
+   * Reads of the page's location, and navigation away from it, that tests need
+   * to observe. jsdom's window.location is unforgeable, so this object is the
+   * one place a test can stand in for it.
+   */
+  const pageLocation = {
+    /** @returns {Location} */
+    current: () => window.location,
+    /** @param {string} url */
+    navigate: (url) => {
+      window.location.href = url;
+    },
+    reload: () => window.location.reload(),
+  };
+
+  // ============================================================================
   // Protocol Version
   // ============================================================================
 
@@ -165,11 +184,11 @@
 
     // Keep ?v= in step with the choice, so the reload lands on the new version
     // even if storage was refused, and so the URL stays shareable.
-    const url = new URL(window.location.href);
+    const url = new URL(pageLocation.current().href);
     url.searchParams.set("v", String(version));
     // The order hash addresses an order in the version being left behind.
     url.hash = "";
-    window.location.href = url.toString();
+    pageLocation.navigate(url.toString());
   }
 
   /** Headline text and blurb for each version. */
@@ -272,10 +291,8 @@
   // Validate configuration - fail fast on placeholder values
   // Skips validation on localhost/file:// for development/testing
   function validateConfig() {
-    const isLocal =
-      window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1" ||
-      window.location.protocol === "file:";
+    const { hostname, protocol } = pageLocation.current();
+    const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || protocol === "file:";
 
     if (isLocal) {
       console.warn("Development mode: skipping config validation");
@@ -5011,7 +5028,7 @@ ${orderFields}
         showToast("Please switch to " + EXPECTED_CHAIN_LABEL, "error");
         disconnectWallet();
       } else {
-        window.location.reload();
+        pageLocation.reload();
       }
     });
   }
@@ -5808,6 +5825,7 @@ ${indent(orderQuerySelection(ACTIVE_VERSION), 8)}
   // surface for tests and skip bootstrap so require() has no side effects.
   if (typeof module !== "undefined" && module.exports) {
     module.exports = {
+      pageLocation,
       // The version connectors. Exported so each adapter method can be asserted
       // against the call it makes, including the defensive v1 stubs that the
       // capability gates deliberately keep unreachable from the UI.

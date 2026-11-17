@@ -424,7 +424,7 @@ async function runTests() {
   try {
     // Allow file:// pages to fetch the local subgraph (CORS / opaque origin)
     const browser = await puppeteer.default.launch({
-      headless: "new",
+      headless: true,
       args: ["--disable-web-security", "--allow-file-access-from-files"],
     });
     const page = await browser.newPage();

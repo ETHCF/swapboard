@@ -104,21 +104,29 @@ function captureCsv() {
   };
 }
 
-/** Replaces window.location with a writable stub, returning a restore fn. */
-function stubLocation(href = "https://swapboard.test/") {
-  const real = window.location;
-  delete window.location;
-  window.location = {
+/**
+ * Points a loaded app's pageLocation at a writable stub. jsdom's window.location
+ * is unforgeable, so the app's own seam is what gets swapped.
+ * @returns {{loc: Object, restore: function(): void}}
+ */
+function stubLocation(mod, href = "https://swapboard.test/") {
+  const seam = mod.pageLocation;
+  const real = { ...seam };
+  const loc = {
     href,
     hash: "",
     search: "",
     hostname: "swapboard.test",
     protocol: "https:",
-    reload: jest.fn(),
-    assign: jest.fn(),
   };
-  return () => {
-    window.location = real;
+  seam.current = () => loc;
+  seam.navigate = jest.fn((url) => {
+    loc.href = url;
+  });
+  seam.reload = jest.fn();
+  return {
+    loc,
+    restore: () => Object.assign(seam, real),
   };
 }
 
@@ -731,35 +739,45 @@ describe("protocol version", () => {
     });
   });
 
+  test("pageLocation drives the real window.location", () => {
+    expect(app.pageLocation.current()).toBe(window.location);
+    // jsdom only performs fragment navigation, which is enough to see it land.
+    app.pageLocation.navigate(window.location.href.split("#")[0] + "#moved");
+    expect(window.location.hash).toBe("#moved");
+    // jsdom has no reload; it reports "not implemented" rather than throwing.
+    expect(() => app.pageLocation.reload()).not.toThrow();
+  });
+
   test("setVersion ignores unsupported versions and the current one", () => {
-    const restore = stubLocation();
+    const { loc, restore } = stubLocation(app);
     try {
       app.setVersion(99);
       app.setVersion(1); // already active
-      expect(window.location.href).toBe("https://swapboard.test/");
+      expect(app.pageLocation.navigate).not.toHaveBeenCalled();
+      expect(loc.href).toBe("https://swapboard.test/");
     } finally {
       restore();
     }
   });
 
   test("setVersion persists the choice and navigates with ?v=", () => {
-    const restore = stubLocation();
+    const { loc, restore } = stubLocation(app);
     try {
       app.setVersion(2);
       expect(localStorage.getItem("swapboard_version")).toBe("2");
-      expect(window.location.href).toMatch(/[?&]v=2/);
+      expect(loc.href).toMatch(/[?&]v=2/);
     } finally {
       restore();
     }
   });
 
   test("setVersion still navigates when storage is refused", () => {
-    const restore = stubLocation();
+    const { loc, restore } = stubLocation(app);
     try {
       withStorageFailure("setItem", () => {
         app.setVersion(2);
       });
-      expect(window.location.href).toMatch(/[?&]v=2/);
+      expect(loc.href).toMatch(/[?&]v=2/);
     } finally {
       restore();
     }
@@ -2562,15 +2580,15 @@ describe("wired controls", () => {
   });
 
   test("version switch buttons navigate to the other version", async () => {
-    await boot();
-    const restore = stubLocation();
+    const { mod } = await boot();
+    const { loc, restore } = stubLocation(mod);
     try {
       const other = [...document.querySelectorAll("#version-switch .version-option")].find(
         (b) => b.dataset.version === "2"
       );
       if (other) {
         other.click();
-        expect(window.location.href).toMatch(/v=2/);
+        expect(loc.href).toMatch(/v=2/);
       }
     } finally {
       restore();
@@ -4681,11 +4699,11 @@ describe("remaining wiring", () => {
     const call = h.wallet.on.mock.calls.find((c) => c[0] === "chainChanged");
     expect(call).toBeDefined();
 
-    const restore = stubLocation();
+    const { restore } = stubLocation(app);
     try {
       // Back on the expected chain: reload so every cached read is re-fetched.
       call[1](EXPECTED_CHAIN_HEX);
-      expect(window.location.reload).toHaveBeenCalled();
+      expect(app.pageLocation.reload).toHaveBeenCalled();
     } finally {
       restore();
     }
@@ -6072,7 +6090,7 @@ describe("coverage of remaining branches", () => {
     const mod = require("./app");
 
     // The guard only runs off localhost, which is what jsdom serves.
-    const restore = stubLocation();
+    const { restore } = stubLocation(mod);
     const error = jest.spyOn(console, "error").mockImplementation(() => {});
     try {
       expect(() => mod.validateConfig()).toThrow(/Configuration error/);
@@ -6090,7 +6108,7 @@ describe("coverage of remaining branches", () => {
     // deployed yet. Failing on that would take the whole preview offline, so the
     // guard is gated on CAPS.live rather than on the values themselves.
     const v2 = loadApp({ search: "?v=2", undeployedV2: true });
-    const restore = stubLocation();
+    const { restore } = stubLocation(v2);
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     try {
       expect(() => v2.validateConfig()).not.toThrow();
